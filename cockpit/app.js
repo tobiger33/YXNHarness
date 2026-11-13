@@ -196,9 +196,10 @@ function highlightSelection() {
 async function refresh() {
   setLive("pending", "refreshing");
   try {
-    const [overview, runsPayload, handoffsPayload] = await Promise.all([
-      apiGet("/api/v1/overview"),
-      apiGet("/api/v1/runs"),
+    // One refresh rebuilds the index; the rest read without racing writes.
+    const overview = await apiGet("/api/v1/overview");
+    const [runsPayload, handoffsPayload] = await Promise.all([
+      apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
     ]);
     state.overview = overview;
