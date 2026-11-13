@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +28,7 @@ import {
 } from "../scripts/harness.mjs";
 import { chromiumStatus } from "../scripts/browser-setup.mjs";
 import { defaultHostConfig, validateHostConfig } from "../scripts/host-config.mjs";
+import { collectGit, collectWorkspace } from "../scripts/workspace.mjs";
 
 test("scenario validation accepts the supported data model", () => {
   const scenario = validateScenario({
@@ -189,7 +190,7 @@ test("JSON values reject non-finite numbers and executable object types", () => 
   assert.equal(isJsonValue(cyclic), false);
 });
 
-test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, handoff, and serve", () => {
+test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, workspace, handoff, and serve", () => {
   const base = {
     dryRun: false,
     apply: false,
@@ -254,6 +255,11 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, han
     action: "status",
     json: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--json"]), {
+    ...base,
+    action: "workspace",
+    json: true,
+  });
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -276,6 +282,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, han
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, or handoff/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
@@ -390,6 +397,49 @@ test("run index summarizes artifact directories and pointers", async () => {
   }
 });
 
+test("workspace collects read-only git branch inventory", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-workspace-"));
+  try {
+    const missing = collectWorkspace(root);
+    assert.equal(missing.available, false);
+    assert.equal(missing.readOnly, true);
+
+    const git = (args) => {
+      const result = spawnSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        shell: false,
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return result.stdout.trim();
+    };
+    git(["init", "-b", "main"]);
+    git(["config", "user.email", "harness@example.com"]);
+    git(["config", "user.name", "Harness Test"]);
+    await writeFile(path.join(root, "README.md"), "workspace\n");
+    git(["add", "README.md"]);
+    git(["commit", "-m", "init"]);
+    git(["branch", "feature/demo"]);
+
+    const workspace = collectWorkspace(root);
+    assert.equal(workspace.available, true);
+    assert.equal(workspace.branch, "main");
+    assert.equal(workspace.dirty, false);
+    assert.ok(workspace.commit);
+    assert.ok(workspace.branches.some((entry) => entry.name === "main" && entry.current));
+    assert.ok(workspace.branches.some((entry) => entry.name === "feature/demo" && !entry.current));
+    assert.match(workspace.note, /Checkout/);
+
+    const stamp = collectGit(root);
+    assert.equal(stamp.branch, "main");
+    assert.equal(stamp.dirty, false);
+    assert.equal(stamp.commit, workspace.commit);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("cockpit API serves host, runs, and artifacts on loopback only", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-cockpit-api-"));
   let api;
@@ -428,6 +478,11 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(overview.host.config.host.projectLabel, "api-demo");
     assert.equal(overview.index.summary.runCount, 1);
     assert.equal(overview.api.readOnly, true);
+    assert.equal(overview.workspace.available, false);
+
+    const workspace = await fetch(`${listening.url}api/v1/workspace`).then((response) => response.json());
+    assert.equal(workspace.available, false);
+    assert.equal(workspace.readOnly, true);
 
     const ui = await fetch(listening.url);
     assert.equal(ui.status, 200);

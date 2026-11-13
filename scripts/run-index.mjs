@@ -72,6 +72,7 @@ async function summarizeRunDirectory(root, runDirectoryName) {
     durationMs: Number.isFinite(result.durationMs) ? result.durationMs : null,
     counts: result.counts || null,
     error: result.error || null,
+    git: result.git || null,
     artifacts: {
       result: "result.json",
       contactSheet: result.artifacts?.contactSheet || null,

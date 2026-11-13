@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadHostConfig } from "./host-config.mjs";
 import { buildRunIndex, writeRunIndex } from "./run-index.mjs";
+import { collectWorkspace } from "./workspace.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -116,6 +117,7 @@ async function buildOverview(root, { refresh = true } = {}) {
   const index = refresh ? await writeRunIndex(root) : await buildRunIndex(root);
   const handoffs = await listHandoffs(root);
   const lastHandoff = await readLastHandoff(root);
+  const workspace = collectWorkspace(root);
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
@@ -127,6 +129,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/health",
         "GET /api/v1/overview",
         "GET /api/v1/host-config",
+        "GET /api/v1/workspace",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
         "GET /api/v1/handoffs",
@@ -135,6 +138,14 @@ async function buildOverview(root, { refresh = true } = {}) {
       ],
     },
     host,
+    workspace: {
+      available: workspace.available,
+      branch: workspace.branch,
+      shortCommit: workspace.shortCommit,
+      dirty: workspace.dirty,
+      branchCount: workspace.branches.length,
+      note: workspace.note,
+    },
     index: {
       summary: index.summary,
       pointers: index.pointers,
@@ -274,6 +285,7 @@ function apiIndexPayload(projectRoot) {
       health: "/api/v1/health",
       overview: "/api/v1/overview",
       hostConfig: "/api/v1/host-config",
+      workspace: "/api/v1/workspace",
       runs: "/api/v1/runs",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
@@ -345,6 +357,11 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/host-config") {
         sendJson(response, 200, await loadHostConfig(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace") {
+        sendJson(response, 200, collectWorkspace(projectRoot));
         return;
       }
 
