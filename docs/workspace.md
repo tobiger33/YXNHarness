@@ -1,13 +1,12 @@
 # Workspace (local Git context)
 
-Branches are the isolated workspaces for harness work. This slice exposes a
-**read-only** inventory of the current checkout and local branches so the
-cockpit (and agents) can reason about where evidence came from.
+Branches are the isolated workspaces for harness work. The harness exposes a
+local inventory plus a **host-controlled** switch onto an existing local branch.
 
-No checkout, create, or push commands are offered here yet. Those remain
-host-controlled.
+Create, fetch, and push stay outside this CLI — use the coding agent's Git tools
+or plain `git` for those.
 
-## CLI
+## Inventory
 
 ```sh
 npm run harness -- workspace
@@ -15,11 +14,25 @@ npm run harness -- workspace --json
 npm run harness -- status --json
 ```
 
-`workspace` prints the current branch/revision, dirty state, upstream drift
-when available, and the local branch list.
+Shows the current branch/revision, dirty state, upstream drift when available,
+and the local branch list.
 
-`status` includes the same snapshot under `workspace` alongside host policy and
-the run index.
+## Checkout (local only)
+
+```sh
+npm run harness -- workspace --checkout feature/demo --dry-run
+npm run harness -- workspace --checkout feature/demo --apply
+```
+
+Preview by default (`--dry-run` or omit `--apply`). `--apply` runs
+`git switch` onto an **existing local** branch.
+
+Guards:
+
+- Unknown / unsafe branch names → blocked
+- Dirty working tree → blocked unless the host consents with `--force`
+- Already on the target → `noop`
+- No branch create, no remote tracking setup, no push/fetch
 
 ## Run stamps
 
@@ -50,9 +63,11 @@ npm run harness -- serve
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/overview` | Includes a short `workspace` summary |
 
+Checkout stays on the CLI for now (no write routes on `serve`).
+
 ## What this is not
 
-- Not `git checkout` / branch create / push
+- Not branch create / fetch / push
 - Not hosted preview binding
 - Not a substitute for the coding agent's own Git UI
 

@@ -28,7 +28,11 @@ import {
 } from "../scripts/harness.mjs";
 import { chromiumStatus } from "../scripts/browser-setup.mjs";
 import { defaultHostConfig, validateHostConfig } from "../scripts/host-config.mjs";
-import { collectGit, collectWorkspace } from "../scripts/workspace.mjs";
+import {
+  collectGit,
+  collectWorkspace,
+  planWorkspaceCheckout,
+} from "../scripts/workspace.mjs";
 
 test("scenario validation accepts the supported data model", () => {
   const scenario = validateScenario({
@@ -204,6 +208,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     from: null,
     note: null,
     port: null,
+    checkout: null,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -260,6 +265,12 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     action: "workspace",
     json: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--checkout", "feature/demo", "--apply"]), {
+    ...base,
+    action: "workspace",
+    checkout: "feature/demo",
+    apply: true,
+  });
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -279,10 +290,10 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, or handoff/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, or workspace/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
-  assert.throws(() => parseArgs(["workspace", "--apply"]), /read-only/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
@@ -429,12 +440,36 @@ test("workspace collects read-only git branch inventory", async () => {
     assert.ok(workspace.commit);
     assert.ok(workspace.branches.some((entry) => entry.name === "main" && entry.current));
     assert.ok(workspace.branches.some((entry) => entry.name === "feature/demo" && !entry.current));
-    assert.match(workspace.note, /Checkout/);
+    assert.match(workspace.note, /checkout/i);
 
     const stamp = collectGit(root);
     assert.equal(stamp.branch, "main");
     assert.equal(stamp.dirty, false);
     assert.equal(stamp.commit, workspace.commit);
+
+    const preview = planWorkspaceCheckout(root, { branch: "feature/demo", apply: false });
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.to.branch, "feature/demo");
+    assert.equal(collectWorkspace(root).branch, "main");
+
+    const unknownBranch = planWorkspaceCheckout(root, { branch: "nope", apply: true });
+    assert.equal(unknownBranch.status, "blocked");
+
+    const applied = planWorkspaceCheckout(root, { branch: "feature/demo", apply: true });
+    assert.equal(applied.status, "applied");
+    assert.equal(collectWorkspace(root).branch, "feature/demo");
+
+    const noop = planWorkspaceCheckout(root, { branch: "feature/demo", apply: true });
+    assert.equal(noop.status, "noop");
+
+    await writeFile(path.join(root, "dirty.txt"), "x\n");
+    const dirtyBlocked = planWorkspaceCheckout(root, { branch: "main", apply: true });
+    assert.equal(dirtyBlocked.status, "blocked");
+    assert.match(dirtyBlocked.blockedReasons.join(" "), /dirty/i);
+
+    const forced = planWorkspaceCheckout(root, { branch: "main", apply: true, force: true });
+    assert.equal(forced.status, "applied");
+    assert.equal(collectWorkspace(root).branch, "main");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

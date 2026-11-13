@@ -47,7 +47,9 @@ import {
 import {
   collectGit,
   collectWorkspace,
+  formatCheckoutPlan,
   formatWorkspace,
+  planWorkspaceCheckout,
 } from "./workspace.mjs";
 
 const require = createRequire(import.meta.url);
@@ -65,7 +67,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--json]
+  npm run harness -- workspace [--root path] [--checkout branch] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
@@ -100,6 +102,7 @@ function parseArgs(argv) {
     from: null,
     note: null,
     port: null,
+    checkout: null,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -117,6 +120,11 @@ function parseArgs(argv) {
       options.force = true;
     } else if (argument === "--init") {
       options.init = true;
+    } else if (argument === "--checkout") {
+      const checkout = rest[index + 1];
+      if (!checkout || checkout.startsWith("--")) throw new Error("--checkout requires a local branch name.");
+      options.checkout = checkout;
+      index += 1;
     } else if (argument === "--name") {
       const name = rest[index + 1];
       if (!name || name.startsWith("--")) throw new Error("--name requires a scenario name.");
@@ -184,10 +192,15 @@ function parseArgs(argv) {
       options.port !== null)) {
     throw new Error("status only accepts --root and --json.");
   }
-  if (action === "workspace" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.port !== null)) {
-    throw new Error("workspace is read-only and only accepts --root and --json.");
+  if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
+      options.out || options.from || options.note || options.port !== null)) {
+    throw new Error("workspace accepts --root/--json/--checkout/--dry-run/--apply/--force only.");
+  }
+  if (action === "workspace" && (options.apply || options.dryRun || options.force) && !options.checkout) {
+    throw new Error("--apply, --dry-run, and --force require --checkout for workspace.");
+  }
+  if (options.checkout && action !== "workspace") {
+    throw new Error("--checkout is only valid with workspace.");
   }
   if (action === "setup" && options.yes && !options.installBrowser) {
     throw new Error("--yes is only valid with setup when also passing --install-browser.");
@@ -201,8 +214,8 @@ function parseArgs(argv) {
   if (options.out && !["scaffold", "handoff"].includes(action)) {
     throw new Error("--out is only valid with scaffold or handoff.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, or handoff.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, or workspace.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
@@ -287,7 +300,8 @@ function explainNextSteps(report) {
   steps.push({
     id: "workspace",
     command: "npm run harness -- workspace --json",
-    why: "Read-only Git workspace: current branch/revision plus local branch inventory (no checkout).",
+    then: "npm run harness -- workspace --checkout <branch> --dry-run",
+    why: "Git workspace inventory; host-controlled local branch switch via --checkout --apply (no create/push).",
   });
   steps.push({
     id: "handoff",
@@ -1217,7 +1231,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
     console.log("status refreshes artifacts/index.json and summarizes runs, host policy, and Git workspace.");
-    console.log("workspace lists the current branch/revision and local branches (read-only; no checkout).");
+    console.log("workspace lists branches; --checkout <branch> --dry-run|--apply switches locally (dirty trees need --force).");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
@@ -1352,12 +1366,23 @@ async function main(argv = process.argv.slice(2)) {
     return report;
   }
   if (options.action === "workspace") {
+    if (options.checkout) {
+      const plan = planWorkspaceCheckout(root, {
+        branch: options.checkout,
+        apply: options.apply,
+        force: options.force,
+      });
+      plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatCheckoutPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     const workspace = collectWorkspace(root);
     const report = {
       ok: true,
       ...workspace,
       explanation: workspace.available
-        ? "Read-only branch inventory for the cockpit. Checkout remains host-controlled and is not offered here yet."
+        ? "Branch inventory for the cockpit. Switch with --checkout <branch> --dry-run, then --apply after host review."
         : "No Git workspace detected. Branches cannot be listed until the project is a repository.",
     };
     console.log(options.json ? JSON.stringify(report, null, 2) : formatWorkspace(workspace));

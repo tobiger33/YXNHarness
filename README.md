@@ -96,10 +96,12 @@ npm run harness -- status --json
 
 See [`docs/cockpit-foundation.md`](docs/cockpit-foundation.md).
 
-Inspect the Git workspace (current branch + local branches, read-only):
+Inspect the Git workspace and switch local branches (host-controlled):
 
 ```sh
 npm run harness -- workspace --json
+npm run harness -- workspace --checkout feature/demo --dry-run
+npm run harness -- workspace --checkout feature/demo --apply
 ```
 
 See [`docs/workspace.md`](docs/workspace.md).
