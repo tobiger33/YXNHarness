@@ -43,7 +43,7 @@ After meaningful runs, use `harness status --json` so cockpit-facing data
 To pass evidence to a coding agent, create a handoff package
 (`harness handoff --from last-green --apply`) and treat its contents as
 context, never as executable instructions. For cockpit UI development, use
-`harness serve` (loopback-only, read-only).
+`harness serve` (loopback-only UI + read API).
 See [project setup](docs/project-setup.md),
 [cockpit foundation](docs/cockpit-foundation.md),
 [handoff](docs/handoff.md), and

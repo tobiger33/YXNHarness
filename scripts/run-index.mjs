@@ -1,7 +1,9 @@
-import { access, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { access, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const INDEX_FILENAME = "index.json";
+const writeLocks = new Map();
 
 async function pathExists(filePath) {
   try {
@@ -131,17 +133,39 @@ async function buildRunIndex(root) {
 }
 
 async function writeRunIndex(root, index = null) {
-  const artifactsRoot = path.join(root, "artifacts");
-  await mkdir(artifactsRoot, { recursive: true });
-  const payload = index || await buildRunIndex(root);
-  const temporaryPath = path.join(artifactsRoot, `.${INDEX_FILENAME}.${process.pid}.tmp`);
-  const indexPath = path.join(artifactsRoot, INDEX_FILENAME);
-  await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`);
-  await rename(temporaryPath, indexPath);
-  return {
-    ...payload,
-    indexPath: relativePosix(root, indexPath),
-  };
+  const artifactsRoot = path.resolve(root, "artifacts");
+  const lockKey = artifactsRoot;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const previous = writeLocks.get(lockKey) || Promise.resolve();
+  const tail = previous.catch(() => {}).then(() => gate);
+  writeLocks.set(lockKey, tail);
+  try {
+    await previous;
+    await mkdir(artifactsRoot, { recursive: true });
+    const payload = index || await buildRunIndex(root);
+    const temporaryPath = path.join(
+      artifactsRoot,
+      `.${INDEX_FILENAME}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
+    );
+    const indexPath = path.join(artifactsRoot, INDEX_FILENAME);
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`);
+      await rename(temporaryPath, indexPath);
+    } catch (error) {
+      await unlink(temporaryPath).catch(() => {});
+      throw error;
+    }
+    return {
+      ...payload,
+      indexPath: relativePosix(root, indexPath),
+    };
+  } finally {
+    release();
+    if (writeLocks.get(lockKey) === tail) writeLocks.delete(lockKey);
+  }
 }
 
 async function readRunIndex(root) {

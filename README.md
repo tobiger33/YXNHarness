@@ -105,13 +105,13 @@ npm run harness -- handoff --from last-green --apply
 
 See [`docs/handoff.md`](docs/handoff.md).
 
-Serve a loopback-only cockpit read API for UI work:
+Serve the local cockpit shell plus a loopback-only read API:
 
 ```sh
 npm run harness -- serve
 ```
 
-See [`docs/cockpit-api.md`](docs/cockpit-api.md).
+Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockpit-api.md).
 
 ## Principles
 

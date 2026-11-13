@@ -282,7 +282,7 @@ function explainNextSteps(report) {
   steps.push({
     id: "serve",
     command: `npm run harness -- serve --port ${COCKPIT_DEFAULT_PORT}`,
-    why: "Starts a loopback-only read API for cockpit UI work (host, runs, handoffs, artifacts).",
+    why: "Starts the local cockpit shell + loopback read API (host, runs, handoffs, artifacts).",
   });
   return steps;
 }
@@ -1201,7 +1201,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
     console.log("status refreshes artifacts/index.json and summarizes runs for the future cockpit.");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
-    console.log(`serve starts a loopback-only read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} for cockpit UI development.`);
+    console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1355,19 +1355,20 @@ async function main(argv = process.argv.slice(2)) {
       readOnly: true,
       loopbackOnly: true,
       endpoints: {
+        ui: listening.url,
         overview: `${listening.url}api/v1/overview`,
         hostConfig: `${listening.url}api/v1/host-config`,
         runs: `${listening.url}api/v1/runs`,
         handoffs: `${listening.url}api/v1/handoffs`,
         artifacts: `${listening.url}api/v1/artifacts/`,
       },
-      explanation: "Cockpit read API is running on loopback only. Stop with Ctrl+C. No write routes are exposed.",
+      explanation: "Cockpit UI + read API on loopback only. Open / for the shell; /api/v1 for JSON. Stop with Ctrl+C.",
     };
     if (options.json) {
       console.log(JSON.stringify(info, null, 2));
     } else {
-      console.log(`Cockpit API listening at ${listening.url}`);
-      console.log(`Overview: ${info.endpoints.overview}`);
+      console.log(`Cockpit UI listening at ${listening.url}`);
+      console.log(`API overview: ${info.endpoints.overview}`);
       console.log("Read-only · loopback only · Ctrl+C to stop");
     }
     const shutdown = async () => {

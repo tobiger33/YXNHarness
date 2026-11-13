@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YXNHarness Cockpit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/cockpit/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="Cockpit navigation">
+      <div class="rail-brand">
+        <p class="brand">YXNHarness</p>
+        <p class="brand-sub">Cockpit</p>
+      </div>
+
+      <div class="rail-status">
+        <span id="live-pill" class="pill pill-pending">connecting</span>
+        <button type="button" id="refresh-btn" class="ghost" title="Refresh">↻</button>
+      </div>
+
+      <section class="rail-section" aria-labelledby="host-title">
+        <h2 id="host-title">Host</h2>
+        <dl id="host-facts" class="facts"></dl>
+      </section>
+
+      <section class="rail-section rail-grow" aria-labelledby="runs-title">
+        <div class="rail-section-head">
+          <h2 id="runs-title">Runs</h2>
+          <p id="runs-summary" class="rail-meta">…</p>
+        </div>
+        <div id="runs-list" class="list" role="list"></div>
+      </section>
+
+      <section class="rail-section" aria-labelledby="handoff-title">
+        <div class="rail-section-head">
+          <h2 id="handoff-title">Handoffs</h2>
+        </div>
+        <div id="handoffs-list" class="list" role="list"></div>
+      </section>
+
+      <footer class="rail-foot">
+        <span id="generated-at">—</span>
+        <a href="/api/v1/overview" target="_blank" rel="noreferrer">API</a>
+      </footer>
+    </aside>
+
+    <main class="stage" aria-labelledby="detail-title">
+      <header class="stage-bar">
+        <div>
+          <h1 id="detail-title">Workspace</h1>
+          <p id="detail-lede" class="stage-lede">Select a run or handoff from the rail.</p>
+        </div>
+      </header>
+      <div id="detail-body" class="stage-body"></div>
+    </main>
+  </div>
+
+  <script type="module" src="/cockpit/app.js"></script>
+</body>
+</html>
