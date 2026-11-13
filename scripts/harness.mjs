@@ -44,6 +44,11 @@ import {
   DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
   createCockpitApi,
 } from "./cockpit-api.mjs";
+import {
+  collectGit,
+  collectWorkspace,
+  formatWorkspace,
+} from "./workspace.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -60,6 +65,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
+  npm run harness -- workspace [--root path] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
@@ -76,7 +82,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "handoff", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -178,6 +184,11 @@ function parseArgs(argv) {
       options.port !== null)) {
     throw new Error("status only accepts --root and --json.");
   }
+  if (action === "workspace" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
+      options.force || options.init || options.name || options.out || options.from || options.note ||
+      options.port !== null)) {
+    throw new Error("workspace is read-only and only accepts --root and --json.");
+  }
   if (action === "setup" && options.yes && !options.installBrowser) {
     throw new Error("--yes is only valid with setup when also passing --install-browser.");
   }
@@ -271,7 +282,12 @@ function explainNextSteps(report) {
   steps.push({
     id: "status",
     command: "npm run harness -- status --json",
-    why: "Refreshes artifacts/index.json and summarizes runs, pointers, and host config for the future cockpit.",
+    why: "Refreshes artifacts/index.json and summarizes runs, pointers, host config, and workspace.",
+  });
+  steps.push({
+    id: "workspace",
+    command: "npm run harness -- workspace --json",
+    why: "Read-only Git workspace: current branch/revision plus local branch inventory (no checkout).",
   });
   steps.push({
     id: "handoff",
@@ -282,7 +298,7 @@ function explainNextSteps(report) {
   steps.push({
     id: "serve",
     command: `npm run harness -- serve --port ${COCKPIT_DEFAULT_PORT}`,
-    why: "Starts the local cockpit shell + loopback read API (host, runs, handoffs, artifacts).",
+    why: "Starts the local cockpit shell + loopback read API (host, workspace, runs, handoffs, artifacts).",
   });
   return steps;
 }
@@ -1079,6 +1095,7 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
     scenario: { name: scenario.name, path: path.relative(root, scenarioPath) },
     startedAt: new Date().toISOString(),
     status: "running",
+    git: collectGit(root),
     comparison: { lastGreen: previousGreen },
     viewports: [],
     artifacts: {
@@ -1199,7 +1216,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log("probe starts the configured app and prints live harness commands/state.");
     console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
-    console.log("status refreshes artifacts/index.json and summarizes runs for the future cockpit.");
+    console.log("status refreshes artifacts/index.json and summarizes runs, host policy, and Git workspace.");
+    console.log("workspace lists the current branch/revision and local branches (read-only; no checkout).");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
@@ -1313,20 +1331,36 @@ async function main(argv = process.argv.slice(2)) {
   if (options.action === "status") {
     const host = await loadHostConfig(root);
     const index = await writeRunIndex(root);
+    const workspace = collectWorkspace(root);
     const report = {
       ok: true,
       root,
       host,
+      workspace,
       index,
-      explanation: "Status is the local cockpit data surface: host policy plus a refreshed run index under artifacts/index.json.",
+      explanation: "Status is the local cockpit data surface: host policy, Git workspace, and artifacts/index.json.",
     };
     if (options.json) {
       console.log(JSON.stringify(report, null, 2));
     } else {
       console.log(formatHostConfigSummary(host));
       console.log("");
+      console.log(formatWorkspace(workspace));
+      console.log("");
       console.log(formatRunIndex(index));
     }
+    return report;
+  }
+  if (options.action === "workspace") {
+    const workspace = collectWorkspace(root);
+    const report = {
+      ok: true,
+      ...workspace,
+      explanation: workspace.available
+        ? "Read-only branch inventory for the cockpit. Checkout remains host-controlled and is not offered here yet."
+        : "No Git workspace detected. Branches cannot be listed until the project is a repository.",
+    };
+    console.log(options.json ? JSON.stringify(report, null, 2) : formatWorkspace(workspace));
     return report;
   }
   if (options.action === "handoff") {
@@ -1358,6 +1392,7 @@ async function main(argv = process.argv.slice(2)) {
         ui: listening.url,
         overview: `${listening.url}api/v1/overview`,
         hostConfig: `${listening.url}api/v1/host-config`,
+        workspace: `${listening.url}api/v1/workspace`,
         runs: `${listening.url}api/v1/runs`,
         handoffs: `${listening.url}api/v1/handoffs`,
         artifacts: `${listening.url}api/v1/artifacts/`,

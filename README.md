@@ -96,6 +96,14 @@ npm run harness -- status --json
 
 See [`docs/cockpit-foundation.md`](docs/cockpit-foundation.md).
 
+Inspect the Git workspace (current branch + local branches, read-only):
+
+```sh
+npm run harness -- workspace --json
+```
+
+See [`docs/workspace.md`](docs/workspace.md).
+
 Bundle a run for a trusted coding agent:
 
 ```sh

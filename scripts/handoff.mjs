@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   access,
@@ -13,6 +12,7 @@ import path from "node:path";
 import process from "node:process";
 import Ajv from "ajv";
 import { loadHostConfig } from "./host-config.mjs";
+import { collectGit } from "./workspace.mjs";
 
 const require = createRequire(import.meta.url);
 const handoffSchema = require("../schema/handoff.schema.json");
@@ -29,29 +29,6 @@ async function pathExists(filePath) {
 
 function relativePosix(root, target) {
   return path.relative(root, target).split(path.sep).join("/");
-}
-
-function runGit(root, args) {
-  const result = spawnSync("git", args, {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 3000,
-    stdio: ["ignore", "pipe", "ignore"],
-    shell: false,
-  });
-  if (result.error || result.status !== 0) return null;
-  return result.stdout.trim();
-}
-
-function collectGit(root) {
-  const gitRoot = runGit(root, ["rev-parse", "--show-toplevel"]);
-  if (!gitRoot) return null;
-  const status = runGit(root, ["status", "--porcelain=v1"]);
-  return {
-    branch: runGit(root, ["branch", "--show-current"]),
-    commit: runGit(root, ["rev-parse", "HEAD"]),
-    dirty: status === null ? null : status.length > 0,
-  };
 }
 
 async function readJson(filePath, label) {

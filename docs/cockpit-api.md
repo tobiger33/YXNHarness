@@ -27,6 +27,7 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/health` | Liveness |
 | GET | `/api/v1/overview` | Host + run summary + recent handoffs |
 | GET | `/api/v1/host-config` | `harness.host.json` (or missing) |
+| GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/runs` | Run index (`?refresh=0` to skip rebuild) |
 | GET | `/api/v1/runs/:runId` | One run + `result.json` |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |

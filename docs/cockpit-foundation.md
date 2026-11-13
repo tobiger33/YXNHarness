@@ -51,6 +51,15 @@ npm run harness -- handoff --from last-green --apply
 
 See [`handoff.md`](handoff.md).
 
+## Workspace (Git)
+
+```sh
+npm run harness -- workspace --json
+```
+
+Read-only current branch/revision plus local branch inventory. Runs stamp a
+compact `git` object into `result.json`. See [`workspace.md`](workspace.md).
+
 ## Read API for UI
 
 ```sh
@@ -64,4 +73,5 @@ See [`cockpit-api.md`](cockpit-api.md).
 
 - Not collaboration hosting
 - Not share-link enforcement (policy data only for now)
+- Not Git checkout / branch create (workspace inventory is read-only for now)
 - Not the designer UI — that comes later on top of this data
