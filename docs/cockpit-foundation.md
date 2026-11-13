@@ -40,6 +40,17 @@ npm run harness -- status --json
 read this file (or an equivalent API) to show recent runs, contact sheets, and
 pass/fail without scraping the filesystem ad hoc.
 
+## Handoff packages
+
+Bundle one run for a trusted coding agent:
+
+```sh
+npm run harness -- handoff --from last-green --dry-run
+npm run harness -- handoff --from last-green --apply
+```
+
+See [`handoff.md`](handoff.md).
+
 ## What this is not
 
 - Not collaboration hosting

@@ -8,6 +8,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   buildScaffoldScenario,
+  createHandoffPackage,
   ensureChromium,
   explainNextSteps,
   initHostConfig,
@@ -187,11 +188,9 @@ test("JSON values reject non-finite numbers and executable object types", () => 
   assert.equal(isJsonValue(cyclic), false);
 });
 
-test("CLI parsing handles run, doctor, probe, scaffold, host-config, and status", () => {
-  assert.deepEqual(parseArgs(["--help"]), { help: true });
-  assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
-    action: "run",
-    dryRun: true,
+test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, and handoff", () => {
+  const base = {
+    dryRun: false,
     apply: false,
     json: false,
     installBrowser: false,
@@ -200,94 +199,65 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, and status"
     init: false,
     name: null,
     out: null,
+    from: null,
+    note: null,
+  };
+  assert.deepEqual(parseArgs(["--help"]), { help: true });
+  assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
+    ...base,
+    action: "run",
+    dryRun: true,
     scenario: "scenarios/demo.yaml",
     root: "/tmp/app",
   });
   assert.deepEqual(parseArgs(["doctor", "--root", "/tmp/app", "--json"]), {
+    ...base,
     action: "doctor",
-    dryRun: false,
-    apply: false,
     json: true,
-    installBrowser: false,
-    yes: false,
-    force: false,
-    init: false,
-    name: null,
-    out: null,
     root: "/tmp/app",
   });
   assert.deepEqual(parseArgs(["setup", "--root", "/tmp/app", "--apply"]), {
+    ...base,
     action: "setup",
-    dryRun: false,
     apply: true,
-    json: false,
-    installBrowser: false,
-    yes: false,
-    force: false,
-    init: false,
-    name: null,
-    out: null,
     root: "/tmp/app",
   });
   assert.deepEqual(parseArgs(["setup", "--install-browser", "--yes"]), {
+    ...base,
     action: "setup",
-    dryRun: false,
-    apply: false,
-    json: false,
     installBrowser: true,
     yes: true,
-    force: false,
-    init: false,
-    name: null,
-    out: null,
   });
   assert.deepEqual(parseArgs(["probe", "--json", "--yes"]), {
+    ...base,
     action: "probe",
-    dryRun: false,
-    apply: false,
     json: true,
-    installBrowser: false,
     yes: true,
-    force: false,
-    init: false,
-    name: null,
-    out: null,
   });
   assert.deepEqual(parseArgs(["scaffold", "--apply", "--name", "smoke", "--out", "scenarios/smoke.yaml"]), {
+    ...base,
     action: "scaffold",
-    dryRun: false,
     apply: true,
-    json: false,
-    installBrowser: false,
-    yes: false,
-    force: false,
-    init: false,
     name: "smoke",
     out: "scenarios/smoke.yaml",
   });
   assert.deepEqual(parseArgs(["host-config", "--init", "--apply"]), {
+    ...base,
     action: "host-config",
-    dryRun: false,
     apply: true,
-    json: false,
-    installBrowser: false,
-    yes: false,
-    force: false,
     init: true,
-    name: null,
-    out: null,
   });
   assert.deepEqual(parseArgs(["status", "--json"]), {
+    ...base,
     action: "status",
-    dryRun: false,
-    apply: false,
     json: true,
-    installBrowser: false,
-    yes: false,
-    force: false,
-    init: false,
-    name: null,
-    out: null,
+  });
+  assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
+    ...base,
+    action: "handoff",
+    apply: true,
+    from: "last-green",
+    note: "fix mobile",
   });
   assert.throws(() => parseArgs(["run", "--dry-run"]), /scenario YAML path/);
   assert.throws(() => parseArgs(["doctor", "--apply"]), /read-only|mutating/);
@@ -295,8 +265,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, and status"
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold or host-config/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, or handoff/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
+  assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -331,6 +302,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "scaffold"));
     assert.ok(steps.some((step) => step.id === "host-config"));
     assert.ok(steps.some((step) => step.id === "status"));
+    assert.ok(steps.some((step) => step.id === "handoff"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -403,6 +375,58 @@ test("run index summarizes artifact directories and pointers", async () => {
     assert.equal(index.runs[0].scenario, "demo");
     assert.equal(index.pointers.lastRun.runId, runId);
     assert.match(await readFile(path.join(root, "artifacts", "index.json"), "utf8"), /"runCount": 1/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("handoff packages a run as deliberate agent context", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-handoff-"));
+  try {
+    const runId = "2026-01-02T00-00-00-000Z-9";
+    const runDir = path.join(root, "artifacts", runId);
+    await mkdir(path.join(runDir, "screenshots"), { recursive: true });
+    await writeFile(path.join(runDir, "result.json"), JSON.stringify({
+      version: 1,
+      runId,
+      scenario: { name: "demo", path: "scenarios/demo.yaml" },
+      status: "passed",
+      startedAt: "2026-01-02T00:00:00.000Z",
+      finishedAt: "2026-01-02T00:00:01.000Z",
+      durationMs: 1000,
+      counts: { viewports: 1, steps: 1, failures: 0, screenshots: 1 },
+      artifacts: {
+        stateLog: "state.jsonl",
+        appLog: "app.log",
+        screenshots: ["screenshots/a.png"],
+        contactSheet: "contact-sheet.png",
+      },
+    }));
+    await writeFile(path.join(runDir, "state.jsonl"), `${JSON.stringify({ phase: "initial" })}\n`);
+    await writeFile(path.join(runDir, "contact-sheet.png"), "png");
+    await writeFile(path.join(runDir, "screenshots", "a.png"), "png");
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+    }));
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(defaultHostConfig({ projectLabel: "demo" }), null, 2));
+
+    const preview = await createHandoffPackage(root, { from: "last-green", apply: false, note: "check mobile" });
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.manifest.guidance.commentsAreContextNotInstructions, true);
+    assert.match(preview.manifest.note, /check mobile/);
+    await assert.rejects(readFile(path.join(root, "artifacts", "handoffs", `handoff-${runId}`, "manifest.json")));
+
+    const written = await createHandoffPackage(root, { from: "last-green", apply: true, note: "check mobile" });
+    assert.equal(written.status, "written");
+    const manifest = JSON.parse(await readFile(path.join(root, "artifacts", "handoffs", `handoff-${runId}`, "manifest.json"), "utf8"));
+    assert.equal(manifest.source.runId, runId);
+    assert.match(await readFile(path.join(root, "artifacts", "handoffs", `handoff-${runId}`, "AGENT_README.md"), "utf8"), /context/i);
+    assert.equal(JSON.parse(await readFile(path.join(root, "artifacts", "last-handoff.json"), "utf8")).runId, runId);
+
+    const blocked = await createHandoffPackage(root, { from: "last-green", apply: true });
+    assert.equal(blocked.status, "blocked");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

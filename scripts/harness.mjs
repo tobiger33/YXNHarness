@@ -36,6 +36,10 @@ import {
   formatRunIndex,
   writeRunIndex,
 } from "./run-index.mjs";
+import {
+  createHandoffPackage,
+  formatHandoffPlan,
+} from "./handoff.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -52,6 +56,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
+  npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
 const JSON_SCHEMA_VALIDATOR = new Ajv({ strict: false, allErrors: true });
@@ -66,7 +71,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "handoff"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -81,6 +86,8 @@ function parseArgs(argv) {
     init: false,
     name: null,
     out: null,
+    from: null,
+    note: null,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -108,6 +115,16 @@ function parseArgs(argv) {
       if (!out || out.startsWith("--")) throw new Error("--out requires a file path.");
       options.out = out;
       index += 1;
+    } else if (argument === "--from") {
+      const from = rest[index + 1];
+      if (!from || from.startsWith("--")) throw new Error("--from requires last-green, last-run, or a runId.");
+      options.from = from;
+      index += 1;
+    } else if (argument === "--note") {
+      const note = rest[index + 1];
+      if (note === undefined || note.startsWith("--")) throw new Error("--note requires text.");
+      options.note = note;
+      index += 1;
     } else if (argument === "--root") {
       const root = rest[index + 1];
       if (!root || root.startsWith("--")) throw new Error("--root requires a directory path.");
@@ -128,19 +145,19 @@ function parseArgs(argv) {
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
   if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out)) {
-    throw new Error("run does not support setup/scaffold/host-config flags.");
+      options.force || options.init || options.name || options.out || options.from || options.note)) {
+    throw new Error("run does not support setup/scaffold/host-config/handoff flags.");
   }
   if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out)) {
+      options.force || options.init || options.name || options.out || options.from || options.note)) {
     throw new Error("doctor is read-only and does not accept mutating flags.");
   }
   if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
-      options.init || options.name || options.out)) {
-    throw new Error("probe does not accept --apply/--dry-run/--install-browser/--force/--init/--name/--out. Use --yes only for Chromium consent.");
+      options.init || options.name || options.out || options.from || options.note)) {
+    throw new Error("probe does not accept mutating/scaffold/handoff flags. Use --yes only for Chromium consent.");
   }
   if (action === "status" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out)) {
+      options.force || options.init || options.name || options.out || options.from || options.note)) {
     throw new Error("status only accepts --root and --json.");
   }
   if (action === "setup" && options.yes && !options.installBrowser) {
@@ -149,16 +166,23 @@ function parseArgs(argv) {
   if (options.installBrowser && action !== "setup") {
     throw new Error("--install-browser is only valid with setup.");
   }
-  if ((options.name || options.out) && action !== "scaffold") {
-    throw new Error("--name and --out are only valid with scaffold.");
+  if (options.name && action !== "scaffold") {
+    throw new Error("--name is only valid with scaffold.");
   }
-  if (options.force && !["scaffold", "host-config"].includes(action)) {
-    throw new Error("--force is only valid with scaffold or host-config.");
+  if (options.out && !["scaffold", "handoff"].includes(action)) {
+    throw new Error("--out is only valid with scaffold or handoff.");
+  }
+  if (options.force && !["scaffold", "host-config", "handoff"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, or handoff.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if (action === "host-config" && (options.installBrowser || options.yes || options.name || options.out)) {
+  if ((options.from || options.note) && action !== "handoff") {
+    throw new Error("--from and --note are only valid with handoff.");
+  }
+  if (action === "host-config" && (options.installBrowser || options.yes || options.name || options.out ||
+      options.from || options.note)) {
     throw new Error("host-config accepts --init/--dry-run/--apply/--force/--json/--root only.");
   }
   if (action === "host-config" && (options.apply || options.force) && !options.init) {
@@ -166,6 +190,9 @@ function parseArgs(argv) {
   }
   if (action === "scaffold" && options.installBrowser) {
     throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
+  }
+  if (action === "handoff" && (options.installBrowser || options.yes || options.init || options.name)) {
+    throw new Error("handoff accepts --from/--note/--out/--dry-run/--apply/--force/--json/--root only.");
   }
   return options;
 }
@@ -219,6 +246,12 @@ function explainNextSteps(report) {
     id: "status",
     command: "npm run harness -- status --json",
     why: "Refreshes artifacts/index.json and summarizes runs, pointers, and host config for the future cockpit.",
+  });
+  steps.push({
+    id: "handoff",
+    command: "npm run harness -- handoff --from last-green --dry-run",
+    then: "npm run harness -- handoff --from last-green --apply",
+    why: "Bundles one run into a deliberate agent handoff package (context, not executable instructions).",
   });
   return steps;
 }
@@ -1136,6 +1169,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
     console.log("status refreshes artifacts/index.json and summarizes runs for the future cockpit.");
+    console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1263,6 +1297,19 @@ async function main(argv = process.argv.slice(2)) {
     }
     return report;
   }
+  if (options.action === "handoff") {
+    const plan = await createHandoffPackage(root, {
+      from: options.from || "last-green",
+      apply: options.apply,
+      force: options.force,
+      note: options.note,
+      out: options.out,
+    });
+    plan.ok = plan.status !== "blocked";
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatHandoffPlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   const configPath = path.join(root, "harness.config.json");
   const scenarioPath = path.resolve(root, options.scenario);
   const relativeScenario = path.relative(root, scenarioPath);
@@ -1312,10 +1359,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 export {
   buildRunIndex,
   buildScaffoldScenario,
+  createHandoffPackage,
   ensureChromium,
   explainNextSteps,
   formatBrowserPlan,
   formatDoctorReport,
+  formatHandoffPlan,
   formatHostConfigPlan,
   formatHostConfigSummary,
   formatProbeReport,

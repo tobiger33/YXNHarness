@@ -96,6 +96,15 @@ npm run harness -- status --json
 
 See [`docs/cockpit-foundation.md`](docs/cockpit-foundation.md).
 
+Bundle a run for a trusted coding agent:
+
+```sh
+npm run harness -- handoff --from last-green --dry-run
+npm run harness -- handoff --from last-green --apply
+```
+
+See [`docs/handoff.md`](docs/handoff.md).
+
 ## Principles
 
 - The user's chosen coding agent remains in control; the harness is the
