@@ -8,6 +8,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   buildScaffoldScenario,
+  createCockpitApi,
   createHandoffPackage,
   ensureChromium,
   explainNextSteps,
@@ -188,7 +189,7 @@ test("JSON values reject non-finite numbers and executable object types", () => 
   assert.equal(isJsonValue(cyclic), false);
 });
 
-test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, and handoff", () => {
+test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, handoff, and serve", () => {
   const base = {
     dryRun: false,
     apply: false,
@@ -201,6 +202,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, and
     out: null,
     from: null,
     note: null,
+    port: null,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -259,6 +261,12 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, and
     from: "last-green",
     note: "fix mobile",
   });
+  assert.deepEqual(parseArgs(["serve", "--port", "8791", "--json"]), {
+    ...base,
+    action: "serve",
+    json: true,
+    port: 8791,
+  });
   assert.throws(() => parseArgs(["run", "--dry-run"]), /scenario YAML path/);
   assert.throws(() => parseArgs(["doctor", "--apply"]), /read-only|mutating/);
   assert.throws(() => parseArgs(["setup", "--apply", "--dry-run"]), /cannot be used together/);
@@ -268,6 +276,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, and
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, or handoff/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
+  assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -303,6 +312,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "host-config"));
     assert.ok(steps.some((step) => step.id === "status"));
     assert.ok(steps.some((step) => step.id === "handoff"));
+    assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -376,6 +386,63 @@ test("run index summarizes artifact directories and pointers", async () => {
     assert.equal(index.pointers.lastRun.runId, runId);
     assert.match(await readFile(path.join(root, "artifacts", "index.json"), "utf8"), /"runCount": 1/);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cockpit API serves host, runs, and artifacts on loopback only", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-cockpit-api-"));
+  let api;
+  try {
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(defaultHostConfig({ projectLabel: "api-demo" }), null, 2));
+    const runId = "2026-03-01T00-00-00-000Z-3";
+    const runDir = path.join(root, "artifacts", runId);
+    await mkdir(path.join(runDir, "screenshots"), { recursive: true });
+    await writeFile(path.join(runDir, "result.json"), JSON.stringify({
+      version: 1,
+      runId,
+      scenario: { name: "demo", path: "scenarios/demo.yaml" },
+      status: "passed",
+      startedAt: "2026-03-01T00:00:00.000Z",
+      finishedAt: "2026-03-01T00:00:01.000Z",
+      durationMs: 1000,
+      counts: { viewports: 1, steps: 1, failures: 0, screenshots: 1 },
+      artifacts: {
+        stateLog: "state.jsonl",
+        appLog: "app.log",
+        screenshots: ["screenshots/a.png"],
+        contactSheet: "contact-sheet.png",
+      },
+    }));
+    await writeFile(path.join(runDir, "contact-sheet.png"), "png-bytes");
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+    }));
+    await mkdir(path.join(root, "artifacts", "handoffs"), { recursive: true });
+
+    api = createCockpitApi({ root, port: 0, host: "127.0.0.1" });
+    const listening = await api.listen();
+    const overview = await fetch(`${listening.url}api/v1/overview`).then((response) => response.json());
+    assert.equal(overview.host.config.host.projectLabel, "api-demo");
+    assert.equal(overview.index.summary.runCount, 1);
+    assert.equal(overview.api.readOnly, true);
+
+    const run = await fetch(`${listening.url}api/v1/runs/${encodeURIComponent(runId)}`).then((response) => response.json());
+    assert.equal(run.result.status, "passed");
+
+    const artifact = await fetch(`${listening.url}api/v1/artifacts/${encodeURIComponent(runId)}/contact-sheet.png`);
+    assert.equal(artifact.status, 200);
+    assert.equal(await artifact.text(), "png-bytes");
+
+    const forbidden = await fetch(`${listening.url}api/v1/artifacts/%2e%2e/%2e%2e/package.json`);
+    assert.ok([403, 404].includes(forbidden.status), `expected blocked artifact escape, got ${forbidden.status}`);
+
+    const post = await fetch(`${listening.url}api/v1/overview`, { method: "POST" });
+    assert.equal(post.status, 405);
+  } finally {
+    if (api) await api.close();
     await rm(root, { recursive: true, force: true });
   }
 });

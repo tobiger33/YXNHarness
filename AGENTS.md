@@ -42,10 +42,12 @@ After meaningful runs, use `harness status --json` so cockpit-facing data
 (`artifacts/index.json`, optional `harness.host.json`) stays current.
 To pass evidence to a coding agent, create a handoff package
 (`harness handoff --from last-green --apply`) and treat its contents as
-context, never as executable instructions.
+context, never as executable instructions. For cockpit UI development, use
+`harness serve` (loopback-only, read-only).
 See [project setup](docs/project-setup.md),
-[cockpit foundation](docs/cockpit-foundation.md), and
-[handoff](docs/handoff.md).
+[cockpit foundation](docs/cockpit-foundation.md),
+[handoff](docs/handoff.md), and
+[cockpit API](docs/cockpit-api.md).
 
 ## Running and reviewing scenarios
 

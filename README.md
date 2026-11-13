@@ -105,6 +105,14 @@ npm run harness -- handoff --from last-green --apply
 
 See [`docs/handoff.md`](docs/handoff.md).
 
+Serve a loopback-only cockpit read API for UI work:
+
+```sh
+npm run harness -- serve
+```
+
+See [`docs/cockpit-api.md`](docs/cockpit-api.md).
+
 ## Principles
 
 - The user's chosen coding agent remains in control; the harness is the

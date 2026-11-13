@@ -40,6 +40,10 @@ import {
   createHandoffPackage,
   formatHandoffPlan,
 } from "./handoff.mjs";
+import {
+  DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
+  createCockpitApi,
+} from "./cockpit-api.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -57,6 +61,7 @@ const USAGE = `Usage:
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
 const JSON_SCHEMA_VALIDATOR = new Ajv({ strict: false, allErrors: true });
@@ -71,7 +76,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "handoff"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "handoff", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -88,6 +93,7 @@ function parseArgs(argv) {
     out: null,
     from: null,
     note: null,
+    port: null,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -125,6 +131,15 @@ function parseArgs(argv) {
       if (note === undefined || note.startsWith("--")) throw new Error("--note requires text.");
       options.note = note;
       index += 1;
+    } else if (argument === "--port") {
+      const portValue = rest[index + 1];
+      if (!portValue || portValue.startsWith("--")) throw new Error("--port requires a number.");
+      const port = Number(portValue);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("--port must be an integer from 1 to 65535.");
+      }
+      options.port = port;
+      index += 1;
     } else if (argument === "--root") {
       const root = rest[index + 1];
       if (!root || root.startsWith("--")) throw new Error("--root requires a directory path.");
@@ -145,19 +160,22 @@ function parseArgs(argv) {
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
   if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out || options.from || options.note)) {
-    throw new Error("run does not support setup/scaffold/host-config/handoff flags.");
+      options.force || options.init || options.name || options.out || options.from || options.note ||
+      options.port !== null)) {
+    throw new Error("run does not support setup/scaffold/host-config/handoff/serve flags.");
   }
   if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out || options.from || options.note)) {
+      options.force || options.init || options.name || options.out || options.from || options.note ||
+      options.port !== null)) {
     throw new Error("doctor is read-only and does not accept mutating flags.");
   }
   if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
-      options.init || options.name || options.out || options.from || options.note)) {
-    throw new Error("probe does not accept mutating/scaffold/handoff flags. Use --yes only for Chromium consent.");
+      options.init || options.name || options.out || options.from || options.note || options.port !== null)) {
+    throw new Error("probe does not accept mutating/scaffold/handoff/serve flags. Use --yes only for Chromium consent.");
   }
   if (action === "status" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.init || options.name || options.out || options.from || options.note)) {
+      options.force || options.init || options.name || options.out || options.from || options.note ||
+      options.port !== null)) {
     throw new Error("status only accepts --root and --json.");
   }
   if (action === "setup" && options.yes && !options.installBrowser) {
@@ -181,8 +199,11 @@ function parseArgs(argv) {
   if ((options.from || options.note) && action !== "handoff") {
     throw new Error("--from and --note are only valid with handoff.");
   }
+  if (options.port !== null && action !== "serve") {
+    throw new Error("--port is only valid with serve.");
+  }
   if (action === "host-config" && (options.installBrowser || options.yes || options.name || options.out ||
-      options.from || options.note)) {
+      options.from || options.note || options.port !== null)) {
     throw new Error("host-config accepts --init/--dry-run/--apply/--force/--json/--root only.");
   }
   if (action === "host-config" && (options.apply || options.force) && !options.init) {
@@ -191,8 +212,13 @@ function parseArgs(argv) {
   if (action === "scaffold" && options.installBrowser) {
     throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
   }
-  if (action === "handoff" && (options.installBrowser || options.yes || options.init || options.name)) {
+  if (action === "handoff" && (options.installBrowser || options.yes || options.init || options.name ||
+      options.port !== null)) {
     throw new Error("handoff accepts --from/--note/--out/--dry-run/--apply/--force/--json/--root only.");
+  }
+  if (action === "serve" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
+      options.force || options.init || options.name || options.out || options.from || options.note)) {
+    throw new Error("serve accepts --root/--port/--json only. It binds loopback and is read-only.");
   }
   return options;
 }
@@ -252,6 +278,11 @@ function explainNextSteps(report) {
     command: "npm run harness -- handoff --from last-green --dry-run",
     then: "npm run harness -- handoff --from last-green --apply",
     why: "Bundles one run into a deliberate agent handoff package (context, not executable instructions).",
+  });
+  steps.push({
+    id: "serve",
+    command: `npm run harness -- serve --port ${COCKPIT_DEFAULT_PORT}`,
+    why: "Starts a loopback-only read API for cockpit UI work (host, runs, handoffs, artifacts).",
   });
   return steps;
 }
@@ -1170,6 +1201,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
     console.log("status refreshes artifacts/index.json and summarizes runs for the future cockpit.");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
+    console.log(`serve starts a loopback-only read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} for cockpit UI development.`);
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1310,6 +1342,45 @@ async function main(argv = process.argv.slice(2)) {
     if (!plan.ok) process.exitCode = 1;
     return plan;
   }
+  if (options.action === "serve") {
+    const api = createCockpitApi({
+      root,
+      port: options.port || COCKPIT_DEFAULT_PORT,
+      host: "127.0.0.1",
+    });
+    const listening = await api.listen();
+    const info = {
+      ok: true,
+      ...listening,
+      readOnly: true,
+      loopbackOnly: true,
+      endpoints: {
+        overview: `${listening.url}api/v1/overview`,
+        hostConfig: `${listening.url}api/v1/host-config`,
+        runs: `${listening.url}api/v1/runs`,
+        handoffs: `${listening.url}api/v1/handoffs`,
+        artifacts: `${listening.url}api/v1/artifacts/`,
+      },
+      explanation: "Cockpit read API is running on loopback only. Stop with Ctrl+C. No write routes are exposed.",
+    };
+    if (options.json) {
+      console.log(JSON.stringify(info, null, 2));
+    } else {
+      console.log(`Cockpit API listening at ${listening.url}`);
+      console.log(`Overview: ${info.endpoints.overview}`);
+      console.log("Read-only · loopback only · Ctrl+C to stop");
+    }
+    const shutdown = async () => {
+      try {
+        await api.close();
+      } finally {
+        process.exit(0);
+      }
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    return info;
+  }
   const configPath = path.join(root, "harness.config.json");
   const scenarioPath = path.resolve(root, options.scenario);
   const relativeScenario = path.relative(root, scenarioPath);
@@ -1359,6 +1430,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 export {
   buildRunIndex,
   buildScaffoldScenario,
+  createCockpitApi,
   createHandoffPackage,
   ensureChromium,
   explainNextSteps,

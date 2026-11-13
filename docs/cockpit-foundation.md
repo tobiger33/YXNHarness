@@ -51,6 +51,14 @@ npm run harness -- handoff --from last-green --apply
 
 See [`handoff.md`](handoff.md).
 
+## Read API for UI
+
+```sh
+npm run harness -- serve
+```
+
+Loopback-only JSON for cockpit UI development. See [`cockpit-api.md`](cockpit-api.md).
+
 ## What this is not
 
 - Not collaboration hosting
