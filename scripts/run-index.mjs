@@ -97,7 +97,7 @@ async function buildRunIndex(root) {
         };
         continue;
       }
-      if (entry.name.startsWith(".")) continue;
+      if (entry.name === "handoffs" || entry.name.startsWith(".")) continue;
       runs.push(await summarizeRunDirectory(root, entry.name));
     }
   }
