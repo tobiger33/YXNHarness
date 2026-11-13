@@ -1,0 +1,36 @@
+version: 1
+name: minimal-two-step-flow
+description: Exercise the opt-in app controls across desktop and mobile viewports.
+viewports:
+  - name: desktop
+    width: 1280
+    height: 800
+  - name: mobile
+    width: 390
+    height: 844
+steps:
+  - name: enter name
+    command: setName
+    payload:
+      value: Alex
+    expect:
+      step: details
+      canNext: true
+      values:
+        name: Alex
+    snapshot: name-entered
+  - name: complete flow
+    command: next
+    expect:
+      step: complete
+      canBack: true
+      values:
+        name: Alex
+    snapshot: completion
+  - name: return to first step
+    command: back
+    expect:
+      step: details
+      canBack: false
+      canNext: true
+    snapshot: returned

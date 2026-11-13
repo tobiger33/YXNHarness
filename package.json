@@ -1,0 +1,20 @@
+{
+  "name": "yxnharness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent-neutral harness for visual UI and animation work",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "harness": "node scripts/harness.mjs",
+    "test": "node --test",
+    "serve:example": "node examples/minimal/server.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "js-yaml": "4.3.2",
+    "playwright": "1.65.0"
+  }
+}

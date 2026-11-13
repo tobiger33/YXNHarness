@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "app": {
+    "start": ["node", "examples/minimal/server.mjs"],
+    "url": "http://127.0.0.1:4173/",
+    "startupTimeoutMs": 15000
+  }
+}
