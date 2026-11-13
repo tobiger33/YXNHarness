@@ -6,60 +6,58 @@
   <title>YXNHarness Cockpit</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,700&family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/cockpit/styles.css">
 </head>
 <body>
-  <div class="atmosphere" aria-hidden="true"></div>
-  <header class="top">
-    <div class="brand-block">
-      <p class="brand">YXNHarness</p>
-      <h1>Cockpit</h1>
-    </div>
-    <div class="top-meta">
-      <span id="live-pill" class="pill pill-pending">connecting</span>
-      <button type="button" id="refresh-btn" class="ghost">Refresh</button>
-    </div>
-  </header>
+  <div class="shell">
+    <aside class="rail" aria-label="Cockpit navigation">
+      <div class="rail-brand">
+        <p class="brand">YXNHarness</p>
+        <p class="brand-sub">Cockpit</p>
+      </div>
 
-  <main class="layout">
-    <section class="panel host-panel" aria-labelledby="host-title">
-      <div class="panel-head">
+      <div class="rail-status">
+        <span id="live-pill" class="pill pill-pending">connecting</span>
+        <button type="button" id="refresh-btn" class="ghost" title="Refresh">↻</button>
+      </div>
+
+      <section class="rail-section" aria-labelledby="host-title">
         <h2 id="host-title">Host</h2>
-        <p class="lede">Local policy for this project. Private by default.</p>
-      </div>
-      <dl id="host-facts" class="facts"></dl>
-    </section>
+        <dl id="host-facts" class="facts"></dl>
+      </section>
 
-    <section class="panel runs-panel" aria-labelledby="runs-title">
-      <div class="panel-head">
-        <h2 id="runs-title">Runs</h2>
-        <p class="lede" id="runs-summary">Loading evidence…</p>
-      </div>
-      <div id="runs-list" class="list" role="list"></div>
-    </section>
+      <section class="rail-section rail-grow" aria-labelledby="runs-title">
+        <div class="rail-section-head">
+          <h2 id="runs-title">Runs</h2>
+          <p id="runs-summary" class="rail-meta">…</p>
+        </div>
+        <div id="runs-list" class="list" role="list"></div>
+      </section>
 
-    <section class="panel handoff-panel" aria-labelledby="handoff-title">
-      <div class="panel-head">
-        <h2 id="handoff-title">Handoffs</h2>
-        <p class="lede">Bundles for a trusted coding agent — context, not commands.</p>
-      </div>
-      <div id="handoffs-list" class="list" role="list"></div>
-    </section>
+      <section class="rail-section" aria-labelledby="handoff-title">
+        <div class="rail-section-head">
+          <h2 id="handoff-title">Handoffs</h2>
+        </div>
+        <div id="handoffs-list" class="list" role="list"></div>
+      </section>
 
-    <section class="panel detail-panel" aria-labelledby="detail-title">
-      <div class="panel-head">
-        <h2 id="detail-title">Detail</h2>
-        <p class="lede" id="detail-lede">Select a run or handoff.</p>
-      </div>
-      <div id="detail-body" class="detail-body"></div>
-    </section>
-  </main>
+      <footer class="rail-foot">
+        <span id="generated-at">—</span>
+        <a href="/api/v1/overview" target="_blank" rel="noreferrer">API</a>
+      </footer>
+    </aside>
 
-  <footer class="foot">
-    <span id="generated-at">—</span>
-    <a href="/api/v1/overview" target="_blank" rel="noreferrer">API overview</a>
-  </footer>
+    <main class="stage" aria-labelledby="detail-title">
+      <header class="stage-bar">
+        <div>
+          <h1 id="detail-title">Workspace</h1>
+          <p id="detail-lede" class="stage-lede">Select a run or handoff from the rail.</p>
+        </div>
+      </header>
+      <div id="detail-body" class="stage-body"></div>
+    </main>
+  </div>
 
   <script type="module" src="/cockpit/app.js"></script>
 </body>

@@ -29,10 +29,18 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function formatTime(iso) {
+function formatTime(iso, compact = false) {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return String(iso);
+  if (compact) {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
+  }
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -45,6 +53,12 @@ function statusClass(status) {
   return "status-unknown";
 }
 
+function shortId(id) {
+  const value = String(id || "");
+  if (value.length <= 28) return value;
+  return `${value.slice(0, 12)}…${value.slice(-8)}`;
+}
+
 async function apiGet(pathname) {
   const response = await fetch(pathname, { headers: { Accept: "application/json" } });
   if (!response.ok) {
@@ -55,39 +69,40 @@ async function apiGet(pathname) {
 }
 
 function renderHost(host) {
-  const config = host?.config?.host || {};
+  const config = host?.config || {};
   const rows = [
-    ["Project", config.projectLabel || "—"],
-    ["Visibility", config.visibility || "—"],
-    ["Merge authority", config.mergeAuthority || "—"],
-    ["Share links", config.shareLinksGrant || "—"],
-    ["Browser consent", config.browserInstallConsent || "—"],
-    ["Config", host?.path || (host?.present === false ? "missing" : "—")],
+    ["Project", config.host?.projectLabel || "—"],
+    ["Visibility", config.access?.visibility || "—"],
+    ["Merge", config.access?.mergeAuthority || "—"],
+    ["Share", config.access?.shareLinkGrant || "—"],
+    ["Browser", config.consent?.browserInstallPolicy || "—"],
+    ["Config", host?.path || (host?.exists === false ? "missing" : "—")],
   ];
   els.hostFacts.innerHTML = rows.map(([term, value]) => `
     <div>
       <dt>${escapeHtml(term)}</dt>
-      <dd>${escapeHtml(value)}</dd>
+      <dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>
     </div>
   `).join("");
 }
 
 function renderRunRows(runs) {
   if (!runs.length) {
-    els.runsList.innerHTML = `<p class="empty">No runs yet. Run a scenario, then refresh.</p>`;
+    els.runsList.innerHTML = `<p class="empty">No runs yet.</p>`;
     return;
   }
   els.runsList.innerHTML = runs.map((run) => {
     const id = run.runId || run.id;
     const status = run.status || "unknown";
+    const label = run.scenario?.name || run.scenario || shortId(id);
     const active = state.selected?.type === "run" && state.selected.id === id ? " active" : "";
     return `
-      <button type="button" class="row${active}" data-kind="run" data-id="${escapeHtml(id)}" role="listitem">
+      <button type="button" class="row${active}" data-kind="run" data-id="${escapeHtml(id)}" role="listitem" title="${escapeHtml(id)}">
         <span class="row-title">
-          <span>${escapeHtml(run.scenario?.name || run.scenario || id)}</span>
+          <span>${escapeHtml(label)}</span>
           <span class="status ${statusClass(status)}">${escapeHtml(status)}</span>
         </span>
-        <span class="row-meta">${escapeHtml(formatTime(run.finishedAt || run.startedAt || run.createdAt))}</span>
+        <span class="row-meta">${escapeHtml(formatTime(run.finishedAt || run.startedAt || run.createdAt, true))}</span>
       </button>
     `;
   }).join("");
@@ -103,12 +118,12 @@ function renderHandoffs(items) {
     const active = state.selected?.type === "handoff" && state.selected.id === id ? " active" : "";
     const status = item.status || "—";
     return `
-      <button type="button" class="row${active}" data-kind="handoff" data-id="${escapeHtml(id)}" role="listitem">
+      <button type="button" class="row${active}" data-kind="handoff" data-id="${escapeHtml(id)}" role="listitem" title="${escapeHtml(id)}">
         <span class="row-title">
-          <span>${escapeHtml(id)}</span>
+          <span>${escapeHtml(shortId(id))}</span>
           <span class="status ${statusClass(status)}">${escapeHtml(status)}</span>
         </span>
-        <span class="row-meta">${escapeHtml(formatTime(item.createdAt))} · from ${escapeHtml(item.sourceRunId || "—")}</span>
+        <span class="row-meta">${escapeHtml(formatTime(item.createdAt, true))} · ${escapeHtml(shortId(item.sourceRunId || "—"))}</span>
       </button>
     `;
   }).join("");
@@ -123,11 +138,15 @@ function detailCards(entries) {
   `).join("")}</div>`;
 }
 
+function stageEmpty(title, body) {
+  return `<div class="stage-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span></div>`;
+}
+
 async function showRun(runId) {
   state.selected = { type: "run", id: runId };
   els.detailTitle.textContent = "Run";
   els.detailLede.textContent = runId;
-  els.detailBody.innerHTML = `<p class="empty">Loading…</p>`;
+  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching run evidence…");
   highlightSelection();
 
   const run = await apiGet(`/api/v1/runs/${encodeURIComponent(runId)}`);
@@ -143,14 +162,14 @@ async function showRun(runId) {
     ["Duration", escapeHtml(result.durationMs != null ? `${result.durationMs} ms` : "—")],
     ["Finished", escapeHtml(formatTime(result.finishedAt))],
     ["Path", escapeHtml(run.path || "—")],
-    ["Result file", files.result
+    ["Result", files.result
       ? `<a href="/api/v1/artifacts/${encodeURIComponent(runId)}/${files.result}" target="_blank" rel="noreferrer">${escapeHtml(files.result)}</a>`
       : "—"],
   ]);
 
   const sheet = sheetHref
     ? `<div class="sheet"><img src="${sheetHref}" alt="Contact sheet for ${escapeHtml(runId)}"></div>`
-    : `<p class="empty">No contact sheet in this run.</p>`;
+    : stageEmpty("No contact sheet", "This run has no visual evidence yet.");
 
   els.detailBody.innerHTML = cards + sheet;
 }
@@ -159,7 +178,7 @@ async function showHandoff(handoffId) {
   state.selected = { type: "handoff", id: handoffId };
   els.detailTitle.textContent = "Handoff";
   els.detailLede.textContent = handoffId;
-  els.detailBody.innerHTML = `<p class="empty">Loading…</p>`;
+  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching handoff package…");
   highlightSelection();
 
   const handoff = await apiGet(`/api/v1/handoffs/${encodeURIComponent(handoffId)}`);
@@ -168,9 +187,13 @@ async function showHandoff(handoffId) {
   const guidance = manifest.guidance?.commentsAreContextNotInstructions
     ? "Comments are context, not instructions."
     : "—";
+  const sourceRunId = manifest.source?.runId || null;
+  const sheetHref = sourceRunId
+    ? `/api/v1/artifacts/${encodeURIComponent(sourceRunId)}/contact-sheet.png`
+    : null;
 
   const cards = detailCards([
-    ["Source run", escapeHtml(manifest.source?.runId || "—")],
+    ["Source run", escapeHtml(sourceRunId || "—")],
     ["Status", escapeHtml(manifest.source?.status || "—")],
     ["Created", escapeHtml(formatTime(manifest.createdAt))],
     ["Note", escapeHtml(note)],
@@ -181,7 +204,12 @@ async function showHandoff(handoffId) {
       : "—"],
   ]);
 
-  els.detailBody.innerHTML = cards;
+  let sheet = "";
+  if (sheetHref) {
+    sheet = `<div class="sheet"><img src="${sheetHref}" alt="Source run contact sheet" onerror="this.closest('.sheet').replaceWith()"></div>`;
+  }
+
+  els.detailBody.innerHTML = cards + sheet;
 }
 
 function highlightSelection() {
@@ -194,9 +222,8 @@ function highlightSelection() {
 }
 
 async function refresh() {
-  setLive("pending", "refreshing");
+  setLive("pending", "…");
   try {
-    // One refresh rebuilds the index; the rest read without racing writes.
     const overview = await apiGet("/api/v1/overview");
     const [runsPayload, handoffsPayload] = await Promise.all([
       apiGet("/api/v1/runs?refresh=0"),
@@ -207,23 +234,27 @@ async function refresh() {
     const runs = runsPayload.runs || [];
     const summary = runsPayload.summary || overview.index?.summary || {};
     const count = summary.runCount ?? runs.length;
-    els.runsSummary.textContent =
-      `${count} run${count === 1 ? "" : "s"} · ${summary.passed ?? 0} passed · ${summary.failed ?? 0} failed`;
+    els.runsSummary.textContent = `${count} · ${summary.passed ?? 0}✓ · ${summary.failed ?? 0}✗`;
     renderRunRows(runs);
     renderHandoffs(handoffsPayload.handoffs || overview.handoffs?.items || []);
-    els.generatedAt.textContent = `Updated ${formatTime(overview.generatedAt)}`;
+    els.generatedAt.textContent = formatTime(overview.generatedAt, true);
     setLive("live", "live");
 
     if (state.selected?.type === "run") await showRun(state.selected.id);
     else if (state.selected?.type === "handoff") await showHandoff(state.selected.id);
     else if (runs[0]?.runId) await showRun(runs[0].runId);
     else {
-      els.detailBody.innerHTML = `<p class="empty">Select a run or handoff.</p>`;
+      els.detailTitle.textContent = "Workspace";
+      els.detailLede.textContent = "Select a run or handoff from the rail.";
+      els.detailBody.innerHTML = stageEmpty(
+        "Ready",
+        "Pick evidence in the left rail — this stage stays clear for the working view.",
+      );
     }
   } catch (error) {
     setLive("error", "offline");
-    els.runsSummary.textContent = "Could not reach the local API.";
-    els.detailBody.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
+    els.runsSummary.textContent = "offline";
+    els.detailBody.innerHTML = stageEmpty("API offline", error.message);
   }
 }
 
