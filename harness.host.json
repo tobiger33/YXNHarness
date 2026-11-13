@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "host": {
+    "projectLabel": "yxnharness"
+  },
+  "defaults": {
+    "viewports": [
+      {
+        "name": "desktop",
+        "width": 1280,
+        "height": 800
+      },
+      {
+        "name": "mobile",
+        "width": 390,
+        "height": 844
+      }
+    ],
+    "scenarioOut": "scenarios/smoke.yaml"
+  },
+  "consent": {
+    "browserInstallPolicy": "ask-every-time",
+    "requireExplicitYes": true
+  },
+  "access": {
+    "visibility": "private",
+    "shareLinkGrant": "view",
+    "mergeAuthority": "host"
+  },
+  "moderation": {
+    "requireReviewedExpects": true,
+    "allowForceOverwrite": false
+  }
+}

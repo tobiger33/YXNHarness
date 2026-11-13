@@ -25,6 +25,17 @@ import {
   formatScaffoldPlan,
   writeScaffoldScenario,
 } from "./scenario-scaffold.mjs";
+import {
+  formatHostConfigPlan,
+  formatHostConfigSummary,
+  initHostConfig,
+  loadHostConfig,
+} from "./host-config.mjs";
+import {
+  buildRunIndex,
+  formatRunIndex,
+  writeRunIndex,
+} from "./run-index.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -39,6 +50,8 @@ const USAGE = `Usage:
   npm run harness -- setup [--root path] [--dry-run|--apply] [--install-browser] [--yes] [--json]
   npm run harness -- probe [--root path] [--yes] [--json]
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
+  npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- status [--root path] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
 const JSON_SCHEMA_VALIDATOR = new Ajv({ strict: false, allErrors: true });
@@ -53,7 +66,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -65,6 +78,7 @@ function parseArgs(argv) {
     installBrowser: false,
     yes: false,
     force: false,
+    init: false,
     name: null,
     out: null,
   };
@@ -82,6 +96,8 @@ function parseArgs(argv) {
       options.yes = true;
     } else if (argument === "--force") {
       options.force = true;
+    } else if (argument === "--init") {
+      options.init = true;
     } else if (argument === "--name") {
       const name = rest[index + 1];
       if (!name || name.startsWith("--")) throw new Error("--name requires a scenario name.");
@@ -112,16 +128,20 @@ function parseArgs(argv) {
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
   if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
-      options.force || options.name || options.out)) {
-    throw new Error("run does not support setup/scaffold flags.");
+      options.force || options.init || options.name || options.out)) {
+    throw new Error("run does not support setup/scaffold/host-config flags.");
   }
   if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
-      options.force || options.name || options.out)) {
+      options.force || options.init || options.name || options.out)) {
     throw new Error("doctor is read-only and does not accept mutating flags.");
   }
   if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
-      options.name || options.out)) {
-    throw new Error("probe does not accept --apply/--dry-run/--install-browser/--force/--name/--out. Use --yes only for Chromium consent.");
+      options.init || options.name || options.out)) {
+    throw new Error("probe does not accept --apply/--dry-run/--install-browser/--force/--init/--name/--out. Use --yes only for Chromium consent.");
+  }
+  if (action === "status" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
+      options.force || options.init || options.name || options.out)) {
+    throw new Error("status only accepts --root and --json.");
   }
   if (action === "setup" && options.yes && !options.installBrowser) {
     throw new Error("--yes is only valid with setup when also passing --install-browser.");
@@ -129,8 +149,20 @@ function parseArgs(argv) {
   if (options.installBrowser && action !== "setup") {
     throw new Error("--install-browser is only valid with setup.");
   }
-  if ((options.name || options.out || options.force) && action !== "scaffold") {
-    throw new Error("--name, --out, and --force are only valid with scaffold.");
+  if ((options.name || options.out) && action !== "scaffold") {
+    throw new Error("--name and --out are only valid with scaffold.");
+  }
+  if (options.force && !["scaffold", "host-config"].includes(action)) {
+    throw new Error("--force is only valid with scaffold or host-config.");
+  }
+  if (options.init && action !== "host-config") {
+    throw new Error("--init is only valid with host-config.");
+  }
+  if (action === "host-config" && (options.installBrowser || options.yes || options.name || options.out)) {
+    throw new Error("host-config accepts --init/--dry-run/--apply/--force/--json/--root only.");
+  }
+  if (action === "host-config" && (options.apply || options.force) && !options.init) {
+    throw new Error("--apply and --force require --init for host-config.");
   }
   if (action === "scaffold" && options.installBrowser) {
     throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
@@ -176,6 +208,17 @@ function explainNextSteps(report) {
     id: "run",
     command: "npm run harness -- run scenarios/<name>.yaml --root <project>",
     why: "Produces screenshots, state log, and result.json evidence for the exercised flow.",
+  });
+  steps.push({
+    id: "host-config",
+    command: "npm run harness -- host-config --init --dry-run",
+    then: "npm run harness -- host-config --init --apply",
+    why: "Writes local cockpit policy (visibility, consent, merge authority). No hosting yet — data only.",
+  });
+  steps.push({
+    id: "status",
+    command: "npm run harness -- status --json",
+    why: "Refreshes artifacts/index.json and summarizes runs, pointers, and host config for the future cockpit.",
   });
   return steps;
 }
@@ -1070,6 +1113,11 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
   if (result.status === "passed") {
     await writeLastGreen(root, runId, scenario.name, resultPath);
   }
+  try {
+    await writeRunIndex(root);
+  } catch (error) {
+    console.error(`warning: could not refresh artifacts/index.json: ${error.message}`);
+  }
   console.log(`Scenario ${scenario.name}: ${result.status} (${result.counts.steps} steps, ${result.counts.failures} failures)`);
   console.log(`Artifacts: ${path.relative(root, runDirectory)}`);
   if (result.artifacts.contactSheet) console.log(`Contact sheet: ${path.relative(root, path.join(runDirectory, result.artifacts.contactSheet))}`);
@@ -1086,6 +1134,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log("setup --apply writes only a missing harness.config.json. setup --install-browser plans or installs the browser.");
     console.log("probe starts the configured app and prints live harness commands/state.");
     console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
+    console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
+    console.log("status refreshes artifacts/index.json and summarizes runs for the future cockpit.");
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1173,6 +1223,46 @@ async function main(argv = process.argv.slice(2)) {
     if (!plan.ok) process.exitCode = 1;
     return plan;
   }
+  if (options.action === "host-config") {
+    if (options.init) {
+      const plan = await initHostConfig(root, {
+        apply: options.apply,
+        force: options.force,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatHostConfigPlan(plan));
+      if (plan.status === "blocked") process.exitCode = 1;
+      return plan;
+    }
+    const loaded = await loadHostConfig(root);
+    const report = {
+      ok: true,
+      ...loaded,
+      explanation: loaded.exists
+        ? "Local cockpit policy is present. Hosts can change it later in the cockpit UI; agents should treat it as host intent."
+        : "No harness.host.json yet. Preview defaults with --init --dry-run, then --init --apply after host review.",
+    };
+    console.log(options.json ? JSON.stringify(report, null, 2) : formatHostConfigSummary(loaded));
+    return report;
+  }
+  if (options.action === "status") {
+    const host = await loadHostConfig(root);
+    const index = await writeRunIndex(root);
+    const report = {
+      ok: true,
+      root,
+      host,
+      index,
+      explanation: "Status is the local cockpit data surface: host policy plus a refreshed run index under artifacts/index.json.",
+    };
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatHostConfigSummary(host));
+      console.log("");
+      console.log(formatRunIndex(index));
+    }
+    return report;
+  }
   const configPath = path.join(root, "harness.config.json");
   const scenarioPath = path.resolve(root, options.scenario);
   const relativeScenario = path.relative(root, scenarioPath);
@@ -1220,16 +1310,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export {
+  buildRunIndex,
   buildScaffoldScenario,
   ensureChromium,
   explainNextSteps,
   formatBrowserPlan,
   formatDoctorReport,
+  formatHostConfigPlan,
+  formatHostConfigSummary,
   formatProbeReport,
+  formatRunIndex,
   formatScaffoldPlan,
   formatSetupPlan,
+  initHostConfig,
   inspectProject,
   isJsonValue,
+  loadHostConfig,
   matchesExpected,
   parseArgs,
   probeApp,
@@ -1239,5 +1335,6 @@ export {
   validateConfig,
   validateScenario,
   withTimeout,
+  writeRunIndex,
   writeScaffoldScenario,
 };

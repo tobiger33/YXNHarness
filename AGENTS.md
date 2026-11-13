@@ -38,7 +38,10 @@ expects before treating a run as evidence. If no control surface exists,
 implement it natively in the target project. Never derive app state from DOM
 inspection. Never install Chromium without host consent (`--yes`). Never
 overwrite scenarios with `--force` without host consent.
-See [project setup](docs/project-setup.md).
+After meaningful runs, use `harness status --json` so cockpit-facing data
+(`artifacts/index.json`, optional `harness.host.json`) stays current.
+See [project setup](docs/project-setup.md) and
+[cockpit foundation](docs/cockpit-foundation.md).
 
 ## Running and reviewing scenarios
 

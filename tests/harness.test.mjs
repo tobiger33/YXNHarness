@@ -10,8 +10,10 @@ import {
   buildScaffoldScenario,
   ensureChromium,
   explainNextSteps,
+  initHostConfig,
   inspectProject,
   isJsonValue,
+  loadHostConfig,
   matchesExpected,
   parseArgs,
   setupProject,
@@ -19,9 +21,11 @@ import {
   validateConfig,
   validateScenario,
   withTimeout,
+  writeRunIndex,
   writeScaffoldScenario,
 } from "../scripts/harness.mjs";
 import { chromiumStatus } from "../scripts/browser-setup.mjs";
+import { defaultHostConfig, validateHostConfig } from "../scripts/host-config.mjs";
 
 test("scenario validation accepts the supported data model", () => {
   const scenario = validateScenario({
@@ -183,7 +187,7 @@ test("JSON values reject non-finite numbers and executable object types", () => 
   assert.equal(isJsonValue(cyclic), false);
 });
 
-test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", () => {
+test("CLI parsing handles run, doctor, probe, scaffold, host-config, and status", () => {
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
     action: "run",
@@ -193,6 +197,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: false,
     yes: false,
     force: false,
+    init: false,
     name: null,
     out: null,
     scenario: "scenarios/demo.yaml",
@@ -206,6 +211,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: false,
     yes: false,
     force: false,
+    init: false,
     name: null,
     out: null,
     root: "/tmp/app",
@@ -218,6 +224,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: false,
     yes: false,
     force: false,
+    init: false,
     name: null,
     out: null,
     root: "/tmp/app",
@@ -230,6 +237,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: true,
     yes: true,
     force: false,
+    init: false,
     name: null,
     out: null,
   });
@@ -241,6 +249,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: false,
     yes: true,
     force: false,
+    init: false,
     name: null,
     out: null,
   });
@@ -252,8 +261,33 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
     installBrowser: false,
     yes: false,
     force: false,
+    init: false,
     name: "smoke",
     out: "scenarios/smoke.yaml",
+  });
+  assert.deepEqual(parseArgs(["host-config", "--init", "--apply"]), {
+    action: "host-config",
+    dryRun: false,
+    apply: true,
+    json: false,
+    installBrowser: false,
+    yes: false,
+    force: false,
+    init: true,
+    name: null,
+    out: null,
+  });
+  assert.deepEqual(parseArgs(["status", "--json"]), {
+    action: "status",
+    dryRun: false,
+    apply: false,
+    json: true,
+    installBrowser: false,
+    yes: false,
+    force: false,
+    init: false,
+    name: null,
+    out: null,
   });
   assert.throws(() => parseArgs(["run", "--dry-run"]), /scenario YAML path/);
   assert.throws(() => parseArgs(["doctor", "--apply"]), /read-only|mutating/);
@@ -261,7 +295,8 @@ test("CLI parsing handles run, doctor, probe, scaffold, and safe setup modes", (
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold or host-config/);
+  assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -294,7 +329,80 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "browser"));
     assert.ok(steps.some((step) => step.id === "probe"));
     assert.ok(steps.some((step) => step.id === "scaffold"));
+    assert.ok(steps.some((step) => step.id === "host-config"));
+    assert.ok(steps.some((step) => step.id === "status"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("host config defaults are private and never grant write via share links", async () => {
+  const config = validateHostConfig(defaultHostConfig({ projectLabel: "demo" }));
+  assert.equal(config.access.visibility, "private");
+  assert.equal(config.access.mergeAuthority, "host");
+  assert.equal(config.access.shareLinkGrant, "view");
+  assert.equal(config.consent.requireExplicitYes, true);
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-host-config-"));
+  try {
+    const preview = await initHostConfig(root, { apply: false });
+    assert.equal(preview.status, "ready");
+    await assert.rejects(readFile(path.join(root, "harness.host.json")));
+
+    const written = await initHostConfig(root, { apply: true });
+    assert.equal(written.status, "written");
+    const loaded = await loadHostConfig(root);
+    assert.equal(loaded.exists, true);
+    assert.equal(loaded.config.host.projectLabel, path.basename(root));
+
+    const blocked = await initHostConfig(root, { apply: true });
+    assert.equal(blocked.status, "blocked");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("run index summarizes artifact directories and pointers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-run-index-"));
+  try {
+    const runId = "2026-01-01T00-00-00-000Z-1";
+    const runDir = path.join(root, "artifacts", runId);
+    await mkdir(path.join(runDir, "screenshots"), { recursive: true });
+    await writeFile(path.join(runDir, "result.json"), JSON.stringify({
+      version: 1,
+      runId,
+      scenario: { name: "demo", path: "scenarios/demo.yaml" },
+      status: "passed",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      finishedAt: "2026-01-01T00:00:01.000Z",
+      durationMs: 1000,
+      counts: { viewports: 1, steps: 1, failures: 0, screenshots: 1 },
+      artifacts: {
+        stateLog: "state.jsonl",
+        appLog: "app.log",
+        screenshots: ["screenshots/a.png"],
+        contactSheet: "contact-sheet.png",
+      },
+    }));
+    await writeFile(path.join(root, "artifacts", "last-run.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+      status: "passed",
+    }));
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+    }));
+
+    const index = await writeRunIndex(root);
+    assert.equal(index.summary.runCount, 1);
+    assert.equal(index.summary.passed, 1);
+    assert.equal(index.runs[0].scenario, "demo");
+    assert.equal(index.pointers.lastRun.runId, runId);
+    assert.match(await readFile(path.join(root, "artifacts", "index.json"), "utf8"), /"runCount": 1/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
