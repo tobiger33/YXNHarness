@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const installMessage = "Chromium is missing. Install it with: npx playwright install chromium";
+const installMessage = "Chromium is missing. Ask the host, then: npm run harness -- setup --install-browser --yes";
 
 function run(label, args, environment = process.env) {
   const result = spawnSync(process.execPath, args, {

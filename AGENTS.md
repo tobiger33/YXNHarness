@@ -29,10 +29,15 @@ semantic JSON state and a discoverable list of supported commands. Use the
 target app's native actions to implement those commands.
 
 For an existing target project, run `harness doctor --root <project>` first.
-It is a read-only heuristic, not a substitute for inspecting the app. Preview
-`harness setup --root <project> --dry-run` before `--apply`; setup may write
-only a missing `harness.config.json`. If no control surface exists, implement
-it natively in the target project. Never derive app state from DOM inspection.
+It is a read-only heuristic, not a substitute for inspecting the app. Follow
+the reported `nextSteps`: preview `setup --dry-run` before `--apply` (writes
+only a missing `harness.config.json`); ask the host before
+`setup --install-browser --yes`; `probe --json` for live commands/state; then
+`scaffold --dry-run` / `--apply` for a draft scenario. Review payloads and add
+expects before treating a run as evidence. If no control surface exists,
+implement it natively in the target project. Never derive app state from DOM
+inspection. Never install Chromium without host consent (`--yes`). Never
+overwrite scenarios with `--force` without host consent.
 See [project setup](docs/project-setup.md).
 
 ## Running and reviewing scenarios

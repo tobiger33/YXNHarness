@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -16,11 +16,31 @@ import {
   inspectProject,
   setupProject,
 } from "./project-doctor.mjs";
+import {
+  ensureChromium,
+  formatBrowserPlan,
+} from "./browser-setup.mjs";
+import {
+  buildScaffoldScenario,
+  formatScaffoldPlan,
+  writeScaffoldScenario,
+} from "./scenario-scaffold.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
 
-const INSTALL_BROWSER_MESSAGE = "Chromium is missing. Install it with: npx playwright install chromium";
+const INSTALL_BROWSER_MESSAGE = [
+  "Chromium is missing for local harness runs.",
+  "Ask the project host for permission, then run:",
+  "  npm run harness -- setup --install-browser --yes",
+].join("\n");
+const USAGE = `Usage:
+  npm run harness -- doctor [--root path] [--json]
+  npm run harness -- setup [--root path] [--dry-run|--apply] [--install-browser] [--yes] [--json]
+  npm run harness -- probe [--root path] [--yes] [--json]
+  npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
+  npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
+  npm run harness -- --help`;
 const JSON_SCHEMA_VALIDATOR = new Ajv({ strict: false, allErrors: true });
 const SCENARIO_VALIDATOR = new Ajv({ strict: false, allErrors: true }).compile(scenarioSchema);
 const SAFE_INHERITED_ENV = [
@@ -32,12 +52,22 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 
 function parseArgs(argv) {
   const [action, ...rest] = argv;
-  if (action === "--help" || action === "-h") return { help: true };
-  if (!["run", "doctor", "setup"].includes(action)) {
-    throw new Error('Usage: npm run harness -- <run|doctor|setup> [scenario.yaml] [--root path] [--dry-run|--apply] [--json]\n       npm run harness -- --help');
+  if (action === "--help" || action === "-h" || action === "help") return { help: true };
+  if (!["run", "doctor", "setup", "probe", "scaffold"].includes(action)) {
+    throw new Error(USAGE);
   }
 
-  const options = { action, dryRun: false, apply: false, json: false };
+  const options = {
+    action,
+    dryRun: false,
+    apply: false,
+    json: false,
+    installBrowser: false,
+    yes: false,
+    force: false,
+    name: null,
+    out: null,
+  };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
     if (argument === "--dry-run") {
@@ -46,6 +76,22 @@ function parseArgs(argv) {
       options.apply = true;
     } else if (argument === "--json") {
       options.json = true;
+    } else if (argument === "--install-browser") {
+      options.installBrowser = true;
+    } else if (argument === "--yes" || argument === "-y") {
+      options.yes = true;
+    } else if (argument === "--force") {
+      options.force = true;
+    } else if (argument === "--name") {
+      const name = rest[index + 1];
+      if (!name || name.startsWith("--")) throw new Error("--name requires a scenario name.");
+      options.name = name;
+      index += 1;
+    } else if (argument === "--out") {
+      const out = rest[index + 1];
+      if (!out || out.startsWith("--")) throw new Error("--out requires a file path.");
+      options.out = out;
+      index += 1;
     } else if (argument === "--root") {
       const root = rest[index + 1];
       if (!root || root.startsWith("--")) throw new Error("--root requires a directory path.");
@@ -65,13 +111,73 @@ function parseArgs(argv) {
   if (options.dryRun && options.apply) throw new Error("--dry-run and --apply cannot be used together.");
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
-  if (action === "run" && (options.apply || options.json)) {
-    throw new Error("run does not support --apply or --json.");
+  if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
+      options.force || options.name || options.out)) {
+    throw new Error("run does not support setup/scaffold flags.");
   }
-  if (action === "doctor" && (options.apply || options.dryRun)) {
-    throw new Error("doctor is read-only and does not accept --apply or --dry-run.");
+  if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
+      options.force || options.name || options.out)) {
+    throw new Error("doctor is read-only and does not accept mutating flags.");
+  }
+  if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
+      options.name || options.out)) {
+    throw new Error("probe does not accept --apply/--dry-run/--install-browser/--force/--name/--out. Use --yes only for Chromium consent.");
+  }
+  if (action === "setup" && options.yes && !options.installBrowser) {
+    throw new Error("--yes is only valid with setup when also passing --install-browser.");
+  }
+  if (options.installBrowser && action !== "setup") {
+    throw new Error("--install-browser is only valid with setup.");
+  }
+  if ((options.name || options.out || options.force) && action !== "scaffold") {
+    throw new Error("--name, --out, and --force are only valid with scaffold.");
+  }
+  if (action === "scaffold" && options.installBrowser) {
+    throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
   }
   return options;
+}
+
+function explainNextSteps(report) {
+  const steps = [];
+  if (!report.harness.configExists) {
+    steps.push({
+      id: "config",
+      command: "npm run harness -- setup --root <project> --dry-run",
+      then: "npm run harness -- setup --root <project> --apply",
+      why: "Writes only a missing harness.config.json (start command + local URL). Preview first, then apply.",
+    });
+  }
+  steps.push({
+    id: "browser",
+    command: "npm run harness -- setup --install-browser",
+    then: "npm run harness -- setup --install-browser --yes",
+    why: "Checks Chromium. Ask the host before --yes; the harness installs it only after consent.",
+  });
+  if (report.harness.controlSurface.status === "no-reference") {
+    steps.push({
+      id: "control-surface",
+      command: null,
+      why: "The trusted coding agent must add opt-in window.__harness using the app's own actions/state (see docs/control-convention.md). The harness never rewrites the UI.",
+    });
+  }
+  steps.push({
+    id: "probe",
+    command: "npm run harness -- probe --root <project> --json",
+    why: "Starts the app, reads live commands() and state(), and prints them.",
+  });
+  steps.push({
+    id: "scaffold",
+    command: "npm run harness -- scaffold --root <project> --dry-run",
+    then: "npm run harness -- scaffold --root <project> --apply",
+    why: "Turns probe commands into a draft scenario YAML. Review payloads/expects before trusting a green run.",
+  });
+  steps.push({
+    id: "run",
+    command: "npm run harness -- run scenarios/<name>.yaml --root <project>",
+    why: "Produces screenshots, state log, and result.json evidence for the exercised flow.",
+  });
+  return steps;
 }
 
 function assert(condition, message) {
@@ -673,6 +779,180 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
   return viewportResult;
 }
 
+async function startManagedApp(root, config, appLogPath) {
+  await mkdir(path.dirname(appLogPath), { recursive: true });
+  const appLog = createWriteStream(appLogPath);
+  const command = config.app.start[0];
+  const args = config.app.start.slice(1);
+  console.log(`Starting app: ${[command, ...args].join(" ")}`);
+  let childSpawnError;
+  const child = spawn(command, args, {
+    cwd: root,
+    env: getAppEnvironment(config),
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+    detached: true,
+  });
+  child.on("error", (error) => { childSpawnError = error; });
+  child.stdout.pipe(appLog, { end: false });
+  child.stderr.pipe(appLog, { end: false });
+  try {
+    await waitForApp(config.app.url, config.app.startupTimeoutMs, child,
+      path.relative(root, appLogPath), () => childSpawnError);
+  } catch (error) {
+    try {
+      await stopChild(child);
+    } catch {
+      // Prefer the original readiness error.
+    }
+    await new Promise((resolve) => appLog.end(() => resolve()));
+    throw error;
+  }
+  return {
+    child,
+    async close() {
+      const errors = [];
+      try {
+        await stopChild(child);
+      } catch (error) {
+        errors.push(error.message);
+      }
+      try {
+        await new Promise((resolve, reject) => {
+          appLog.end((error) => error ? reject(error) : resolve());
+        });
+      } catch (error) {
+        errors.push(`could not close app log: ${error.message}`);
+      }
+      if (errors.length) throw new Error(errors.join("; "));
+    },
+  };
+}
+
+async function readHarnessContract(page, timeoutMs) {
+  try {
+    await page.waitForFunction(() => Boolean(window.__harness), undefined, { timeout: timeoutMs });
+  } catch (error) {
+    if (error.name === "TimeoutError") {
+      throw new Error(`App did not expose window.__harness within ${timeoutMs}ms after ?harness=1.`);
+    }
+    throw error;
+  }
+  return evaluateWithTimeout(page, () => {
+    if (!window.__harness) throw new Error("App did not expose window.__harness after ?harness=1.");
+    if (window.__harness.version !== 1) throw new Error(`Unsupported control contract version ${window.__harness.version}.`);
+    if (typeof window.__harness.state !== "function" ||
+        typeof window.__harness.commands !== "function" ||
+        typeof window.__harness.command !== "function" ||
+        typeof window.__harness.on !== "function" ||
+        typeof window.__harness.off !== "function") {
+      throw new Error("Harness control API does not satisfy the required methods.");
+    }
+    const clockMethods = ["pause", "resume", "advance", "seek", "now"];
+    if (!window.__harness.clock ||
+        clockMethods.some((method) => typeof window.__harness.clock[method] !== "function")) {
+      throw new Error("Harness control API has an incomplete clock.");
+    }
+    const commands = window.__harness.commands();
+    if (!Array.isArray(commands)) throw new Error("commands() must return an array.");
+    const state = window.__harness.state();
+    const encodedCommands = JSON.stringify(commands);
+    const encodedState = JSON.stringify(state);
+    if (typeof encodedCommands !== "string" || typeof encodedState !== "string") {
+      throw new Error("commands()/state() must return JSON values.");
+    }
+    window.__harness.clock.pause();
+    const clock = window.__harness.clock.now();
+    if (!Number.isFinite(clock)) throw new Error("clock.now() must return a finite number.");
+    return {
+      version: window.__harness.version,
+      commands: JSON.parse(encodedCommands),
+      state: JSON.parse(encodedState),
+      clock,
+    };
+  }, undefined, timeoutMs, "harness contract inspection");
+}
+
+async function probeApp({ root, config, yes = false }) {
+  const browserPlan = ensureChromium(root, { yes });
+  if (!browserPlan.ok) {
+    return {
+      ok: false,
+      status: browserPlan.status,
+      browser: browserPlan,
+      explanation: browserPlan.explanation,
+      next: browserPlan.resumeWith ? [browserPlan.resumeWith, "npm run harness -- probe --json"] : [],
+    };
+  }
+
+  const probeDirectory = path.join(root, "artifacts", "probe");
+  await mkdir(probeDirectory, { recursive: true });
+  const managed = await startManagedApp(root, config, path.join(probeDirectory, "app.log"));
+  let browser;
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-color-profile=srgb"],
+    });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+    page.setDefaultTimeout(config.app.commandTimeoutMs);
+    page.setDefaultNavigationTimeout(config.app.navigationTimeoutMs);
+    const appUrl = new URL(config.app.url);
+    appUrl.searchParams.set("harness", "1");
+    await page.goto(appUrl.href, {
+      waitUntil: "domcontentloaded",
+      timeout: config.app.navigationTimeoutMs,
+    });
+    const harness = await readHarnessContract(page, config.app.navigationTimeoutMs);
+    await page.close();
+    return {
+      ok: true,
+      status: "ready",
+      app: {
+        start: config.app.start,
+        url: config.app.url,
+      },
+      browser: {
+        status: browserPlan.status,
+        action: browserPlan.action,
+        path: browserPlan.path,
+      },
+      harness,
+      explanation: "Live control surface is reachable. Use harness.commands[].name in scenario steps; keep payloads inside each command's payloadSchema.",
+      next: [
+        "npm run harness -- scaffold --dry-run",
+        "npm run harness -- scaffold --apply",
+        "Review payloads/expects, then npm run harness -- run scenarios/smoke.yaml",
+      ],
+    };
+  } finally {
+    if (browser) await browser.close();
+    await managed.close();
+  }
+}
+
+function formatProbeReport(report) {
+  if (!report.ok) {
+    const lines = [`Probe: ${report.status}`, report.explanation || ""];
+    if (report.browser?.askUser) lines.push(`Ask user: ${report.browser.askUser}`);
+    for (const step of report.next || []) lines.push(`Next: ${step}`);
+    return lines.filter(Boolean).join("\n");
+  }
+  const commandNames = (report.harness?.commands || []).map((command) => command.name);
+  const lines = [
+    "Probe: ready",
+    `App start: ${report.app.start.join(" ")}`,
+    `URL: ${report.app.url}`,
+    `Harness version: ${report.harness.version}`,
+    `Clock: ${report.harness.clock}`,
+    `Commands (${commandNames.length}): ${commandNames.join(", ") || "(none)"}`,
+    `Initial state: ${JSON.stringify(report.harness.state)}`,
+    report.explanation,
+  ];
+  for (const step of report.next || []) lines.push(`Next: ${step}`);
+  return lines.join("\n");
+}
+
 async function runScenario({ root, scenarioPath, scenario, config }) {
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
   const runDirectory = path.join(root, "artifacts", runId);
@@ -723,7 +1003,8 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
     await waitForApp(config.app.url, config.app.startupTimeoutMs, child,
       path.relative(root, appLogPath), () => childSpawnError);
 
-    if (!existsSync(chromium.executablePath())) throw new Error(INSTALL_BROWSER_MESSAGE);
+    const browserPlan = ensureChromium(root, { yes: false });
+    if (!browserPlan.ok) throw new Error(INSTALL_BROWSER_MESSAGE);
     browser = await chromium.launch({
       headless: true,
       args: ["--disable-gpu", "--force-color-profile=srgb"],
@@ -799,23 +1080,97 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help) {
-    console.log("Usage:");
-    console.log("  npm run harness -- doctor [--root path] [--json]");
-    console.log("  npm run harness -- setup [--root path] [--dry-run|--apply] [--json]");
-    console.log("  npm run harness -- run <scenario.yaml> [--root path] [--dry-run]");
-    console.log("setup defaults to a read-only dry run; --apply writes only a missing harness.config.json.");
+    console.log(USAGE);
+    console.log("");
+    console.log("Consent model: the harness never installs Chromium unless you pass --yes after asking the host.");
+    console.log("setup --apply writes only a missing harness.config.json. setup --install-browser plans or installs the browser.");
+    console.log("probe starts the configured app and prints live harness commands/state.");
+    console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
   if (options.action === "doctor") {
     const report = await inspectProject(root);
-    console.log(options.json ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
+    report.nextSteps = explainNextSteps(report);
+    if (options.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatDoctorReport(report));
+      console.log("");
+      console.log("What to do next (host decides; trusted agent may execute):");
+      for (const step of report.nextSteps) {
+        console.log(`- ${step.id}: ${step.why}`);
+        if (step.command) console.log(`    ${step.command}`);
+        if (step.then) console.log(`    then: ${step.then}`);
+      }
+    }
     return report;
   }
   if (options.action === "setup") {
-    const plan = await setupProject(root, { apply: options.apply });
-    console.log(options.json ? JSON.stringify(plan, null, 2) : formatSetupPlan(plan));
-    if (plan.status === "blocked") process.exitCode = 1;
+    const plan = {
+      version: 1,
+      root,
+      config: null,
+      browser: null,
+    };
+    // Default `setup` (no flags) previews config. `--install-browser` alone skips config.
+    const wantsConfig = options.apply || options.dryRun || !options.installBrowser;
+    if (wantsConfig) {
+      plan.config = await setupProject(root, { apply: options.apply });
+    }
+    if (options.installBrowser) {
+      plan.browser = ensureChromium(root, { yes: options.yes });
+    }
+
+    if (options.json) {
+      console.log(JSON.stringify(plan, null, 2));
+    } else {
+      if (plan.config) console.log(formatSetupPlan(plan.config));
+      if (plan.browser) {
+        if (plan.config) console.log("");
+        console.log(formatBrowserPlan(plan.browser));
+      }
+    }
+    if (plan.config?.status === "blocked" || (plan.browser && !plan.browser.ok)) process.exitCode = 1;
+    return plan;
+  }
+  if (options.action === "probe") {
+    const configPath = path.join(root, "harness.config.json");
+    const config = validateConfig(await loadJson(configPath, "harness config"));
+    const report = await probeApp({ root, config, yes: options.yes });
+    console.log(options.json ? JSON.stringify(report, null, 2) : formatProbeReport(report));
+    if (!report.ok) process.exitCode = 1;
+    return report;
+  }
+  if (options.action === "scaffold") {
+    const configPath = path.join(root, "harness.config.json");
+    const config = validateConfig(await loadJson(configPath, "harness config"));
+    const probe = await probeApp({ root, config, yes: options.yes });
+    if (!probe.ok) {
+      console.log(options.json ? JSON.stringify({ ok: false, probe }, null, 2) : formatProbeReport(probe));
+      process.exitCode = 1;
+      return probe;
+    }
+    const scenarioName = options.name || "smoke";
+    const scenario = buildScaffoldScenario({
+      commands: probe.harness.commands,
+      initialState: probe.harness.state,
+      name: scenarioName,
+      projectName: path.basename(root),
+    });
+    validateScenario(scenario, "scaffold");
+    const plan = await writeScaffoldScenario(root, scenario, {
+      out: options.out || path.join("scenarios", `${scenarioName}.yaml`),
+      apply: options.apply,
+      force: options.force,
+    });
+    plan.ok = plan.status !== "blocked";
+    plan.probe = {
+      commands: probe.harness.commands.map(({ name }) => name),
+      state: probe.harness.state,
+    };
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatScaffoldPlan(plan));
+    if (!plan.ok) process.exitCode = 1;
     return plan;
   }
   const configPath = path.join(root, "harness.config.json");
@@ -865,16 +1220,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export {
+  buildScaffoldScenario,
+  ensureChromium,
+  explainNextSteps,
+  formatBrowserPlan,
   formatDoctorReport,
+  formatProbeReport,
+  formatScaffoldPlan,
   formatSetupPlan,
   inspectProject,
   isJsonValue,
   matchesExpected,
   parseArgs,
+  probeApp,
   runScenario,
   setupProject,
   stopChild,
   validateConfig,
   validateScenario,
   withTimeout,
+  writeScaffoldScenario,
 };

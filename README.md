@@ -29,7 +29,11 @@ Requirements: Node.js 20+ and npm.
 
 ```sh
 npm ci
-npx playwright install chromium
+npm run harness -- setup --install-browser
+# Ask the host, then:
+npm run harness -- setup --install-browser --yes
+npm run harness -- probe --json
+npm run harness -- scaffold --dry-run
 npm run harness -- run scenarios/minimal.yaml --dry-run
 npm run harness -- run scenarios/minimal.yaml
 ```
@@ -61,19 +65,24 @@ infer product state. See [`docs/control-convention.md`](docs/control-convention.
 
 ## Use with an existing project
 
-Point the read-only doctor at the target, then preview setup before applying:
+Host decides; the trusted coding agent explains and executes:
 
 ```sh
 npm run harness -- doctor --root /path/to/project
 npm run harness -- setup --root /path/to/project --dry-run
 npm run harness -- setup --root /path/to/project --apply
+npm run harness -- setup --install-browser
+npm run harness -- setup --install-browser --yes
+npm run harness -- probe --root /path/to/project --json
+npm run harness -- scaffold --root /path/to/project --dry-run
+npm run harness -- scaffold --root /path/to/project --apply
 ```
 
-Setup writes only a missing `harness.config.json`; it does not modify app
-source, install dependencies, or launch the project. If the doctor reports a
-missing control surface, implement it through the target app's native APIs.
-See [`docs/project-setup.md`](docs/project-setup.md) for detection limits and
-the integration workflow.
+`setup --apply` writes only a missing `harness.config.json`. Browser install
+requires `--yes` after the host consents. `probe` prints live commands/state;
+`scaffold` turns them into a draft scenario to review before running. If the
+doctor reports a missing control surface, implement it through the target app's
+native APIs. See [`docs/project-setup.md`](docs/project-setup.md).
 
 ## Principles
 
