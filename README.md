@@ -33,6 +33,7 @@ npm run harness -- setup --install-browser
 # Ask the host, then:
 npm run harness -- setup --install-browser --yes
 npm run harness -- probe --json
+npm run harness -- scaffold --dry-run
 npm run harness -- run scenarios/minimal.yaml --dry-run
 npm run harness -- run scenarios/minimal.yaml
 ```
@@ -73,13 +74,15 @@ npm run harness -- setup --root /path/to/project --apply
 npm run harness -- setup --install-browser
 npm run harness -- setup --install-browser --yes
 npm run harness -- probe --root /path/to/project --json
+npm run harness -- scaffold --root /path/to/project --dry-run
+npm run harness -- scaffold --root /path/to/project --apply
 ```
 
 `setup --apply` writes only a missing `harness.config.json`. Browser install
-requires `--yes` after the host consents. `probe` starts the app and prints live
-commands/state for scenario authoring. If the doctor reports a missing control
-surface, implement it through the target app's native APIs.
-See [`docs/project-setup.md`](docs/project-setup.md) for the full workflow.
+requires `--yes` after the host consents. `probe` prints live commands/state;
+`scaffold` turns them into a draft scenario to review before running. If the
+doctor reports a missing control surface, implement it through the target app's
+native APIs. See [`docs/project-setup.md`](docs/project-setup.md).
 
 ## Principles
 

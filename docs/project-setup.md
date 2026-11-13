@@ -64,11 +64,26 @@ npm run harness -- probe --root /path/to/project --json
 ```
 
 Probe starts the configured app, opens it with `?harness=1`, and prints live
-`commands()`, `state()`, and clock time. Use that output to write scenario YAML.
-If Chromium is missing, probe asks for the same consent path (`--yes`) instead of
-installing silently.
+`commands()`, `state()`, and clock time. If Chromium is missing, probe asks for
+the same consent path (`--yes`) instead of installing silently.
 
-## 5. Wire the control surface (native, in the target app)
+## 5. Scaffold a draft scenario
+
+Turn the live command list into a reviewable YAML draft:
+
+```sh
+npm run harness -- scaffold --root /path/to/project --dry-run
+npm run harness -- scaffold --root /path/to/project --apply
+```
+
+Scaffold probes the app, fills example payloads from each command's
+`payloadSchema`, and writes `scenarios/smoke.yaml` by default (`--name` /
+`--out` to choose). It never invents authoritative `expect` blocks — the host
+or trusted agent must review payloads and add expectations before trusting a
+green run. Existing files are preserved unless `--force` is passed after host
+consent.
+
+## 6. Wire the control surface (native, in the target app)
 
 If the doctor cannot find `window.__harness`, implement the control surface in
 the target app using its native actions and state. Do not infer state by parsing

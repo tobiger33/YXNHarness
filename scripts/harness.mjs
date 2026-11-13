@@ -20,6 +20,11 @@ import {
   ensureChromium,
   formatBrowserPlan,
 } from "./browser-setup.mjs";
+import {
+  buildScaffoldScenario,
+  formatScaffoldPlan,
+  writeScaffoldScenario,
+} from "./scenario-scaffold.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -33,6 +38,7 @@ const USAGE = `Usage:
   npm run harness -- doctor [--root path] [--json]
   npm run harness -- setup [--root path] [--dry-run|--apply] [--install-browser] [--yes] [--json]
   npm run harness -- probe [--root path] [--yes] [--json]
+  npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
 const JSON_SCHEMA_VALIDATOR = new Ajv({ strict: false, allErrors: true });
@@ -47,7 +53,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -58,6 +64,9 @@ function parseArgs(argv) {
     json: false,
     installBrowser: false,
     yes: false,
+    force: false,
+    name: null,
+    out: null,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -71,6 +80,18 @@ function parseArgs(argv) {
       options.installBrowser = true;
     } else if (argument === "--yes" || argument === "-y") {
       options.yes = true;
+    } else if (argument === "--force") {
+      options.force = true;
+    } else if (argument === "--name") {
+      const name = rest[index + 1];
+      if (!name || name.startsWith("--")) throw new Error("--name requires a scenario name.");
+      options.name = name;
+      index += 1;
+    } else if (argument === "--out") {
+      const out = rest[index + 1];
+      if (!out || out.startsWith("--")) throw new Error("--out requires a file path.");
+      options.out = out;
+      index += 1;
     } else if (argument === "--root") {
       const root = rest[index + 1];
       if (!root || root.startsWith("--")) throw new Error("--root requires a directory path.");
@@ -90,20 +111,29 @@ function parseArgs(argv) {
   if (options.dryRun && options.apply) throw new Error("--dry-run and --apply cannot be used together.");
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
-  if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes)) {
-    throw new Error("run does not support --apply, --json, --install-browser, or --yes.");
+  if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
+      options.force || options.name || options.out)) {
+    throw new Error("run does not support setup/scaffold flags.");
   }
-  if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes)) {
-    throw new Error("doctor is read-only and does not accept --apply, --dry-run, --install-browser, or --yes.");
+  if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
+      options.force || options.name || options.out)) {
+    throw new Error("doctor is read-only and does not accept mutating flags.");
   }
-  if (action === "probe" && (options.apply || options.dryRun || options.installBrowser)) {
-    throw new Error("probe does not accept --apply, --dry-run, or --install-browser. Use --yes only to consent to a missing Chromium install.");
+  if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
+      options.name || options.out)) {
+    throw new Error("probe does not accept --apply/--dry-run/--install-browser/--force/--name/--out. Use --yes only for Chromium consent.");
   }
   if (action === "setup" && options.yes && !options.installBrowser) {
     throw new Error("--yes is only valid with setup when also passing --install-browser.");
   }
   if (options.installBrowser && action !== "setup") {
     throw new Error("--install-browser is only valid with setup.");
+  }
+  if ((options.name || options.out || options.force) && action !== "scaffold") {
+    throw new Error("--name, --out, and --force are only valid with scaffold.");
+  }
+  if (action === "scaffold" && options.installBrowser) {
+    throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
   }
   return options;
 }
@@ -134,7 +164,13 @@ function explainNextSteps(report) {
   steps.push({
     id: "probe",
     command: "npm run harness -- probe --root <project> --json",
-    why: "Starts the app, reads live commands() and state(), and prints them. Use this before writing scenario YAML.",
+    why: "Starts the app, reads live commands() and state(), and prints them.",
+  });
+  steps.push({
+    id: "scaffold",
+    command: "npm run harness -- scaffold --root <project> --dry-run",
+    then: "npm run harness -- scaffold --root <project> --apply",
+    why: "Turns probe commands into a draft scenario YAML. Review payloads/expects before trusting a green run.",
   });
   steps.push({
     id: "run",
@@ -884,9 +920,9 @@ async function probeApp({ root, config, yes = false }) {
       harness,
       explanation: "Live control surface is reachable. Use harness.commands[].name in scenario steps; keep payloads inside each command's payloadSchema.",
       next: [
-        "Write or update a scenario YAML using only command names from this probe.",
-        "npm run harness -- run scenarios/<name>.yaml --dry-run",
-        "npm run harness -- run scenarios/<name>.yaml",
+        "npm run harness -- scaffold --dry-run",
+        "npm run harness -- scaffold --apply",
+        "Review payloads/expects, then npm run harness -- run scenarios/smoke.yaml",
       ],
     };
   } finally {
@@ -1048,7 +1084,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log("");
     console.log("Consent model: the harness never installs Chromium unless you pass --yes after asking the host.");
     console.log("setup --apply writes only a missing harness.config.json. setup --install-browser plans or installs the browser.");
-    console.log("probe starts the configured app and prints live harness commands/state for scenario authoring.");
+    console.log("probe starts the configured app and prints live harness commands/state.");
+    console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1105,6 +1142,37 @@ async function main(argv = process.argv.slice(2)) {
     if (!report.ok) process.exitCode = 1;
     return report;
   }
+  if (options.action === "scaffold") {
+    const configPath = path.join(root, "harness.config.json");
+    const config = validateConfig(await loadJson(configPath, "harness config"));
+    const probe = await probeApp({ root, config, yes: options.yes });
+    if (!probe.ok) {
+      console.log(options.json ? JSON.stringify({ ok: false, probe }, null, 2) : formatProbeReport(probe));
+      process.exitCode = 1;
+      return probe;
+    }
+    const scenarioName = options.name || "smoke";
+    const scenario = buildScaffoldScenario({
+      commands: probe.harness.commands,
+      initialState: probe.harness.state,
+      name: scenarioName,
+      projectName: path.basename(root),
+    });
+    validateScenario(scenario, "scaffold");
+    const plan = await writeScaffoldScenario(root, scenario, {
+      out: options.out || path.join("scenarios", `${scenarioName}.yaml`),
+      apply: options.apply,
+      force: options.force,
+    });
+    plan.ok = plan.status !== "blocked";
+    plan.probe = {
+      commands: probe.harness.commands.map(({ name }) => name),
+      state: probe.harness.state,
+    };
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatScaffoldPlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   const configPath = path.join(root, "harness.config.json");
   const scenarioPath = path.resolve(root, options.scenario);
   const relativeScenario = path.relative(root, scenarioPath);
@@ -1152,11 +1220,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export {
+  buildScaffoldScenario,
   ensureChromium,
   explainNextSteps,
   formatBrowserPlan,
   formatDoctorReport,
   formatProbeReport,
+  formatScaffoldPlan,
   formatSetupPlan,
   inspectProject,
   isJsonValue,
@@ -1169,4 +1239,5 @@ export {
   validateConfig,
   validateScenario,
   withTimeout,
+  writeScaffoldScenario,
 };
