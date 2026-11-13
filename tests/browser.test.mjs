@@ -19,7 +19,7 @@ test("the example keeps its normal UI functional when the harness is not opted i
   skip: process.env.SKIP_BROWSER === "1" ? "SKIP_BROWSER=1" : false,
 }, async () => {
   assert.ok(existsSync(chromium.executablePath()),
-    "Chromium is missing. Install it with: npx playwright install chromium");
+    "Chromium is missing. Ask the host, then: npm run harness -- setup --install-browser --yes");
   const child = spawn(process.execPath, [serverPath], {
     env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: "0" },
     stdio: ["ignore", "pipe", "pipe"],
@@ -74,7 +74,7 @@ test("a non-resolving app command times out and aborts the viewport", {
   skip: process.env.SKIP_BROWSER === "1" ? "SKIP_BROWSER=1" : false,
 }, async () => {
   assert.ok(existsSync(chromium.executablePath()),
-    "Chromium is missing. Install it with: npx playwright install chromium");
+    "Chromium is missing. Ask the host, then: npm run harness -- setup --install-browser --yes");
   const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-command-timeout-"));
   const serverPath = path.join(root, "server.mjs");
   const probe = createServer();

@@ -7,6 +7,8 @@ import process from "node:process";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  ensureChromium,
+  explainNextSteps,
   inspectProject,
   isJsonValue,
   matchesExpected,
@@ -17,6 +19,7 @@ import {
   validateScenario,
   withTimeout,
 } from "../scripts/harness.mjs";
+import { chromiumStatus } from "../scripts/browser-setup.mjs";
 
 test("scenario validation accepts the supported data model", () => {
   const scenario = validateScenario({
@@ -178,13 +181,15 @@ test("JSON values reject non-finite numbers and executable object types", () => 
   assert.equal(isJsonValue(cyclic), false);
 });
 
-test("CLI parsing handles run, doctor, and safe setup modes", () => {
+test("CLI parsing handles run, doctor, probe, and safe setup modes", () => {
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
     action: "run",
     dryRun: true,
     apply: false,
     json: false,
+    installBrowser: false,
+    yes: false,
     scenario: "scenarios/demo.yaml",
     root: "/tmp/app",
   });
@@ -193,6 +198,8 @@ test("CLI parsing handles run, doctor, and safe setup modes", () => {
     dryRun: false,
     apply: false,
     json: true,
+    installBrowser: false,
+    yes: false,
     root: "/tmp/app",
   });
   assert.deepEqual(parseArgs(["setup", "--root", "/tmp/app", "--apply"]), {
@@ -200,13 +207,67 @@ test("CLI parsing handles run, doctor, and safe setup modes", () => {
     dryRun: false,
     apply: true,
     json: false,
+    installBrowser: false,
+    yes: false,
     root: "/tmp/app",
+  });
+  assert.deepEqual(parseArgs(["setup", "--install-browser", "--yes"]), {
+    action: "setup",
+    dryRun: false,
+    apply: false,
+    json: false,
+    installBrowser: true,
+    yes: true,
+  });
+  assert.deepEqual(parseArgs(["probe", "--json", "--yes"]), {
+    action: "probe",
+    dryRun: false,
+    apply: false,
+    json: true,
+    installBrowser: false,
+    yes: true,
   });
   assert.throws(() => parseArgs(["run", "--dry-run"]), /scenario YAML path/);
   assert.throws(() => parseArgs(["doctor", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["setup", "--apply", "--dry-run"]), /cannot be used together/);
+  assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
+  assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
+});
+
+test("browser ensure requires host consent before installing", () => {
+  const status = chromiumStatus();
+  if (status.installed) {
+    const ready = ensureChromium(process.cwd(), { yes: false });
+    assert.equal(ready.ok, true);
+    assert.equal(ready.action, "noop");
+  } else {
+    const blocked = ensureChromium(process.cwd(), { yes: false });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.status, "consent-required");
+    assert.match(blocked.askUser, /May I install Chromium/);
+    assert.match(blocked.resumeWith, /--install-browser --yes/);
+  }
+});
+
+test("doctor next steps explain the host/agent workflow", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-next-steps-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "sample-app",
+      scripts: { dev: "vite" },
+      devDependencies: { vite: "6.0.0" },
+    }));
+    const report = await inspectProject(root);
+    const steps = explainNextSteps(report);
+    assert.equal(steps[0].id, "config");
+    assert.ok(steps.some((step) => step.id === "browser"));
+    assert.ok(steps.some((step) => step.id === "probe"));
+    assert.ok(steps.some((step) => step.id === "control-surface"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("doctor detects web project facts and setup previews or safely writes configuration", async () => {
