@@ -84,6 +84,18 @@ requires `--yes` after the host consents. `probe` prints live commands/state;
 doctor reports a missing control surface, implement it through the target app's
 native APIs. See [`docs/project-setup.md`](docs/project-setup.md).
 
+## Cockpit foundation (local)
+
+Host policy and a refreshed run index prepare the future cockpit without hosting:
+
+```sh
+npm run harness -- host-config --init --dry-run
+npm run harness -- host-config --init --apply
+npm run harness -- status --json
+```
+
+See [`docs/cockpit-foundation.md`](docs/cockpit-foundation.md).
+
 ## Principles
 
 - The user's chosen coding agent remains in control; the harness is the
