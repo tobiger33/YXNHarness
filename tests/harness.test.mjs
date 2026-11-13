@@ -429,6 +429,19 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(overview.index.summary.runCount, 1);
     assert.equal(overview.api.readOnly, true);
 
+    const ui = await fetch(listening.url);
+    assert.equal(ui.status, 200);
+    assert.match(ui.headers.get("content-type") || "", /text\/html/);
+    assert.match(await ui.text(), /YXNHarness/);
+
+    const css = await fetch(`${listening.url}cockpit/styles.css`);
+    assert.equal(css.status, 200);
+    assert.match(css.headers.get("content-type") || "", /text\/css/);
+
+    const apiIndex = await fetch(`${listening.url}api/v1`).then((response) => response.json());
+    assert.equal(apiIndex.name, "yxnharness-cockpit-api");
+    assert.equal(apiIndex.links.ui, "/");
+
     const run = await fetch(`${listening.url}api/v1/runs/${encodeURIComponent(runId)}`).then((response) => response.json());
     assert.equal(run.result.status, "passed");
 
@@ -438,6 +451,9 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
 
     const forbidden = await fetch(`${listening.url}api/v1/artifacts/%2e%2e/%2e%2e/package.json`);
     assert.ok([403, 404].includes(forbidden.status), `expected blocked artifact escape, got ${forbidden.status}`);
+
+    const uiEscape = await fetch(`${listening.url}cockpit/%2e%2e/package.json`);
+    assert.ok([403, 404].includes(uiEscape.status), `expected blocked UI escape, got ${uiEscape.status}`);
 
     const post = await fetch(`${listening.url}api/v1/overview`, { method: "POST" });
     assert.equal(post.status, 405);

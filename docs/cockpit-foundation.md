@@ -57,7 +57,8 @@ See [`handoff.md`](handoff.md).
 npm run harness -- serve
 ```
 
-Loopback-only JSON for cockpit UI development. See [`cockpit-api.md`](cockpit-api.md).
+Loopback-only UI + JSON for cockpit development (`/` shell, `/api/v1` data).
+See [`cockpit-api.md`](cockpit-api.md).
 
 ## What this is not
 

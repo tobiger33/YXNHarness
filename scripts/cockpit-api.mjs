@@ -1,10 +1,25 @@
 import { createServer } from "node:http";
 import { access, readFile, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadHostConfig } from "./host-config.mjs";
 import { buildRunIndex, writeRunIndex } from "./run-index.mjs";
 
 const DEFAULT_PORT = 8787;
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_UI_ROOT = path.join(PACKAGE_ROOT, "cockpit");
+
+const UI_CONTENT_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
+  [".svg", "image/svg+xml"],
+  [".png", "image/png"],
+  [".ico", "image/x-icon"],
+  [".woff2", "font/woff2"],
+]);
+
 const ARTIFACT_CONTENT_TYPES = new Map([
   [".json", "application/json; charset=utf-8"],
   [".jsonl", "application/x-ndjson; charset=utf-8"],
@@ -199,18 +214,18 @@ async function getHandoff(root, handoffId) {
   };
 }
 
-async function resolveArtifactFile(root, requestPath) {
-  const artifactsRoot = path.resolve(root, "artifacts");
-  const realArtifactsRoot = await realpath(artifactsRoot);
+async function resolveContainedFile(root, requestPath) {
+  const containedRoot = path.resolve(root);
+  const realContainedRoot = await realpath(containedRoot);
   const decoded = decodeURIComponent(requestPath);
-  const absolute = path.resolve(artifactsRoot, `.${decoded}`);
-  if (absolute !== artifactsRoot && !absolute.startsWith(`${artifactsRoot}${path.sep}`)) {
+  const absolute = path.resolve(containedRoot, `.${decoded.startsWith("/") ? decoded : `/${decoded}`}`);
+  if (absolute !== containedRoot && !absolute.startsWith(`${containedRoot}${path.sep}`)) {
     const error = new Error("Forbidden path.");
     error.statusCode = 403;
     throw error;
   }
   const realFile = await realpath(absolute);
-  if (realFile !== realArtifactsRoot && !realFile.startsWith(`${realArtifactsRoot}${path.sep}`)) {
+  if (realFile !== realContainedRoot && !realFile.startsWith(`${realContainedRoot}${path.sep}`)) {
     const error = new Error("Forbidden path.");
     error.statusCode = 403;
     throw error;
@@ -223,8 +238,58 @@ async function resolveArtifactFile(root, requestPath) {
   return realFile;
 }
 
-function createCockpitApi({ root, port = DEFAULT_PORT, host = "127.0.0.1" } = {}) {
+async function resolveArtifactFile(root, requestPath) {
+  return resolveContainedFile(path.resolve(root, "artifacts"), requestPath);
+}
+
+async function resolveUiFile(uiRoot, requestPath) {
+  const relative = requestPath === "/" || requestPath === ""
+    ? "/index.html"
+    : requestPath.replace(/^\/cockpit(?=\/|$)/, "") || "/index.html";
+  return resolveContainedFile(uiRoot, relative);
+}
+
+async function sendFile(response, method, filePath, contentTypes) {
+  const body = await readFile(filePath);
+  const contentType = contentTypes.get(path.extname(filePath).toLowerCase()) ||
+    "application/octet-stream";
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": body.length,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(method === "HEAD" ? undefined : body);
+}
+
+function apiIndexPayload(projectRoot) {
+  return {
+    name: "yxnharness-cockpit-api",
+    version: 1,
+    readOnly: true,
+    loopbackOnly: true,
+    root: projectRoot,
+    links: {
+      ui: "/",
+      health: "/api/v1/health",
+      overview: "/api/v1/overview",
+      hostConfig: "/api/v1/host-config",
+      runs: "/api/v1/runs",
+      handoffs: "/api/v1/handoffs",
+      artifacts: "/api/v1/artifacts/",
+    },
+    note: "Local cockpit UI + read API. No writes, no remote bind.",
+  };
+}
+
+function createCockpitApi({
+  root,
+  port = DEFAULT_PORT,
+  host = "127.0.0.1",
+  uiRoot = DEFAULT_UI_ROOT,
+} = {}) {
   const projectRoot = path.resolve(root);
+  const staticRoot = path.resolve(uiRoot);
   const server = createServer(async (request, response) => {
     try {
       if (request.method !== "GET" && request.method !== "HEAD") {
@@ -242,23 +307,22 @@ function createCockpitApi({ root, port = DEFAULT_PORT, host = "127.0.0.1" } = {}
 
       const { pathname, searchParams } = url;
 
-      if (pathname === "/" || pathname === "/api" || pathname === "/api/v1") {
-        sendJson(response, 200, {
-          name: "yxnharness-cockpit-api",
-          version: 1,
-          readOnly: true,
-          loopbackOnly: true,
-          root: projectRoot,
-          links: {
-            health: "/api/v1/health",
-            overview: "/api/v1/overview",
-            hostConfig: "/api/v1/host-config",
-            runs: "/api/v1/runs",
-            handoffs: "/api/v1/handoffs",
-            artifacts: "/api/v1/artifacts/",
-          },
-          note: "Local cockpit read API for UI development. No writes, no remote bind.",
-        });
+      if (pathname === "/api" || pathname === "/api/v1") {
+        sendJson(response, 200, apiIndexPayload(projectRoot));
+        return;
+      }
+
+      if (pathname === "/" || pathname === "/index.html" || pathname.startsWith("/cockpit/")) {
+        try {
+          const filePath = await resolveUiFile(staticRoot, pathname === "/index.html" ? "/" : pathname);
+          await sendFile(response, request.method, filePath, UI_CONTENT_TYPES);
+        } catch (error) {
+          if (error.statusCode === 403 || error.statusCode === 404 || error.code === "ENOENT") {
+            sendText(response, error.statusCode === 403 ? 403 : 404, "Not found");
+            return;
+          }
+          throw error;
+        }
         return;
       }
 
@@ -324,22 +388,13 @@ function createCockpitApi({ root, port = DEFAULT_PORT, host = "127.0.0.1" } = {}
           return;
         }
         const filePath = await resolveArtifactFile(projectRoot, artifactPath);
-        const body = await readFile(filePath);
-        const contentType = ARTIFACT_CONTENT_TYPES.get(path.extname(filePath).toLowerCase()) ||
-          "application/octet-stream";
-        response.writeHead(200, {
-          "Content-Type": contentType,
-          "Content-Length": body.length,
-          "Cache-Control": "no-store",
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(request.method === "HEAD" ? undefined : body);
+        await sendFile(response, request.method, filePath, ARTIFACT_CONTENT_TYPES);
         return;
       }
 
       sendJson(response, 404, { error: "Not found", path: pathname });
     } catch (error) {
-      const statusCode = error.statusCode || 500;
+      const statusCode = error.code === "ENOENT" ? 404 : (error.statusCode || 500);
       sendJson(response, statusCode, { error: error.message });
     }
   });
@@ -347,6 +402,7 @@ function createCockpitApi({ root, port = DEFAULT_PORT, host = "127.0.0.1" } = {}
   return {
     server,
     root: projectRoot,
+    uiRoot: staticRoot,
     port,
     host,
     async listen() {
@@ -375,6 +431,7 @@ function createCockpitApi({ root, port = DEFAULT_PORT, host = "127.0.0.1" } = {}
 
 export {
   DEFAULT_PORT,
+  DEFAULT_UI_ROOT,
   buildOverview,
   createCockpitApi,
   listHandoffs,

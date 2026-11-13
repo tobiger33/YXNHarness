@@ -1,0 +1,321 @@
+:root {
+  --ink: #102a2e;
+  --muted: #5b6f74;
+  --paper: #f3f1ea;
+  --panel: rgba(255, 252, 247, 0.88);
+  --line: rgba(16, 42, 46, 0.12);
+  --accent: #0f6b63;
+  --accent-soft: #d7efe9;
+  --pass: #1f7a4c;
+  --fail: #a33b2b;
+  --pending: #8a6a1f;
+  --shadow: 0 18px 50px rgba(16, 42, 46, 0.08);
+  --radius: 18px;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-body: "Sora", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--ink);
+  font-family: var(--font-body);
+  background: var(--paper);
+}
+
+body {
+  position: relative;
+  padding: 28px clamp(16px, 4vw, 40px) 48px;
+}
+
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(900px 500px at 8% -10%, rgba(15, 107, 99, 0.18), transparent 60%),
+    radial-gradient(700px 420px at 100% 0%, rgba(163, 59, 43, 0.08), transparent 55%),
+    linear-gradient(160deg, #efece3 0%, #f7f5f0 45%, #e7eef0 100%);
+}
+
+.atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(16, 42, 46, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 42, 46, 0.035) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 28px;
+  animation: rise 480ms ease-out both;
+}
+
+.brand {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+
+.top h1 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.top-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  background: white;
+}
+
+.pill-live { color: var(--pass); background: #e7f6ee; border-color: rgba(31, 122, 76, 0.25); }
+.pill-pending { color: var(--pending); background: #f7efd8; }
+.pill-error { color: var(--fail); background: #f8e8e4; }
+
+.ghost, .row {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+
+.ghost:hover, .row:hover, .row:focus-visible {
+  transform: translateY(-1px);
+  background: white;
+  border-color: rgba(15, 107, 99, 0.35);
+  outline: none;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(280px, 1.2fr) minmax(240px, 1fr);
+  grid-template-areas:
+    "host runs handoff"
+    "detail detail detail";
+  gap: 16px;
+}
+
+.host-panel { grid-area: host; animation: rise 560ms ease-out both; }
+.runs-panel { grid-area: runs; animation: rise 640ms ease-out both; }
+.handoff-panel { grid-area: handoff; animation: rise 720ms ease-out both; }
+.detail-panel { grid-area: detail; animation: rise 800ms ease-out both; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+  padding: 18px;
+  min-height: 220px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.facts {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+}
+
+.facts div {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.facts dt {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  font-weight: 500;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.row {
+  width: 100%;
+  border-radius: 14px;
+  text-align: left;
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  min-height: 0;
+}
+
+.row.active {
+  border-color: rgba(15, 107, 99, 0.45);
+  background: var(--accent-soft);
+}
+
+.row-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.row-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.status {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.status-passed { color: var(--pass); }
+.status-failed { color: var(--fail); }
+.status-unknown { color: var(--muted); }
+
+.detail-body {
+  margin-top: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.detail-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.detail-card h3 {
+  margin: 0 0 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.detail-card p, .detail-card a {
+  margin: 0;
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.sheet {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: #111;
+}
+
+.sheet img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 8px 0;
+}
+
+.foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.foot a { color: var(--accent); }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 980px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "host"
+      "runs"
+      "handoff"
+      "detail";
+  }
+
+  .top {
+    flex-direction: column;
+    align-items: start;
+  }
+}
