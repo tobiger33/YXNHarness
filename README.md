@@ -36,7 +36,9 @@ npm run harness -- run scenarios/minimal.yaml
 
 The runner starts the example app using the argument array in
 [`harness.config.json`](harness.config.json), waits for its local URL, and
-stops the child process when the run finishes. `--dry-run` prints the planned
+stops its process tree when the run finishes. Navigation and control calls are
+bounded by configurable timeouts; the runner waits for the opt-in control API
+instead of waiting for all network connections to become idle. `--dry-run` prints the planned
 app command and scenario without launching either process.
 The runner starts only loopback URLs, uses `shell: false`, and gives the app a
 minimal environment; add only deliberately needed variable names to
@@ -47,11 +49,31 @@ run contains viewport screenshots, `state.jsonl`, `contact-sheet.png`, and
 `result.json`. A failed command or state expectation gives the run a non-zero
 exit code.
 
+Scenarios can also seek or advance the app's virtual clock and assert the
+resulting time. `npm run verify` repeats the same scenario and checks that its
+captured PNG frames are byte-identical.
+
 ## Control contract
 
 The app must opt in with `?harness=1` or `window.__HARNESS_ENABLED__ = true`
 before exposing `window.__harness`. The runner does not inspect the DOM to
 infer product state. See [`docs/control-convention.md`](docs/control-convention.md).
+
+## Use with an existing project
+
+Point the read-only doctor at the target, then preview setup before applying:
+
+```sh
+npm run harness -- doctor --root /path/to/project
+npm run harness -- setup --root /path/to/project --dry-run
+npm run harness -- setup --root /path/to/project --apply
+```
+
+Setup writes only a missing `harness.config.json`; it does not modify app
+source, install dependencies, or launch the project. If the doctor reports a
+missing control surface, implement it through the target app's native APIs.
+See [`docs/project-setup.md`](docs/project-setup.md) for detection limits and
+the integration workflow.
 
 ## Principles
 

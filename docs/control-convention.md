@@ -64,6 +64,24 @@ allowlist is inherited by default; `app.inheritEnv` names additional variables
 explicitly and should not include credentials when running untrusted project
 code.
 
+A scenario can advance or seek the virtual clock without calling an app
+command:
+
+```yaml
+- name: render at 250ms
+  clock:
+    seek: 250
+  expectClock: 250
+  snapshot: frame-250ms
+```
+
+`advance` takes a non-negative delta; `seek` sets an absolute time, both in
+milliseconds. Each step may assert `expectClock`. The runner pauses the clock
+before the scenario, bounds app navigation and control calls with configurable
+timeouts (`app.navigationTimeoutMs` and `app.commandTimeoutMs`), and stops the
+app's process tree after the run. Navigation waits for document readiness and
+the explicit control API rather than requiring the network to become idle.
+
 ## Target-project integration
 
 When adding the control surface to an existing project, implement it using the

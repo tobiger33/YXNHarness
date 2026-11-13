@@ -28,6 +28,13 @@ with a target app. The target must opt in to `window.__harness` and expose
 semantic JSON state and a discoverable list of supported commands. Use the
 target app's native actions to implement those commands.
 
+For an existing target project, run `harness doctor --root <project>` first.
+It is a read-only heuristic, not a substitute for inspecting the app. Preview
+`harness setup --root <project> --dry-run` before `--apply`; setup may write
+only a missing `harness.config.json`. If no control surface exists, implement
+it natively in the target project. Never derive app state from DOM inspection.
+See [project setup](docs/project-setup.md).
+
 ## Running and reviewing scenarios
 
 Before launching a configured app command, inspect `harness.config.json` and

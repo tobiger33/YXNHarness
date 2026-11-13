@@ -31,14 +31,31 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["command"],
         "properties": {
           "name": { "type": "string", "minLength": 1 },
           "command": { "type": "string", "minLength": 1 },
           "payload": {},
+          "clock": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "advance": { "type": "number", "minimum": 0, "maximum": 86400000 },
+              "seek": { "type": "number", "minimum": 0, "maximum": 86400000 }
+            }
+          },
           "expect": { "type": "object" },
+          "expectClock": { "type": "number", "minimum": 0, "maximum": 86400000 },
           "snapshot": { "type": "string", "minLength": 1 }
-        }
+        },
+        "oneOf": [
+          { "required": ["command"], "not": { "required": ["clock"] } },
+          {
+            "required": ["clock"],
+            "not": { "anyOf": [{ "required": ["command"] }, { "required": ["payload"] }] }
+          }
+        ]
       }
     }
   }

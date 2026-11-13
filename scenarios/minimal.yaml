@@ -27,6 +27,16 @@ steps:
       values:
         name: Alex
     snapshot: completion
+  - name: advance deterministic clock
+    clock:
+      advance: 125
+    expectClock: 125
+    snapshot: clock-advanced
+  - name: seek deterministic clock
+    clock:
+      seek: 40
+    expectClock: 40
+    snapshot: clock-seeked
   - name: return to first step
     command: back
     expect:

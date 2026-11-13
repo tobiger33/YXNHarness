@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -10,6 +10,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import Ajv from "ajv";
 import yaml from "js-yaml";
 import { chromium } from "playwright";
+import {
+  formatDoctorReport,
+  formatSetupPlan,
+  inspectProject,
+  setupProject,
+} from "./project-doctor.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -21,19 +27,25 @@ const SAFE_INHERITED_ENV = [
   "PATH", "HOME", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "TERM",
   "SystemRoot", "WINDIR", "PATHEXT", "ComSpec",
 ];
+const DEFAULT_NAVIGATION_TIMEOUT_MS = 30000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h") return { help: true };
-  if (action !== "run") {
-    throw new Error('Usage: npm run harness -- run <scenario.yaml> [--root path] [--dry-run]\n       npm run harness -- --help');
+  if (!["run", "doctor", "setup"].includes(action)) {
+    throw new Error('Usage: npm run harness -- <run|doctor|setup> [scenario.yaml] [--root path] [--dry-run|--apply] [--json]\n       npm run harness -- --help');
   }
 
-  const options = { action, dryRun: false };
+  const options = { action, dryRun: false, apply: false, json: false };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
     if (argument === "--dry-run") {
       options.dryRun = true;
+    } else if (argument === "--apply") {
+      options.apply = true;
+    } else if (argument === "--json") {
+      options.json = true;
     } else if (argument === "--root") {
       const root = rest[index + 1];
       if (!root || root.startsWith("--")) throw new Error("--root requires a directory path.");
@@ -41,14 +53,24 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument.startsWith("--")) {
       throw new Error(`Unknown option "${argument}".`);
-    } else if (!options.scenario) {
+    } else if (action === "run" && !options.scenario) {
       options.scenario = argument;
+    } else if (action !== "run") {
+      throw new Error(`${action} does not accept a scenario path.`);
     } else {
       throw new Error(`Unexpected argument "${argument}".`);
     }
   }
 
-  if (!options.scenario) throw new Error("A scenario YAML path is required.");
+  if (options.dryRun && options.apply) throw new Error("--dry-run and --apply cannot be used together.");
+  if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
+  if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
+  if (action === "run" && (options.apply || options.json)) {
+    throw new Error("run does not support --apply or --json.");
+  }
+  if (action === "doctor" && (options.apply || options.dryRun)) {
+    throw new Error("doctor is read-only and does not accept --apply or --dry-run.");
+  }
   return options;
 }
 
@@ -79,9 +101,25 @@ function validateScenario(scenario, scenarioPath) {
 
   for (const [index, step] of scenario.steps.entries()) {
     assert(step && typeof step === "object" && !Array.isArray(step), `steps[${index}] must be an object.`);
-    assert(typeof step.command === "string" && step.command.trim(), `steps[${index}] needs a command name.`);
+    const hasCommand = typeof step.command === "string" && step.command.trim().length > 0;
+    const hasClock = step.clock !== undefined;
+    assert(hasCommand !== hasClock, `steps[${index}] must define exactly one of command or clock.`);
+    if (hasClock) {
+      assert(step.clock && typeof step.clock === "object" && !Array.isArray(step.clock),
+        `steps[${index}].clock must be an object.`);
+      const operations = Object.keys(step.clock);
+      assert(operations.length === 1 && ["advance", "seek"].includes(operations[0]),
+        `steps[${index}].clock must contain exactly one of advance or seek.`);
+      const time = step.clock[operations[0]];
+      assert(Number.isFinite(time) && time >= 0 && time <= 86400000,
+        `steps[${index}].clock time must be between 0 and 86400000 milliseconds.`);
+      assert(step.payload === undefined, `steps[${index}] clock actions may not have a command payload.`);
+    }
     assert(step.payload === undefined || isJsonValue(step.payload), `steps[${index}] payload must be JSON-compatible.`);
     assert(step.expect === undefined || isJsonObject(step.expect), `steps[${index}] expect must be an object.`);
+    assert(step.expectClock === undefined ||
+      (Number.isFinite(step.expectClock) && step.expectClock >= 0 && step.expectClock <= 86400000),
+    `steps[${index}].expectClock must be between 0 and 86400000 milliseconds.`);
     if (step.snapshot !== undefined) {
       assert(typeof step.snapshot === "string" && step.snapshot.trim(), `steps[${index}] snapshot must be a non-empty string.`);
     }
@@ -105,6 +143,14 @@ function validateConfig(config) {
     (config.app.startupTimeoutMs ?? 15000) >= 1000 &&
     (config.app.startupTimeoutMs ?? 15000) <= 120000,
   "app.startupTimeoutMs must be between 1000 and 120000.");
+  assert(Number.isInteger(config.app.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS) &&
+    (config.app.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS) >= 1000 &&
+    (config.app.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS) <= 120000,
+  "app.navigationTimeoutMs must be between 1000 and 120000.");
+  assert(Number.isInteger(config.app.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) &&
+    (config.app.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) >= 1000 &&
+    (config.app.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS) <= 120000,
+  "app.commandTimeoutMs must be between 1000 and 120000.");
   const inheritEnv = config.app.inheritEnv ?? [];
   assert(Array.isArray(inheritEnv) && inheritEnv.every((name) =>
     typeof name === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
@@ -117,6 +163,8 @@ function validateConfig(config) {
       ...config.app,
       url: appUrl.href,
       startupTimeoutMs: config.app.startupTimeoutMs ?? 15000,
+      navigationTimeoutMs: config.app.navigationTimeoutMs ?? DEFAULT_NAVIGATION_TIMEOUT_MS,
+      commandTimeoutMs: config.app.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
       inheritEnv,
     },
   };
@@ -198,37 +246,94 @@ async function loadScenario(filePath) {
   return validateScenario(scenario, filePath);
 }
 
-async function waitForApp(url, timeoutMs, child, logPath) {
+async function waitForApp(url, timeoutMs, child, logPath, getSpawnError) {
   const deadline = Date.now() + timeoutMs;
   let lastError = "no response";
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`app process exited with code ${child.exitCode}; see ${logPath}`);
+    const spawnError = getSpawnError();
+    if (spawnError) throw new Error(`could not start app process: ${spawnError.message}; see ${logPath}`);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`app process exited (${child.exitCode === null ? child.signalCode : `code ${child.exitCode}`}); see ${logPath}`);
     }
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      const remainingMs = Math.max(1, deadline - Date.now());
+      const response = await fetch(url, { signal: AbortSignal.timeout(Math.min(1000, remainingMs)) });
       if (response.ok) return;
       lastError = `HTTP ${response.status}`;
     } catch (error) {
       lastError = error.message;
     }
-    await delay(250);
+    await delay(Math.min(250, Math.max(1, deadline - Date.now())));
   }
   throw new Error(`app did not become ready at ${url} within ${timeoutMs}ms (${lastError}); see ${logPath}`);
 }
 
-async function stopChild(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise((resolve) => child.once("exit", resolve));
-  child.kill("SIGTERM");
-  const didExit = await Promise.race([
-    exited.then(() => true),
-    delay(3000).then(() => false),
-  ]);
-  if (!didExit && child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGKILL");
-    await exited;
+async function stopChild(child, { graceMs = 3000, forceGraceMs = 2000 } = {}) {
+  if (!child.pid) return;
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      encoding: "utf8",
+      stdio: "ignore",
+      timeout: 5000,
+      shell: false,
+    });
+    if (result.error) throw new Error(`could not stop app process tree: ${result.error.message}`);
+    if (result.status !== 0 && child.exitCode === null && child.signalCode === null) {
+      throw new Error(`taskkill could not stop app process tree (exit ${result.status}).`);
+    }
+    return;
   }
+
+  const signalGroup = (signal) => {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      throw new Error(`could not send ${signal} to app process group ${child.pid}: ${error.message}`);
+    }
+  };
+  const groupExists = () => {
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      if (error.code === "EPERM") return true;
+      throw new Error(`could not inspect app process group ${child.pid}: ${error.message}`);
+    }
+  };
+  const waitForGroupExit = async (timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    while (groupExists() && Date.now() < deadline) await delay(50);
+    return !groupExists();
+  };
+
+  signalGroup("SIGTERM");
+  if (await waitForGroupExit(graceMs)) return;
+  signalGroup("SIGKILL");
+  if (!await waitForGroupExit(forceGraceMs)) {
+    throw new Error(`app process group ${child.pid} remained alive after SIGKILL.`);
+  }
+}
+
+class HarnessTimeoutError extends Error {
+  constructor(label, timeoutMs) {
+    super(`${label} timed out after ${timeoutMs}ms.`);
+    this.name = "HarnessTimeoutError";
+  }
+}
+
+function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new HarnessTimeoutError(label, timeoutMs)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function evaluateWithTimeout(page, callback, argument, timeoutMs, label) {
+  return withTimeout(page.evaluate(callback, argument), timeoutMs, label);
 }
 
 function serializeHarnessState(state, label) {
@@ -250,8 +355,8 @@ function getAppEnvironment(config) {
   return environment;
 }
 
-async function installEventCapture(page) {
-  await page.evaluate(() => {
+async function installEventCapture(page, timeoutMs) {
+  await evaluateWithTimeout(page, () => {
     window.__harnessRunEvents = [];
     for (const eventName of ["statechange", "animationend", "error"]) {
       window.__harness.on(eventName, (event) => {
@@ -264,15 +369,15 @@ async function installEventCapture(page) {
         window.__harnessRunEvents.push({ event: eventName, detail, at: window.__harness.clock.now() });
       });
     }
-  });
+  }, undefined, timeoutMs, "harness event subscription");
 }
 
-async function getCapturedEvents(page) {
-  return page.evaluate(() => {
+async function getCapturedEvents(page, timeoutMs) {
+  return evaluateWithTimeout(page, () => {
     const events = window.__harnessRunEvents || [];
     window.__harnessRunEvents = [];
     return events;
-  });
+  }, undefined, timeoutMs, "harness event read");
 }
 
 async function createContactSheet(browser, capturePaths, runDirectory) {
@@ -348,6 +453,8 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
     viewport: { width: viewport.width, height: viewport.height },
     deviceScaleFactor: 1,
   });
+  page.setDefaultTimeout(config.app.commandTimeoutMs);
+  page.setDefaultNavigationTimeout(config.app.navigationTimeoutMs);
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(`page error: ${error.message}`));
   page.on("console", (message) => {
@@ -365,8 +472,21 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
   try {
     const appUrl = new URL(config.app.url);
     appUrl.searchParams.set("harness", "1");
-    await page.goto(appUrl.href, { waitUntil: "networkidle", timeout: 30000 });
-    const contract = await page.evaluate(() => {
+    await page.goto(appUrl.href, {
+      waitUntil: "domcontentloaded",
+      timeout: config.app.navigationTimeoutMs,
+    });
+    try {
+      await page.waitForFunction(() => Boolean(window.__harness), undefined, {
+        timeout: config.app.navigationTimeoutMs,
+      });
+    } catch (error) {
+      if (error.name === "TimeoutError") {
+        throw new Error(`App did not expose window.__harness within ${config.app.navigationTimeoutMs}ms after ?harness=1.`);
+      }
+      throw error;
+    }
+    const contract = await evaluateWithTimeout(page, () => {
       if (!window.__harness) throw new Error("App did not expose window.__harness after ?harness=1.");
       if (window.__harness.version !== 1) throw new Error(`Unsupported control contract version ${window.__harness.version}.`);
       if (typeof window.__harness.state !== "function" ||
@@ -386,8 +506,11 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
       const state = window.__harness.state();
       const encodedState = JSON.stringify(state);
       if (typeof encodedState !== "string") throw new Error("state() must return a JSON value.");
-      return { commands, state: JSON.parse(encodedState) };
-    });
+      window.__harness.clock.pause();
+      const clock = window.__harness.clock.now();
+      if (!Number.isFinite(clock)) throw new Error("clock.now() must return a finite number.");
+      return { commands, state: JSON.parse(encodedState), clock };
+    }, undefined, config.app.commandTimeoutMs, "harness contract inspection");
     const commandMap = new Map();
     for (const [index, descriptor] of contract.commands.entries()) {
       assert(descriptor && typeof descriptor.name === "string" && descriptor.name.trim(),
@@ -407,68 +530,110 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
       }
     }
 
-    await installEventCapture(page);
-    await page.evaluate(() => window.__harness.clock.pause());
+    await installEventCapture(page, config.app.commandTimeoutMs);
     await log({
       at: new Date().toISOString(),
       viewport: viewport.name,
       phase: "initial",
       state: contract.state,
+      clock: contract.clock,
       commands: contract.commands.map(({ name }) => name),
     });
 
     for (const [stepIndex, step] of scenario.steps.entries()) {
-      const stepResult = { index: stepIndex, name: step.name || step.command, command: step.command, status: "passed" };
+      const stepAction = step.command || `clock.${Object.keys(step.clock)[0]}`;
+      const stepResult = { index: stepIndex, name: step.name || stepAction, command: stepAction, status: "passed" };
+      let abortViewport = false;
       try {
-        const command = commandMap.get(step.command);
-        if (!command) {
-          const names = Array.from(commandMap.keys());
-          throw new Error(`Unknown command "${step.command}". Available commands: ${names.join(", ") || "(none)"}.`);
-        }
-        if (command.validate) {
-          const payload = step.payload === undefined ? null : step.payload;
-          if (!command.validate(payload)) {
-            throw new Error(`Invalid payload for "${step.command}": ${JSON.stringify(command.validate.errors)}`);
+        const before = serializeHarnessState(await evaluateWithTimeout(page,
+          () => window.__harness.state(), undefined, config.app.commandTimeoutMs, "harness state()"),
+        "state()");
+        let actionResult;
+        if (step.clock) {
+          const [operation, milliseconds] = Object.entries(step.clock)[0];
+          actionResult = await evaluateWithTimeout(page,
+            ({ operation: clockOperation, time }) => window.__harness.clock[clockOperation](time),
+            { operation, time: milliseconds },
+            config.app.commandTimeoutMs,
+            `clock.${operation}(${milliseconds})`,
+          );
+          stepResult.clock = { operation, milliseconds };
+          stepResult.clock.result = serializeHarnessState(actionResult, `clock.${operation} result`);
+        } else {
+          const command = commandMap.get(step.command);
+          if (!command) {
+            const names = Array.from(commandMap.keys());
+            throw new Error(`Unknown command "${step.command}". Available commands: ${names.join(", ") || "(none)"}.`);
           }
-        } else if (step.payload !== undefined) {
-          throw new Error(`Command "${step.command}" does not advertise a payload schema; scenario payload is not allowed.`);
-        }
+          if (command.validate) {
+            const payload = step.payload === undefined ? null : step.payload;
+            if (!command.validate(payload)) {
+              throw new Error(`Invalid payload for "${step.command}": ${JSON.stringify(command.validate.errors)}`);
+            }
+          } else if (step.payload !== undefined) {
+            throw new Error(`Command "${step.command}" does not advertise a payload schema; scenario payload is not allowed.`);
+          }
 
-        const before = serializeHarnessState(await page.evaluate(() => window.__harness.state()), "state()");
-        const commandResult = await page.evaluate(
-          async ({ name, payload }) => window.__harness.command(name, payload),
-          { name: step.command, payload: step.payload },
-        );
-        if (!commandResult || typeof commandResult.ok !== "boolean") {
-          throw new Error(`Command "${step.command}" must return an { ok } result.`);
+          actionResult = await evaluateWithTimeout(page,
+            async ({ name, payload }) => window.__harness.command(name, payload),
+            { name: step.command, payload: step.payload },
+            config.app.commandTimeoutMs,
+            `command "${step.command}"`,
+          );
+          if (!actionResult || typeof actionResult.ok !== "boolean") {
+            throw new Error(`Command "${step.command}" must return an { ok } result.`);
+          }
+          if (!actionResult.ok) {
+            throw new Error(`Command "${step.command}" failed: ${actionResult.error?.code || "error"}: ${actionResult.error?.message || "no message"}`);
+          }
         }
-        if (!commandResult.ok) {
-          throw new Error(`Command "${step.command}" failed: ${commandResult.error?.code || "error"}: ${commandResult.error?.message || "no message"}`);
-        }
-        const after = serializeHarnessState(await page.evaluate(() => window.__harness.state()), "state()");
+        const after = serializeHarnessState(await evaluateWithTimeout(page,
+          () => window.__harness.state(), undefined, config.app.commandTimeoutMs, "harness state()"),
+        "state()");
+        const clockNow = await evaluateWithTimeout(page, () => window.__harness.clock.now(), undefined,
+          config.app.commandTimeoutMs, "harness clock read");
+        if (!Number.isFinite(clockNow)) throw new Error("clock.now() must return a finite number.");
         stepResult.before = before;
         stepResult.after = after;
-        stepResult.commandResult = serializeHarnessState(commandResult, `result of "${step.command}"`);
+        stepResult.clockTime = clockNow;
+        if (step.clock) {
+          stepResult.clock.now = clockNow;
+        } else {
+          stepResult.commandResult = serializeHarnessState(actionResult, `result of "${step.command}"`);
+        }
         await log({
           at: new Date().toISOString(),
           viewport: viewport.name,
           phase: "command",
           step: stepIndex,
-          command: step.command,
+          command: stepAction,
           before,
           after,
-          result: stepResult.commandResult,
+          result: step.clock ? stepResult.clock.result : stepResult.commandResult,
+          clock: clockNow,
         });
 
-        stepResult.events = await getCapturedEvents(page);
+        stepResult.events = await getCapturedEvents(page, config.app.commandTimeoutMs);
 
         if (step.snapshot) {
+          await evaluateWithTimeout(page, async () => {
+            await document.fonts.ready;
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          }, undefined, config.app.commandTimeoutMs, "frame readiness");
           const captureName = `${safeSlug(viewport.name)}-${String(stepIndex + 1).padStart(2, "0")}-${safeSlug(step.snapshot)}.png`;
           const capturePath = path.join(runDirectory, "screenshots", captureName);
-          await page.screenshot({ path: capturePath, fullPage: true, animations: "disabled" });
+          await withTimeout(page.screenshot({
+            path: capturePath,
+            fullPage: true,
+            animations: "disabled",
+            caret: "hide",
+          }), config.app.commandTimeoutMs, `screenshot "${step.snapshot}"`);
           const relativeCapturePath = path.relative(runDirectory, capturePath);
           captures.push({ viewport: viewport.name, snapshot: step.snapshot, path: relativeCapturePath });
           stepResult.screenshot = relativeCapturePath;
+        }
+        if (step.expectClock !== undefined && !Object.is(clockNow, step.expectClock)) {
+          throw new Error(`Clock expectation failed: expected ${step.expectClock}, received ${clockNow}.`);
         }
         if (step.expect) {
           const mismatch = matchesExpected(after, step.expect);
@@ -477,9 +642,11 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
       } catch (error) {
         stepResult.status = "failed";
         stepResult.error = error.message;
+        abortViewport = error instanceof HarnessTimeoutError;
         viewportResult.status = "failed";
         viewportResult.errors.push(`step ${stepIndex + 1} "${stepResult.name}": ${error.message}`);
-        stepResult.events = await getCapturedEvents(page).catch(() => []);
+        stepResult.events = abortViewport ? [] :
+          await getCapturedEvents(page, config.app.commandTimeoutMs);
       }
       viewportResult.steps.push(stepResult);
       await log({
@@ -491,6 +658,7 @@ async function executeViewport({ browser, config, scenario, viewport, root, runD
         ...(stepResult.error ? { error: stepResult.error } : {}),
         events: stepResult.events,
       });
+      if (abortViewport) break;
     }
     if (pageErrors.length) {
       viewportResult.status = "failed";
@@ -511,6 +679,8 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
   await mkdir(path.join(runDirectory, "screenshots"), { recursive: true });
   const previousGreen = await compareWithLastGreen(root, scenario.name);
   const stateLogPath = path.join(runDirectory, "state.jsonl");
+  const appLogPath = path.join(runDirectory, "app.log");
+  const appLog = createWriteStream(appLogPath);
   const stateLog = createWriteStream(stateLogPath, { flags: "a" });
   const log = (entry) => new Promise((resolve, reject) => {
     stateLog.write(`${JSON.stringify(entry)}\n`, (error) => error ? reject(error) : resolve());
@@ -534,8 +704,8 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
 
   let child;
   let browser;
-  const appLogPath = path.join(runDirectory, "app.log");
-  const appLog = createWriteStream(appLogPath);
+  let childSpawnError;
+  const cleanupErrors = [];
   try {
     const command = config.app.start[0];
     const args = config.app.start.slice(1);
@@ -545,13 +715,19 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
       env: getAppEnvironment(config),
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
+      detached: true,
     });
+    child.on("error", (error) => { childSpawnError = error; });
     child.stdout.pipe(appLog, { end: false });
     child.stderr.pipe(appLog, { end: false });
-    await waitForApp(config.app.url, config.app.startupTimeoutMs, child, path.relative(root, appLogPath));
+    await waitForApp(config.app.url, config.app.startupTimeoutMs, child,
+      path.relative(root, appLogPath), () => childSpawnError);
 
     if (!existsSync(chromium.executablePath())) throw new Error(INSTALL_BROWSER_MESSAGE);
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-gpu", "--force-color-profile=srgb"],
+    });
     for (const viewport of scenario.viewports) {
       const viewportResult = await executeViewport({
         browser, config, scenario, viewport, root, runDirectory, log, captures,
@@ -569,14 +745,33 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
     result.status = "failed";
     result.error = error.message;
   } finally {
-    if (browser) await browser.close();
-    if (child) await stopChild(child);
-    await new Promise((resolve, reject) => {
-      appLog.end((error) => error ? reject(error) : resolve());
-    });
-    await new Promise((resolve, reject) => {
-      stateLog.end((error) => error ? reject(error) : resolve());
-    });
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (error) {
+        cleanupErrors.push(`could not close browser: ${error.message}`);
+      }
+    }
+    if (child) {
+      try {
+        await stopChild(child);
+      } catch (error) {
+        cleanupErrors.push(error.message);
+      }
+    }
+    for (const [stream, label] of [[appLog, "app log"], [stateLog, "state log"]]) {
+      try {
+        await new Promise((resolve, reject) => {
+          stream.end((error) => error ? reject(error) : resolve());
+        });
+      } catch (error) {
+        cleanupErrors.push(`could not close ${label}: ${error.message}`);
+      }
+    }
+    if (cleanupErrors.length) {
+      result.status = "failed";
+      result.error = [result.error, ...cleanupErrors].filter(Boolean).join("; ");
+    }
   }
 
   result.finishedAt = new Date().toISOString();
@@ -604,11 +799,25 @@ async function runScenario({ root, scenarioPath, scenario, config }) {
 async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.help) {
-    console.log("Usage: npm run harness -- run <scenario.yaml> [--root path] [--dry-run]");
-    console.log("Runs a local app scenario through its opt-in window.__harness API.");
+    console.log("Usage:");
+    console.log("  npm run harness -- doctor [--root path] [--json]");
+    console.log("  npm run harness -- setup [--root path] [--dry-run|--apply] [--json]");
+    console.log("  npm run harness -- run <scenario.yaml> [--root path] [--dry-run]");
+    console.log("setup defaults to a read-only dry run; --apply writes only a missing harness.config.json.");
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
+  if (options.action === "doctor") {
+    const report = await inspectProject(root);
+    console.log(options.json ? JSON.stringify(report, null, 2) : formatDoctorReport(report));
+    return report;
+  }
+  if (options.action === "setup") {
+    const plan = await setupProject(root, { apply: options.apply });
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatSetupPlan(plan));
+    if (plan.status === "blocked") process.exitCode = 1;
+    return plan;
+  }
   const configPath = path.join(root, "harness.config.json");
   const scenarioPath = path.resolve(root, options.scenario);
   const relativeScenario = path.relative(root, scenarioPath);
@@ -621,16 +830,26 @@ async function main(argv = process.argv.slice(2)) {
     console.log(JSON.stringify({
       dryRun: true,
       scenario: scenario.name,
-      app: { start: config.app.start, url: config.app.url, startupTimeoutMs: config.app.startupTimeoutMs },
+      app: {
+        start: config.app.start,
+        url: config.app.url,
+        startupTimeoutMs: config.app.startupTimeoutMs,
+        navigationTimeoutMs: config.app.navigationTimeoutMs,
+        commandTimeoutMs: config.app.commandTimeoutMs,
+      },
       inheritedEnvironmentNames: [...new Set([...SAFE_INHERITED_ENV, ...config.app.inheritEnv])],
       viewports: scenario.viewports,
-      steps: scenario.steps.map(({ name, command, payload, expect, snapshot }) => ({
-        name: name || command,
-        command,
-        ...(payload === undefined ? {} : { payload }),
-        ...(expect === undefined ? {} : { expect }),
-        ...(snapshot === undefined ? {} : { snapshot }),
-      })),
+      steps: scenario.steps.map((step) => {
+        const action = step.command || `clock.${Object.keys(step.clock)[0]}`;
+        return {
+          name: step.name || action,
+          ...(step.command ? { command: step.command } : { clock: step.clock }),
+          ...(step.payload === undefined ? {} : { payload: step.payload }),
+          ...(step.expect === undefined ? {} : { expect: step.expect }),
+          ...(step.expectClock === undefined ? {} : { expectClock: step.expectClock }),
+          ...(step.snapshot === undefined ? {} : { snapshot: step.snapshot }),
+        };
+      }),
     }, null, 2));
     return null;
   }
@@ -646,10 +865,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export {
+  formatDoctorReport,
+  formatSetupPlan,
+  inspectProject,
   isJsonValue,
   matchesExpected,
   parseArgs,
   runScenario,
+  setupProject,
+  stopChild,
   validateConfig,
   validateScenario,
+  withTimeout,
 };

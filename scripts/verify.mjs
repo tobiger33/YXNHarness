@@ -49,7 +49,7 @@ try {
     const pointer = JSON.parse(await readFile(path.join(root, "artifacts", "last-run.json"), "utf8"));
     const result = JSON.parse(await readFile(path.join(root, pointer.result), "utf8"));
     if (result.status !== "passed" || result.counts.viewports !== 2 ||
-        result.counts.steps !== 6 || result.counts.screenshots !== 6) {
+        result.counts.steps !== 10 || result.counts.screenshots !== 10) {
       throw new Error(`minimal scenario produced an unexpected result: ${JSON.stringify(result.counts)}`);
     }
     const stateChangeEvents = result.viewports.flatMap((viewport) => viewport.steps)
@@ -57,7 +57,36 @@ try {
     if (stateChangeEvents !== 6) {
       throw new Error(`minimal scenario recorded ${stateChangeEvents} statechange events; expected 6.`);
     }
-    console.log(`Scenario artifacts verified: ${result.counts.viewports} viewports, ${result.counts.steps} steps, ${stateChangeEvents} statechange events.`);
+    const clockTimes = result.viewports.flatMap((viewport) => viewport.steps)
+      .filter((step) => step.clock)
+      .map((step) => step.clockTime);
+    if (JSON.stringify(clockTimes) !== JSON.stringify([125, 40, 125, 40])) {
+      throw new Error(`clock actions produced unexpected times: ${JSON.stringify(clockTimes)}`);
+    }
+
+    const firstRunDirectory = path.dirname(path.join(root, pointer.result));
+    const firstScreenshotPaths = result.artifacts.screenshots.map((screenshot) =>
+      path.join(firstRunDirectory, screenshot));
+    run("repeat minimal scenario for deterministic-frame check", [
+      path.join(root, "scripts", "harness.mjs"),
+      "run",
+      "scenarios/minimal.yaml",
+    ]);
+    const repeatedPointer = JSON.parse(await readFile(path.join(root, "artifacts", "last-run.json"), "utf8"));
+    const repeatedResult = JSON.parse(await readFile(path.join(root, repeatedPointer.result), "utf8"));
+    if (repeatedResult.status !== "passed" ||
+        repeatedResult.artifacts.screenshots.length !== firstScreenshotPaths.length) {
+      throw new Error("repeated scenario did not produce the same successful screenshot set.");
+    }
+    const repeatedRunDirectory = path.dirname(path.join(root, repeatedPointer.result));
+    for (const [index, screenshot] of repeatedResult.artifacts.screenshots.entries()) {
+      const firstFrame = await readFile(firstScreenshotPaths[index]);
+      const repeatedFrame = await readFile(path.join(repeatedRunDirectory, screenshot));
+      if (!firstFrame.equals(repeatedFrame)) {
+        throw new Error(`deterministic frame check failed for ${screenshot}.`);
+      }
+    }
+    console.log(`Scenario artifacts verified: ${result.counts.viewports} viewports, ${result.counts.steps} steps, ${stateChangeEvents} statechange events; repeated frames were byte-identical.`);
 
     const failingScenarioPath = path.join(root, "artifacts", ".verify-expectation-failure.yaml");
     await writeFile(failingScenarioPath, [
