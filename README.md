@@ -120,6 +120,8 @@ npm run harness -- workspace --json
 npm run harness -- workspace --create feature/demo --dry-run
 npm run harness -- workspace --create feature/demo --apply
 npm run harness -- workspace --checkout feature/demo --apply
+npm run harness -- workspace --push --apply
+npm run harness -- workspace --fetch --apply
 ```
 
 See [`docs/workspace.md`](docs/workspace.md).
@@ -129,7 +131,6 @@ Create a local project share invite (view/comment only; web link later):
 ```sh
 npm run harness -- share --dry-run
 npm run harness -- share --apply
-npm run harness -- workspace --fetch --apply
 ```
 
 See [`docs/share.md`](docs/share.md).

@@ -88,5 +88,5 @@ A future web link can carry the same JSON; grants never silently become write/me
 
 - Not collaboration hosting (share invites are local files / policy JSON for now)
 - Not share-link enforcement on a public CDN
-- Not Git push (fetch is available via `workspace --fetch`; push stays plain git)
+- Not remote admin (create/delete remotes); push/fetch are host-controlled on-demand only
 - Not the designer UI — that comes later on top of this data

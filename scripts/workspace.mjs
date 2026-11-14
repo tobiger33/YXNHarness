@@ -129,7 +129,7 @@ function collectWorkspace(root) {
     behind,
     branches,
     readOnly: true,
-    note: "Local branches: --checkout|--create|--review|--adopt [--path|--hunks]; refresh remotes with --fetch --apply. Push stays host/CLI git.",
+    note: "Local branches: --checkout|--create|--review|--adopt/--approve; remotes via --fetch/--push --apply.",
   };
 }
 
@@ -286,6 +286,181 @@ function formatFetchPlan(plan) {
   if (plan.after) {
     lines.push(`Remote-tracking refs after: ${plan.after.remoteTrackingCount}`);
   }
+  if (plan.explanation) lines.push(plan.explanation);
+  for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  for (const warning of plan.warnings || []) lines.push(`Note: ${warning}`);
+  for (const step of plan.next || []) lines.push(`Next: ${step}`);
+  return lines.join("\n");
+}
+
+function resolvePushRemote(workspace, remotes, remote) {
+  if (remote) {
+    if (!isSafeRemoteName(remote)) return { error: `Unsafe remote name "${remote}".` };
+    if (!remotes.some((entry) => entry.name === remote)) {
+      return { error: `Remote "${remote}" was not found.` };
+    }
+    return { remote };
+  }
+  if (workspace.upstream && workspace.upstream.includes("/")) {
+    const upstreamRemote = workspace.upstream.split("/")[0];
+    if (remotes.some((entry) => entry.name === upstreamRemote)) {
+      return { remote: upstreamRemote, fromUpstream: true };
+    }
+  }
+  if (remotes.some((entry) => entry.name === "origin")) {
+    return { remote: "origin" };
+  }
+  if (remotes.length === 1) {
+    return { remote: remotes[0].name };
+  }
+  return {
+    error: "Multiple remotes and no upstream — pass --remote <name>.",
+  };
+}
+
+/**
+ * Host-controlled push of the current branch. No force by default;
+ * --force uses --force-with-lease only (never plain --force / --delete).
+ */
+function planWorkspacePush(root, {
+  remote = null,
+  force = false,
+  apply = false,
+} = {}) {
+  const projectRoot = path.resolve(root);
+  const plan = {
+    version: 1,
+    action: "push",
+    mode: apply ? "apply" : "dry-run",
+    status: "ready",
+    ok: true,
+    remote: null,
+    branch: null,
+    upstream: null,
+    setUpstream: false,
+    forceWithLease: Boolean(force),
+    ahead: null,
+    behind: null,
+    remotes: [],
+    blockedReasons: [],
+    warnings: [],
+    explanation: null,
+    next: [],
+    args: [],
+  };
+
+  const before = collectWorkspace(projectRoot);
+  plan.workspace = before;
+  if (!before.available) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("Not a Git repository.");
+    plan.explanation = "Push needs a Git workspace.";
+    return plan;
+  }
+  if (!before.branch) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("Detached HEAD — checkout a branch before pushing.");
+    return plan;
+  }
+
+  plan.branch = before.branch;
+  plan.upstream = before.upstream;
+  plan.ahead = before.ahead;
+  plan.behind = before.behind;
+  plan.remotes = listRemotes(projectRoot);
+
+  if (!plan.remotes.length) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("No remotes configured. Add one with plain git remote add, then push.");
+    return plan;
+  }
+
+  const resolved = resolvePushRemote(before, plan.remotes, remote);
+  if (resolved.error) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push(resolved.error);
+    return plan;
+  }
+  plan.remote = resolved.remote;
+  plan.setUpstream = !before.upstream;
+
+  if (before.ahead === 0 && before.upstream) {
+    plan.status = "noop";
+    plan.ok = true;
+    plan.explanation = `Nothing to push — ${before.branch} is not ahead of ${before.upstream}.`;
+    plan.next = [
+      "Collaborators can refresh with: npm run harness -- workspace --fetch --apply",
+    ];
+    return plan;
+  }
+
+  if (before.behind > 0 && !force) {
+    plan.warnings.push(
+      `Branch is behind upstream by ${before.behind} commit(s). Push may be rejected; fetch/rebase first, or re-run with --force for --force-with-lease after host consent.`,
+    );
+  }
+  if (force) {
+    plan.warnings.push(
+      "Force uses git push --force-with-lease only (never plain --force, never --delete).",
+    );
+  }
+
+  const args = ["push"];
+  if (force) args.push("--force-with-lease");
+  if (plan.setUpstream) args.push("-u");
+  args.push(plan.remote, before.branch);
+  plan.args = args;
+
+  plan.explanation = apply
+    ? `Pushing ${before.branch} to ${plan.remote}${plan.setUpstream ? " (setting upstream)" : ""}${force ? " with --force-with-lease" : ""}.`
+    : `Preview: would run git ${args.join(" ")}. No network call until --apply.`;
+  plan.next = apply
+    ? [
+        "Tell collaborators to refresh: npm run harness -- workspace --fetch --apply",
+        "Or POST /api/v1/workspace/fetch with { apply: true }",
+      ]
+    : [
+        "npm run harness -- workspace --push --apply",
+        plan.remote !== "origin" ? `Or: --push --remote ${plan.remote} --apply` : null,
+      ].filter(Boolean);
+  plan.warnings.push(
+    "Push is on-demand and host-controlled — not automatic after design approve.",
+  );
+
+  if (!apply) {
+    plan.warnings.push("Preview only. Re-run with --apply to contact the remote.");
+    return plan;
+  }
+
+  const stdout = runGit(projectRoot, args, { allowFailure: false, timeoutMs: 60000 });
+  const after = collectWorkspace(projectRoot);
+  plan.status = "applied";
+  plan.stdout = stdout || "";
+  plan.workspace = after;
+  plan.upstream = after.upstream;
+  plan.ahead = after.ahead;
+  plan.behind = after.behind;
+  plan.explanation = `Pushed ${before.branch} to ${plan.remote}` +
+    (after.upstream ? ` (upstream ${after.upstream})` : "") + ".";
+  return plan;
+}
+
+function formatPushPlan(plan) {
+  const lines = [
+    `Workspace push: ${plan.status}`,
+    `Mode: ${plan.mode}`,
+    `Branch: ${plan.branch || "—"}`,
+    `Remote: ${plan.remote || "—"}`,
+    `Upstream: ${plan.upstream || "(none)"}`,
+    `Ahead/behind: ${plan.ahead ?? "—"} / ${plan.behind ?? "—"}`,
+    `Force-with-lease: ${plan.forceWithLease ? "yes" : "no"}`,
+    `Set upstream: ${plan.setUpstream ? "yes" : "no"}`,
+  ];
+  if (plan.args?.length) lines.push(`Command: git ${plan.args.join(" ")}`);
   if (plan.explanation) lines.push(plan.explanation);
   for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
   for (const warning of plan.warnings || []) lines.push(`Note: ${warning}`);
@@ -1451,6 +1626,7 @@ export {
   formatCheckoutPlan,
   formatCreatePlan,
   formatFetchPlan,
+  formatPushPlan,
   formatWorkspace,
   formatWorkspaceReview,
   isSafeBranchName,
@@ -1466,6 +1642,7 @@ export {
   planWorkspaceCheckout,
   planWorkspaceCreate,
   planWorkspaceFetch,
+  planWorkspacePush,
   resolveLocalBranch,
   runGit,
 };

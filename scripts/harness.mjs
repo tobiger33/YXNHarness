@@ -83,7 +83,9 @@ import {
   planWorkspaceCheckout,
   planWorkspaceCreate,
   planWorkspaceFetch,
+  planWorkspacePush,
   formatFetchPlan,
+  formatPushPlan,
 } from "./workspace.mjs";
 import {
   createShareInvite,
@@ -110,7 +112,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--fetch] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--fetch|--push] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- share [--root path] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
@@ -158,6 +160,7 @@ function parseArgs(argv) {
     adopt: null,
     approve: null,
     fetch: false,
+    push: false,
     remote: null,
     path: null,
     paths: [],
@@ -235,6 +238,8 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument === "--fetch") {
       options.fetch = true;
+    } else if (argument === "--push") {
+      options.push = true;
     } else if (argument === "--remote") {
       const remote = rest[index + 1];
       if (!remote || remote.startsWith("--")) throw new Error("--remote requires a remote name.");
@@ -412,7 +417,7 @@ function parseArgs(argv) {
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
       options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--fetch/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--fetch/--push/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
   }
   if (action === "workspace" && options.note && !options.adopt && !options.approve) {
     throw new Error("--note is only valid with workspace --adopt/--approve (or handoff / share).");
@@ -424,13 +429,14 @@ function parseArgs(argv) {
     options.adopt,
     options.approve,
     options.fetch ? "fetch" : null,
+    options.push ? "push" : null,
   ].filter(Boolean);
   if (action === "workspace" && workspaceMutators.length > 1) {
-    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, or --fetch.");
+    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, --fetch, or --push.");
   }
   if (action === "workspace" && (options.apply || options.dryRun || options.force) &&
-      !options.checkout && !options.create && !options.adopt && !options.approve && !options.fetch) {
-    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, or --fetch for workspace.");
+      !options.checkout && !options.create && !options.adopt && !options.approve && !options.fetch && !options.push) {
+    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, --fetch, or --push for workspace.");
   }
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
@@ -447,8 +453,8 @@ function parseArgs(argv) {
   if (action === "workspace" && options.hunks && options.paths.length !== 1) {
     throw new Error("--hunks requires exactly one --path.");
   }
-  if (action === "workspace" && options.remote && !options.fetch) {
-    throw new Error("--remote is only valid with workspace --fetch.");
+  if (action === "workspace" && options.remote && !options.fetch && !options.push) {
+    throw new Error("--remote is only valid with workspace --fetch or --push.");
   }
   if (options.hunks && action !== "workspace") {
     throw new Error("--hunks is only valid with workspace --adopt.");
@@ -456,8 +462,11 @@ function parseArgs(argv) {
   if (options.fetch && action !== "workspace") {
     throw new Error("--fetch is only valid with workspace.");
   }
+  if (options.push && action !== "workspace") {
+    throw new Error("--push is only valid with workspace.");
+  }
   if (options.remote && action !== "workspace") {
-    throw new Error("--remote is only valid with workspace --fetch.");
+    throw new Error("--remote is only valid with workspace --fetch or --push.");
   }
   if (options.checkout && action !== "workspace") {
     throw new Error("--checkout is only valid with workspace.");
@@ -497,8 +506,8 @@ function parseArgs(argv) {
   }
   if (action === "share" && (options.installBrowser || options.yes || options.init || options.name || options.out ||
       options.from || options.baseline || options.against || options.strict || options.port !== null ||
-      options.checkout || options.create || options.review || options.adopt || options.fetch || options.remote ||
-      options.path || options.hunks || options.list || options.createFeedback || options.elementsAdopt)) {
+      options.checkout || options.create || options.review || options.adopt || options.fetch || options.push ||
+      options.remote || options.path || options.hunks || options.list || options.createFeedback || options.elementsAdopt)) {
     throw new Error("share accepts --root/--json/--note/--dry-run/--apply/--force only.");
   }
   if (action === "share" && options.apply && options.dryRun) {
@@ -1809,6 +1818,17 @@ async function main(argv = process.argv.slice(2)) {
       if (!plan.ok) process.exitCode = 1;
       return plan;
     }
+    if (options.push) {
+      const plan = planWorkspacePush(root, {
+        remote: options.remote,
+        force: options.force,
+        apply: options.apply,
+      });
+      plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatPushPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     if (options.approve) {
       const plan = await planDesignApprove(root, {
         theirs: options.approve,
@@ -2138,6 +2158,8 @@ export {
   planElementAdopt,
   formatElementAdoptPlan,
   planWorkspaceFetch,
+  planWorkspacePush,
+  formatPushPlan,
   planDesignApprove,
   formatDesignApprovePlan,
   listShares,

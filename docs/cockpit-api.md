@@ -31,6 +31,7 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
 | POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
 | POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"? }` — design approve (whole-branch; default note Design approved) |
+| POST | `/api/v1/workspace/push` | `{ "apply"?, "remote"?, "force"? }` — push current branch (`force` → `--force-with-lease`) |
 | POST | `/api/v1/workspace/fetch` | `{ "apply"?, "remote"?, "prune"? }` — on-demand `git fetch` (remote-tracking only) |
 | GET | `/api/v1/share` | List local share invites |
 | POST | `/api/v1/share` | `{ "apply"?, "force"?, "note"? }` — create view/comment share invite |
@@ -62,11 +63,11 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 
 **Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
 `/api/v1/workspace/adopt`; **Design passt** POSTs
-`/api/v1/workspace/approve` then offers push/fetch next steps. Composer
-messages become local feedback when no agent adapter is connected. The Agent
-plug control GETs `/api/v1/attach` for a dry-run attach preview.
-Preview/Compare demos are layout examples only; attach/probe use the real
-project when configured.
+`/api/v1/workspace/approve` then offers **Push** (`/workspace/push`) and
+**Remotes aktualisieren** (`/workspace/fetch`). Composer messages become local
+feedback when no agent adapter is connected. The Agent plug control GETs
+`/api/v1/attach` for a dry-run attach preview. Preview/Compare demos are layout
+examples only; attach/probe use the real project when configured.
 
 See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
 [`share.md`](share.md), [`cockpit-foundation.md`](cockpit-foundation.md), and

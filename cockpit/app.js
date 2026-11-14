@@ -1189,6 +1189,31 @@ q("#approve-next-dismiss")?.addEventListener("click", () => {
   const panel = q("#approve-next");
   if (panel) panel.hidden = true;
 });
+q("#approve-push")?.addEventListener("click", async () => {
+  const button = q("#approve-push");
+  if (button) button.disabled = true;
+  try {
+    const preview = await apiPost("/api/v1/workspace/push", { apply: false });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
+    }
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Nothing to push.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/push", { apply: true });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
+    }
+    toast(applied.explanation || "Pushed current branch.");
+    pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
 q("#approve-fetch")?.addEventListener("click", async () => {
   const button = q("#approve-fetch");
   if (button) button.disabled = true;

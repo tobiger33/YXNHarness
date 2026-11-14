@@ -47,6 +47,7 @@ import {
   planWorkspaceCheckout,
   planWorkspaceCreate,
   planWorkspaceFetch,
+  planWorkspacePush,
 } from "../scripts/workspace.mjs";
 import { createShareInvite, listShares } from "../scripts/share.mjs";
 import { planDesignApprove } from "../scripts/design-approve.mjs";
@@ -232,6 +233,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     adopt: null,
     approve: null,
     fetch: false,
+    push: false,
     remote: null,
     path: null,
     paths: [],
@@ -365,6 +367,20 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     fetch: true,
     apply: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--push", "--apply"]), {
+    ...base,
+    action: "workspace",
+    push: true,
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["workspace", "--push", "--remote", "origin", "--force", "--apply"]), {
+    ...base,
+    action: "workspace",
+    push: true,
+    remote: "origin",
+    force: true,
+    apply: true,
+  });
   assert.deepEqual(parseArgs(["workspace", "--fetch", "--remote", "origin", "--dry-run"]), {
     ...base,
     action: "workspace",
@@ -379,7 +395,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     note: "review hero",
   });
   assert.throws(() => parseArgs(["workspace", "--note", "x"]), /only valid with workspace --adopt/);
-  assert.throws(() => parseArgs(["workspace", "--remote", "origin"]), /only valid with workspace --fetch/);
+  assert.throws(() => parseArgs(["workspace", "--remote", "origin"]), /only valid with workspace --fetch or --push/);
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -458,7 +474,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, attach, or share/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
-  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, --adopt, --approve, or --fetch/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, --adopt, --approve, --fetch, or --push/);
   assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /only one of/);
   assert.throws(() => parseArgs(["workspace", "--approve", "feature/x", "--path", "a.js"]), /whole-branch only/);
   assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review or --adopt/);
@@ -937,6 +953,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.deepEqual(overview.api.localWrites, [
       "POST /api/v1/workspace/adopt",
       "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/push",
       "POST /api/v1/workspace/fetch",
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
@@ -974,6 +991,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.ok(apiIndex.links.share);
     assert.ok(apiIndex.links.fetch);
     assert.ok(apiIndex.links.approve);
+    assert.ok(apiIndex.links.push);
     assert.ok(apiIndex.links.agent);
 
     const attachMissing = await fetch(`${listening.url}api/v1/attach`);
@@ -1152,7 +1170,7 @@ test("design approve merges branch with Design approved note and next steps", as
     assert.equal(applied.status, "applied", applied.blockedReasons?.join("; ") || applied.explanation);
     assert.equal(applied.note, "Design approved · keep header");
     assert.match(applied.explanation, /Design approved/);
-    assert.ok(applied.next.some((step) => /git push/.test(step)));
+    assert.ok(applied.next.some((step) => /--push/.test(step)));
     assert.ok(applied.next.some((step) => /fetch/.test(step)));
     assert.equal(collectWorkspace(root).branch, "main");
     assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v2/);
@@ -1189,6 +1207,52 @@ test("share invite writes view-only package and respects host policy", async () 
     assert.equal(blocked.status, "blocked");
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace push publishes current branch with upstream and force-with-lease", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-push-"));
+  const bare = await mkdtemp(path.join(os.tmpdir(), "yxnh-push-bare-"));
+  try {
+    const run = (cwd, args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    };
+    run(root, ["init", "-b", "main"]);
+    run(root, ["config", "user.email", "test@example.com"]);
+    run(root, ["config", "user.name", "Test"]);
+    await writeFile(path.join(root, "README.md"), "one\n");
+    run(root, ["add", "README.md"]);
+    run(root, ["commit", "-m", "init"]);
+    run(bare, ["init", "--bare"]);
+    run(root, ["remote", "add", "origin", bare]);
+
+    const preview = planWorkspacePush(root, { apply: false });
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.remote, "origin");
+    assert.equal(preview.setUpstream, true);
+    assert.deepEqual(preview.args, ["push", "-u", "origin", "main"]);
+
+    const applied = planWorkspacePush(root, { apply: true });
+    assert.equal(applied.status, "applied", applied.blockedReasons?.join("; ") || applied.explanation);
+    assert.equal(applied.upstream, "origin/main");
+    assert.ok(applied.next.some((step) => /fetch/.test(step)));
+
+    const noop = planWorkspacePush(root, { apply: true });
+    assert.equal(noop.status, "noop");
+
+    await writeFile(path.join(root, "README.md"), "two\n");
+    run(root, ["add", "README.md"]);
+    run(root, ["commit", "-m", "second"]);
+    const ahead = planWorkspacePush(root, { apply: false, force: true });
+    assert.equal(ahead.status, "ready");
+    assert.equal(ahead.setUpstream, false);
+    assert.deepEqual(ahead.args, ["push", "--force-with-lease", "origin", "main"]);
+    const pushed = planWorkspacePush(root, { apply: true });
+    assert.equal(pushed.status, "applied", pushed.blockedReasons?.join("; ") || pushed.explanation);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(bare, { recursive: true, force: true });
   }
 });
 

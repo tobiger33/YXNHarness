@@ -48,9 +48,14 @@ npm run harness -- workspace --approve <their-branch> --apply
 ```
 
 That whole-branch merges with note `Design approved` (override with `--note`).
-It does **not** push.
+It does **not** push automatically.
 
-3. Host pushes (plain `git push` — still outside the harness).
+3. Host pushes (cockpit **Push** or):
+
+```sh
+npm run harness -- workspace --push --apply
+```
+
 4. Collaborators refresh remotes on demand (cockpit button or):
 
 ```sh

@@ -85,9 +85,9 @@ async function planDesignApprove(root, {
 
   plan.next = apply
     ? [
-        "Push your branch with plain git (harness does not push): git push",
-        "Tell collaborators to refresh: npm run harness -- workspace --fetch --apply",
-        "Or POST /api/v1/workspace/fetch with { apply: true } from the cockpit",
+        "Push when ready: npm run harness -- workspace --push --apply",
+        "Or POST /api/v1/workspace/push with { apply: true }",
+        "Collaborators refresh: npm run harness -- workspace --fetch --apply",
       ]
     : [
         "Re-run with apply:true / --apply after host review",
@@ -100,7 +100,7 @@ async function planDesignApprove(root, {
   if (!apply) {
     plan.warnings.push("Preview only — working tree unchanged until apply.");
   } else {
-    plan.warnings.push("Push is still a separate host step for efficiency and explicit consent.");
+    plan.warnings.push("Push stays a separate host step (--push --apply) for explicit consent.");
   }
 
   return plan;
