@@ -173,6 +173,10 @@ npm run harness -- serve
 
 Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockpit-api.md).
 
+The UI/backend handoff and acceptance flow for element selection, comments,
+adaptation requests and screenshot transport is in
+[`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
+
 ## Attach to an existing repo
 
 Coding agents attach YXNHarness to arbitrary existing projects (no required

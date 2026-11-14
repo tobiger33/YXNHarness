@@ -31,10 +31,16 @@ test("preview preserves native multi-page navigation and only selects on explici
     assert.equal(await page.locator('[data-demo-step="details"]').isVisible(), true, "empty form must remain invalid");
     await page.locator("#demo-name").fill("Alex");
     await page.locator("#demo-email").fill("alex@example.com");
+    await page.locator("#chat-input").fill("Keep my instructions.");
     await page.locator("#select-tool").click();
     await page.locator('[data-demo-element="SubmitButton"]').click();
     assert.match(await page.locator("#context-chips").innerText(), /SubmitButton/);
     assert.equal(await page.locator('[data-demo-step="details"]').isVisible(), true);
+    await page.locator("#element-actions").waitFor();
+    await page.locator("#selection-comment").click();
+    assert.equal(await page.locator("#chat-input").inputValue(), "Keep my instructions.");
+    assert.match(await page.locator("#selection-context-route").innerText(), /\/details/);
+    assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
     await page.keyboard.press("Escape");
     await page.locator('[data-demo-element="SubmitButton"]').click();
     await page.locator('[data-demo-step="complete"]').waitFor();

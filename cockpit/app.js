@@ -15,6 +15,7 @@ const state = {
   reviewBranch: null,
   mode: "connected",
   contexts: [],
+  selection: null,
   picks: [],
   model: "Codex",
   reasoning: "High",
@@ -46,6 +47,7 @@ try {
     state.view = savedUi.view || state.view;
     state.mode = savedUi.mode || state.mode;
     state.contexts = Array.isArray(savedUi.contexts) ? savedUi.contexts : state.contexts;
+    if (savedUi.selection && typeof savedUi.selection.id === "string" && typeof savedUi.selection.route === "string" && savedUi.selection.source && ["comment", "adopt"].includes(savedUi.selection.intent)) state.selection = savedUi.selection;
     state.model = savedUi.model || state.model;
     state.reasoning = savedUi.reasoning || state.reasoning;
     state.reviewBranch = savedUi.reviewBranch || null;
@@ -110,6 +112,7 @@ function persistUi() {
     view: state.view,
     mode: state.mode,
     contexts: state.contexts,
+    selection: state.selection,
     model: state.model,
     reasoning: state.reasoning,
     reviewBranch: state.reviewBranch,
@@ -304,6 +307,7 @@ function renderChips() {
     button.setAttribute("aria-label", `${label} entfernen`);
     button.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
     button.onclick = () => {
+      if (state.selection && label === `${state.selection.id} · ${state.selection.route}`) { clearElementSelection(); return; }
       state.contexts = state.contexts.filter((entry) => entry !== label);
       renderChips();
       persistUi();
@@ -633,6 +637,13 @@ async function sendMessage() {
   const user = document.createElement("div");
   user.className = "user-message";
   user.textContent = value;
+  const selection = state.selection ? structuredClone(state.selection) : null;
+  if (selection) {
+    const context = document.createElement("div");
+    context.className = "sent-selection-context";
+    context.textContent = `${selection.label} · ${selection.route} · ${selection.intent === "adopt" ? "Übernehmen" : "Kommentieren"}`;
+    user.append(context);
+  }
   attachments.appendToMessage(user);
   feed.append(user);
   q("#chat-input").value = "";
@@ -656,6 +667,13 @@ async function sendMessage() {
         `Commit: ${state.workspace?.commit || "—"}`,
         `Review branch: ${state.reviewBranch || "—"}`,
         `Context: ${state.contexts.join(", ") || "(none)"}`,
+        ...(selection ? [
+          `Intent: ${selection.intent === "adopt" ? "adapt selected element into target branch" : "comment on selected element"}`,
+          `Element: ${selection.id}`,
+          `Route: ${selection.route}`,
+          `Source: ${selection.source.branch || "—"} @ ${selection.source.commit || "—"}`,
+          `Target: ${state.workspace?.branch || "—"}`,
+        ] : []),
         ...(attachments.names().length ? [`Local images (attach separately): ${attachments.names().join(", ")}`] : []),
         `Model preference: ${state.model} / ${state.reasoning}`,
         "",
@@ -680,12 +698,34 @@ async function sendMessage() {
       const p = document.createElement("p");
       p.textContent = "A connected agent adapter is declared for later. Your message was not sent to a model.";
       answer.append(p);
+    } else if (selection?.intent === "adopt") {
+      const payload = {
+        elements: [{ id: selection.id, kind: selection.kind, label: selection.label, source: selection.source }],
+        body: value,
+        route: selection.route,
+        viewport: q("#device").value,
+        sourceBranch: selection.source.branch,
+        sourceCommit: selection.source.commit,
+        withHandoff: false,
+      };
+      const preview = await apiPost("/api/v1/elements/adopt", { ...payload, apply: false });
+      if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Element request blocked");
+      const plan = await apiPost("/api/v1/elements/adopt", { ...payload, apply: true });
+      if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Element request failed");
+      const p = document.createElement("p");
+      p.textContent = "Element request saved as feedback with its source and target context. No code was merged and no agent has run yet.";
+      answer.append(p);
+      thought.textContent = "Element request saved";
+      pushActivity(`Element request · ${selection.id}`);
+      await refreshFeedbackOnly();
     } else {
       const plan = await apiPost("/api/v1/feedback", {
         body: value,
         apply: true,
-        route: state.view === "preview" ? (root.dataset.previewRoute || "/") : null,
-        element: state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
+        route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
+        element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
+        source: selection?.source || null,
+        viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
       });
@@ -773,6 +813,7 @@ async function refresh() {
     if (!operation.current()) return false;
     state.workspace = workspace;
     home.update(workspace);
+    renderElementSelection();
     state.runs = runsPayload.runs || [];
     state.handoffs = handoffsPayload.handoffs || [];
     state.feedback = feedback.threads || [];
@@ -880,14 +921,73 @@ function setTool(on) {
   q("#interact-tool").classList.toggle("active", !on);
   q("#inspect-target").classList.toggle("inspected", on);
   q("#element-label").hidden = !on;
+  renderElementSelection();
 }
 q("#select-tool").addEventListener("click", () => setTool(true));
 q("#interact-tool").addEventListener("click", () => setTool(false));
+let selectedAnchor = null;
+function renderElementSelection() {
+  const selected = state.selection;
+  q("#selection-context").hidden = !selected;
+  q("#element-actions").hidden = !selected || !selectedAnchor?.isConnected || !selecting;
+  if (!selected) return;
+  q("#selected-element-name").textContent = selected.label;
+  q("#selection-context-name").textContent = selected.label;
+  q("#selection-context-branches").textContent = `${selected.source.branch || "Current preview"} → ${state.workspace?.branch || "Current branch"}`;
+  q("#selection-context-route").textContent = `${selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
+  q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
+  if (q("#element-actions").hidden) return;
+  const anchor = selectedAnchor.getBoundingClientRect();
+  const surface = q("#app-preview").getBoundingClientRect();
+  const toolbar = q("#element-actions");
+  const left = Math.max(8, Math.min(anchor.left - surface.left, surface.width - toolbar.offsetWidth - 8));
+  toolbar.style.left = `${left}px`;
+  toolbar.style.top = `${Math.max(8, anchor.top - surface.top - toolbar.offsetHeight - 8)}px`;
+}
+function selectElement(element, anchor) {
+  if (state.selection) state.contexts = state.contexts.filter((entry) => entry !== `${state.selection.id} · ${state.selection.route}`);
+  selectedAnchor = anchor;
+  state.selection = {
+    ...element,
+    intent: "comment",
+    source: { branch: state.workspace?.branch || null, commit: state.workspace?.commit || null, elementId: element.id },
+  };
+  addContext(`${element.id} · ${element.route}`);
+  renderElementSelection();
+}
+function clearElementSelection() {
+  if (state.selection) {
+    const label = `${state.selection.id} · ${state.selection.route}`;
+    state.contexts = state.contexts.filter((entry) => entry !== label);
+  }
+  state.selection = null;
+  selectedAnchor = null;
+  q("#element-actions").hidden = true;
+  renderElementSelection();
+  renderChips();
+  persistUi();
+}
+for (const intent of ["comment", "adopt"]) {
+  q(`#selection-${intent}`).addEventListener("click", () => {
+    if (!state.selection) return;
+    state.selection.intent = intent;
+    persistUi();
+    setTool(false);
+    renderElementSelection();
+    if (panels.rightCollapsed) togglePanel("right");
+    q("#chat-input").focus();
+  });
+}
+q("#selection-dismiss").addEventListener("click", clearElementSelection);
+q("#selection-context-clear").addEventListener("click", clearElementSelection);
+window.addEventListener("resize", renderElementSelection);
+q("#screen-preview").addEventListener("scroll", renderElementSelection);
+
 const attachments = mountAttachments(root, toast);
 const home = mountHome(root, toast);
 mountPreview(root, {
   selecting: () => selecting,
-  select: addContext,
+  select: selectElement,
   interact: () => setTool(false),
   notify: toast,
 });
@@ -927,6 +1027,7 @@ qa("[data-nav]").forEach((item) => {
 q("#back-workbench").addEventListener("click", () => setView(state.view));
 q("#new-chat").addEventListener("click", () => {
   state.contexts = [];
+  clearElementSelection();
   void attachments.clear();
   renderChips();
   renderChatSeed();
@@ -952,6 +1053,7 @@ document.addEventListener("keydown", (event) => {
 q("#model").value = state.model;
 q("#reasoning").value = state.reasoning;
 renderChips();
+renderElementSelection();
 renderPicks();
 renderActivity();
 setView(state.view, false);

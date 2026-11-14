@@ -191,3 +191,14 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .live-preview #preview-status { display: none!important; }
 #yxn-workbench #preview-external { display: inline-flex; color: var(--muted); text-decoration: none; }
 #yxn-workbench .address #open-preview { white-space: nowrap; flex-shrink: 0; }
+
+#yxn-workbench .element-actions { position: absolute; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; max-width: calc(100% - 16px); padding: 5px; background: var(--raised); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 4px 12px #0002; }
+#yxn-workbench .element-actions>span { font-size: 10px; color: var(--muted); padding: 0 5px; overflow-wrap: anywhere; }
+#yxn-workbench .element-actions button { padding: 5px 7px; font-size: 11px; color: var(--text); background: transparent; border: 0; border-radius: 4px; }
+#yxn-workbench .selection-context { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; margin-bottom: 9px; }
+#yxn-workbench .selection-context header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; }
+#yxn-workbench .selection-context header>span { overflow-wrap: anywhere; }
+#yxn-workbench .selection-context p { font-size: 10px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+#yxn-workbench .selection-context>span { display: block; font-size: 10px; margin-top: 6px; color: var(--faint); }
+#yxn-workbench .selection-context .icon-button { padding: 1px 4px; }
+#yxn-workbench .sent-selection-context { margin-top: 6px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }

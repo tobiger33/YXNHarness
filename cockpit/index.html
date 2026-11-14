@@ -71,6 +71,12 @@
       <section class="screen preview-screen" id="screen-preview" role="tabpanel" aria-labelledby="tab-preview">
         <div class="preview-label"><span><span class="status-dot"></span><span id="preview-kind">Example application</span></span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
         <div class="app-preview" id="app-preview">
+          <div id="element-actions" class="element-actions" role="toolbar" aria-label="Selected element actions" hidden>
+            <span id="selected-element-name"></span>
+            <button type="button" id="selection-comment">Kommentieren</button>
+            <button type="button" id="selection-adopt">Übernehmen</button>
+            <button type="button" id="selection-dismiss" aria-label="Clear selected element">×</button>
+          </div>
           <div class="region-status preview-status" id="preview-status" role="status" aria-live="polite" hidden>
             <img src="/cockpit/assets/yxn-loader.svg" width="22" height="22" alt="" aria-hidden="true">
             <span></span><button type="button" class="button" id="preview-retry" hidden>Retry</button>
@@ -148,7 +154,7 @@
       </div>
       <div class="composer-area">
         <div class="context-controls"><button id="add-context"><i data-lucide="plus" aria-hidden="true"></i>Add context</button><button id="screenshot"><i data-lucide="image" aria-hidden="true"></i>Screenshot</button></div>
-        <div class="composer" id="composer" role="group" aria-label="Agent composer"><input type="file" id="attachment-picker" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><div class="attachment-tray" id="attachment-tray" aria-label="Local image attachments — click to preview" hidden></div><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
+        <div class="composer" id="composer" role="group" aria-label="Agent composer"><section class="selection-context" id="selection-context" aria-label="Selected element context" hidden><header><span id="selection-context-name"></span><button type="button" class="icon-button" id="selection-context-clear" aria-label="Remove element context">×</button></header><p id="selection-context-branches"></p><p id="selection-context-route"></p><span id="selection-context-intent"></span></section><input type="file" id="attachment-picker" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><div class="attachment-tray" id="attachment-tray" aria-label="Local image attachments — click to preview" hidden></div><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
         <div class="composer-footnote"><span id="composer-note">No agent adapter connected</span><span>↵ to send</span></div>
       </div>
     </aside>

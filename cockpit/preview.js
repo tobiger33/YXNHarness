@@ -118,8 +118,8 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     button.addEventListener("click", (event) => {
       if (!selecting()) return;
       event.preventDefault();
-      select(`${button.dataset.demoElement} · ${q("#route").textContent}`);
-      notify("Element added to agent context. Press Escape to interact again.");
+      select({ id: button.dataset.demoElement, label: button.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }, button);
+      notify("Element selected. Choose Kommentieren or Übernehmen, or press Escape to interact.");
     });
   }
   q("#inspect-target").addEventListener("click", () => { if (!selecting()) step("details"); });
