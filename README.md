@@ -133,7 +133,16 @@ npm run harness -- promote --from last-green --apply
 
 See [`docs/promote.md`](docs/promote.md).
 
-Serve the local cockpit shell plus a loopback-only read API:
+Local visual feedback threads (branch/commit/route/viewport/element) and bundle into a handoff:
+
+```sh
+npm run harness -- feedback --create --body "Tighten the primary CTA" --route / --apply
+npm run harness -- feedback --bundle <threadId> --from last-green --apply
+```
+
+See [`docs/feedback.md`](docs/feedback.md).
+
+Serve the local cockpit shell plus a loopback-only API:
 
 ```sh
 npm run harness -- serve

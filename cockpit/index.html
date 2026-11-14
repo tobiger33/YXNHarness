@@ -27,78 +27,136 @@
       </div>
     </header>
 
-    <div id="view-review" class="view view-review">
-      <aside class="context" aria-label="Review context">
-        <section class="context-block">
-          <h2 class="context-label">Branches</h2>
-          <div id="branches-list" class="branch-list" role="list"></div>
-        </section>
+    <div class="workspace">
+      <div class="workspace-main">
+        <div id="view-review" class="view view-review">
+          <aside class="context" aria-label="Review context">
+            <section class="context-block">
+              <h2 class="context-label">Branches</h2>
+              <div id="branches-list" class="branch-list" role="list"></div>
+            </section>
 
-        <section class="context-block context-grow" id="review-context" hidden>
-          <div class="summary-card">
-            <h2 id="review-heading" class="summary-title">Review</h2>
-            <p id="review-meta" class="summary-meta"></p>
-            <p id="review-summary-text" class="summary-body"></p>
-            <p id="review-stats" class="summary-stats"></p>
-          </div>
+            <section class="context-block context-grow" id="review-context" hidden>
+              <div class="summary-card">
+                <h2 id="review-heading" class="summary-title">Review</h2>
+                <p id="review-meta" class="summary-meta"></p>
+                <p id="review-summary-text" class="summary-body"></p>
+                <p id="review-stats" class="summary-stats"></p>
+              </div>
 
-          <div class="files-card">
-            <div class="files-head">
-              <h3>Files</h3>
-              <span id="files-count" class="muted"></span>
+              <div class="files-card">
+                <div class="files-head">
+                  <h3>Files</h3>
+                  <span id="files-count" class="muted"></span>
+                </div>
+                <div id="files-list" class="files-list" role="list"></div>
+              </div>
+            </section>
+
+            <section id="composer" class="composer" hidden>
+              <textarea
+                id="adopt-comment"
+                class="composer-input"
+                rows="2"
+                maxlength="2000"
+                placeholder="Optional note — or leave empty to take as-is…"
+              ></textarea>
+              <div class="composer-bar">
+                <button type="button" class="btn btn-ghost" id="adopt-cancel" hidden>Cancel</button>
+                <button type="button" class="btn btn-primary" id="adopt-confirm">Übernehmen</button>
+              </div>
+            </section>
+          </aside>
+
+          <main class="stage" aria-labelledby="diff-title">
+            <div class="stage-tabs">
+              <span class="stage-tab active">Diff</span>
+              <span id="diff-title" class="stage-file muted"></span>
             </div>
-            <div id="files-list" class="files-list" role="list"></div>
+            <div id="diff-body" class="diff-body">
+              <div class="empty-state">
+                <p class="empty-title">Pick a branch</p>
+                <p class="empty-copy">Select another local branch to review its changes against yours — then adopt with an optional note.</p>
+              </div>
+            </div>
+          </main>
+        </div>
+
+        <div id="view-runs" class="view view-stack" hidden>
+          <aside class="stack-rail">
+            <div class="stack-head">
+              <h2>Runs</h2>
+              <p id="runs-summary" class="muted">…</p>
+            </div>
+            <div id="runs-list" class="stack-list" role="list"></div>
+          </aside>
+          <main id="run-detail" class="stack-detail"></main>
+        </div>
+
+        <div id="view-handoffs" class="view view-stack" hidden>
+          <aside class="stack-rail">
+            <div class="stack-head">
+              <h2>Handoffs</h2>
+            </div>
+            <div id="handoffs-list" class="stack-list" role="list"></div>
+          </aside>
+          <main id="handoff-detail" class="stack-detail"></main>
+        </div>
+      </div>
+
+      <aside class="agent-panel" aria-label="Agent and feedback">
+        <header class="agent-head">
+          <div>
+            <h2 class="agent-title">Agent</h2>
+            <p id="agent-status" class="agent-status">Local · not connected</p>
+          </div>
+        </header>
+
+        <div id="context-chips" class="chip-row" aria-label="Context"></div>
+
+        <section class="agent-section agent-threads">
+          <div class="agent-section-head">
+            <h3>Feedback</h3>
+            <span id="feedback-count" class="muted"></span>
+          </div>
+          <div id="feedback-list" class="thread-list" role="list"></div>
+        </section>
+
+        <section id="thread-detail" class="agent-section agent-detail" hidden>
+          <div class="agent-section-head">
+            <h3 id="thread-title">Thread</h3>
+            <div class="thread-actions">
+              <button type="button" class="btn btn-ghost btn-tiny" id="thread-done">Done</button>
+              <button type="button" class="btn btn-ghost btn-tiny" id="thread-select">Select</button>
+            </div>
+          </div>
+          <div id="thread-messages" class="thread-messages"></div>
+        </section>
+
+        <section class="agent-section agent-activity">
+          <div class="agent-section-head">
+            <h3>Activity</h3>
+          </div>
+          <div id="agent-activity" class="activity-list">
+            <p class="activity-empty">No agent events yet. File reads, diffs, and previews will appear here when an adapter is connected.</p>
           </div>
         </section>
 
-        <section id="composer" class="composer" hidden>
+        <section class="agent-composer">
+          <div id="selected-chips" class="chip-row chip-row-selected" hidden></div>
           <textarea
-            id="adopt-comment"
-            class="composer-input"
-            rows="2"
-            maxlength="2000"
-            placeholder="Optional note — or leave empty to take as-is…"
+            id="feedback-body"
+            class="composer-input agent-input"
+            rows="3"
+            maxlength="8000"
+            placeholder="Describe the visual change… Comments are context, not instructions."
           ></textarea>
           <div class="composer-bar">
-            <button type="button" class="btn btn-ghost" id="adopt-cancel" hidden>Cancel</button>
-            <button type="button" class="btn btn-primary" id="adopt-confirm">Übernehmen</button>
+            <button type="button" class="btn btn-ghost" id="bundle-btn" disabled>Bundle handoff</button>
+            <button type="button" class="btn btn-primary" id="feedback-send">Add feedback</button>
           </div>
         </section>
       </aside>
-
-      <main class="stage" aria-labelledby="diff-title">
-        <div class="stage-tabs">
-          <span class="stage-tab active">Diff</span>
-          <span id="diff-title" class="stage-file muted"></span>
-        </div>
-        <div id="diff-body" class="diff-body">
-          <div class="empty-state">
-            <p class="empty-title">Pick a branch</p>
-            <p class="empty-copy">Select another local branch to review its changes against yours — then adopt with an optional note.</p>
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <div id="view-runs" class="view view-stack" hidden>
-      <aside class="stack-rail">
-        <div class="stack-head">
-          <h2>Runs</h2>
-          <p id="runs-summary" class="muted">…</p>
-        </div>
-        <div id="runs-list" class="stack-list" role="list"></div>
-      </aside>
-      <main id="run-detail" class="stack-detail"></main>
-    </div>
-
-    <div id="view-handoffs" class="view view-stack" hidden>
-      <aside class="stack-rail">
-        <div class="stack-head">
-          <h2>Handoffs</h2>
-        </div>
-        <div id="handoffs-list" class="stack-list" role="list"></div>
-      </aside>
-      <main id="handoff-detail" class="stack-detail"></main>
     </div>
   </div>
 

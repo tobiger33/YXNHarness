@@ -49,6 +49,16 @@ import {
   promoteExpectsFromRun,
 } from "./promote.mjs";
 import {
+  agentPanelState,
+  bundleFeedback,
+  createFeedback,
+  formatFeedbackList,
+  formatFeedbackPlan,
+  getFeedback,
+  listFeedback,
+  updateFeedback,
+} from "./feedback.mjs";
+import {
   DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
   createCockpitApi,
 } from "./cockpit-api.mjs";
@@ -85,6 +95,7 @@ const USAGE = `Usage:
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
   npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
+  npm run harness -- feedback [--root path] [--list|--create|--id <threadId>|--bundle ids] [--body text] [--route path] [--viewport name] [--element id] [--run-id id] [--resolve|--reopen] [--from last-green] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
@@ -100,7 +111,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -127,6 +138,17 @@ function parseArgs(argv) {
     baseline: null,
     against: null,
     strict: false,
+    list: false,
+    createFeedback: false,
+    body: null,
+    route: null,
+    viewport: null,
+    element: null,
+    runId: null,
+    id: null,
+    bundle: null,
+    resolve: false,
+    reopen: false,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -150,10 +172,14 @@ function parseArgs(argv) {
       options.checkout = checkout;
       index += 1;
     } else if (argument === "--create") {
-      const create = rest[index + 1];
-      if (!create || create.startsWith("--")) throw new Error("--create requires a new local branch name.");
-      options.create = create;
-      index += 1;
+      if (action === "feedback") {
+        options.createFeedback = true;
+      } else {
+        const create = rest[index + 1];
+        if (!create || create.startsWith("--")) throw new Error("--create requires a new local branch name.");
+        options.create = create;
+        index += 1;
+      }
     } else if (argument === "--review") {
       const review = rest[index + 1];
       if (!review || review.startsWith("--")) throw new Error("--review requires an existing local branch name.");
@@ -201,6 +227,47 @@ function parseArgs(argv) {
       index += 1;
     } else if (argument === "--strict") {
       options.strict = true;
+    } else if (argument === "--list") {
+      options.list = true;
+    } else if (argument === "--body") {
+      const body = rest[index + 1];
+      if (body === undefined || body.startsWith("--")) throw new Error("--body requires text.");
+      options.body = body;
+      index += 1;
+    } else if (argument === "--route") {
+      const route = rest[index + 1];
+      if (route === undefined || route.startsWith("--")) throw new Error("--route requires a path.");
+      options.route = route;
+      index += 1;
+    } else if (argument === "--viewport") {
+      const viewport = rest[index + 1];
+      if (!viewport || viewport.startsWith("--")) throw new Error("--viewport requires a name.");
+      options.viewport = viewport;
+      index += 1;
+    } else if (argument === "--element") {
+      const element = rest[index + 1];
+      if (!element || element.startsWith("--")) throw new Error("--element requires an id.");
+      options.element = element;
+      index += 1;
+    } else if (argument === "--run-id") {
+      const runId = rest[index + 1];
+      if (!runId || runId.startsWith("--")) throw new Error("--run-id requires a run id.");
+      options.runId = runId;
+      index += 1;
+    } else if (argument === "--id") {
+      const id = rest[index + 1];
+      if (!id || id.startsWith("--")) throw new Error("--id requires a feedback thread id.");
+      options.id = id;
+      index += 1;
+    } else if (argument === "--bundle") {
+      const bundle = rest[index + 1];
+      if (!bundle || bundle.startsWith("--")) throw new Error("--bundle requires comma-separated thread ids.");
+      options.bundle = bundle;
+      index += 1;
+    } else if (argument === "--resolve") {
+      options.resolve = true;
+    } else if (argument === "--reopen") {
+      options.reopen = true;
     } else if (argument === "--note") {
       const note = rest[index + 1];
       if (note === undefined || note.startsWith("--")) throw new Error("--note requires text.");
@@ -305,17 +372,22 @@ function parseArgs(argv) {
   if (options.out && !["scaffold", "handoff", "promote"].includes(action)) {
     throw new Error("--out is only valid with scaffold, handoff, or promote.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, or promote.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, or feedback.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if (options.from && !["handoff", "promote"].includes(action)) {
-    throw new Error("--from is only valid with handoff or promote.");
+  if (options.from && !["handoff", "promote", "feedback"].includes(action)) {
+    throw new Error("--from is only valid with handoff, promote, or feedback --bundle.");
   }
-  if (options.note && !["handoff", "workspace"].includes(action)) {
-    throw new Error("--note is only valid with handoff or workspace --adopt.");
+  if (options.note && !["handoff", "workspace", "feedback"].includes(action)) {
+    throw new Error("--note is only valid with handoff, workspace --adopt, or feedback --bundle.");
+  }
+  if ((options.list || options.createFeedback || options.body || options.route || options.viewport ||
+      options.element || options.runId || options.id || options.bundle || options.resolve || options.reopen) &&
+      action !== "feedback") {
+    throw new Error("--list/--create/--body/--route/--viewport/--element/--run-id/--id/--bundle/--resolve/--reopen are only valid with feedback.");
   }
   if ((options.baseline || options.against) && action !== "compare") {
     throw new Error("--baseline and --against are only valid with compare.");
@@ -352,6 +424,33 @@ function parseArgs(argv) {
   }
   if (action === "promote" && options.apply && options.dryRun) {
     throw new Error("--dry-run and --apply cannot be used together.");
+  }
+  if (action === "feedback") {
+    const modes = [options.list, options.createFeedback, Boolean(options.id), Boolean(options.bundle)].filter(Boolean);
+    if (modes.length > 1) {
+      throw new Error("Use only one of feedback --list, --create, --id, or --bundle.");
+    }
+    if (modes.length === 0) options.list = true;
+    if (options.createFeedback && !options.body) {
+      throw new Error("feedback --create requires --body.");
+    }
+    if (options.resolve && options.reopen) {
+      throw new Error("--resolve and --reopen cannot be used together.");
+    }
+    if ((options.resolve || options.reopen) && !options.id) {
+      throw new Error("--resolve/--reopen require --id.");
+    }
+    if (options.id && !options.body && !options.resolve && !options.reopen && !options.json && !options.apply && !options.dryRun) {
+      // allow --id alone as get
+    }
+    if (options.bundle && (options.createFeedback || options.resolve || options.reopen || options.body)) {
+      throw new Error("feedback --bundle does not accept --create/--body/--resolve/--reopen.");
+    }
+    if (options.installBrowser || options.yes || options.init || options.name || options.out ||
+        options.baseline || options.against || options.strict || options.port !== null ||
+        options.checkout || options.create || options.review || options.adopt || options.path || options.start) {
+      throw new Error("feedback accepts --list/--create/--id/--bundle/--body/--route/--viewport/--element/--run-id/--resolve/--reopen/--from/--note/--dry-run/--apply/--force/--json/--root only.");
+    }
   }
   if (action === "serve" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
@@ -443,9 +542,15 @@ function explainNextSteps(report) {
     why: "Copies after-state from a green run into scenario expects — durable checks without hand-writing YAML.",
   });
   steps.push({
+    id: "feedback",
+    command: "npm run harness -- feedback --create --body \"Tighten the primary CTA spacing\" --route / --apply",
+    then: "npm run harness -- feedback --bundle <threadId> --from last-green --apply",
+    why: "Local visual feedback threads (branch/commit/route/viewport/element) — bundle into an agent handoff.",
+  });
+  steps.push({
     id: "serve",
     command: `npm run harness -- serve --port ${COCKPIT_DEFAULT_PORT}`,
-    why: "Starts the local cockpit shell + loopback read API (host, workspace, runs, handoffs, artifacts).",
+    why: "Starts the local cockpit shell + loopback API (review, runs, handoffs, feedback, agent panel).",
   });
   return steps;
 }
@@ -1368,7 +1473,8 @@ async function main(argv = process.argv.slice(2)) {
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     console.log("compare diffs last-green vs last-run (or explicit run ids) — state + screenshot evidence.");
     console.log("promote copies after-state from a green run into scenario expects (--dry-run, then --apply).");
-    console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
+    console.log("feedback creates local visual threads and bundles them into handoffs for your coding agent.");
+    console.log(`serve starts the cockpit UI + API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
   }
   const root = path.resolve(options.root || process.cwd());
@@ -1590,6 +1696,53 @@ async function main(argv = process.argv.slice(2)) {
     if (!plan.ok) process.exitCode = 1;
     return plan;
   }
+  if (options.action === "feedback") {
+    let plan;
+    if (options.bundle) {
+      plan = await bundleFeedback(root, {
+        threadIds: options.bundle,
+        from: options.from || "last-green",
+        note: options.note,
+        apply: options.apply,
+        force: options.force,
+      });
+    } else if (options.createFeedback) {
+      plan = await createFeedback(root, {
+        body: options.body,
+        apply: options.apply,
+        route: options.route,
+        viewport: options.viewport,
+        element: options.element,
+        runId: options.runId,
+      });
+    } else if (options.id) {
+      if (options.body || options.resolve || options.reopen) {
+        plan = await updateFeedback(root, {
+          threadId: options.id,
+          body: options.body,
+          status: options.resolve ? "done" : (options.reopen ? "open" : null),
+          apply: options.apply,
+        });
+      } else {
+        plan = await getFeedback(root, options.id);
+      }
+    } else {
+      plan = await listFeedback(root);
+    }
+    plan.ok = plan.ok !== false && plan.status !== "blocked";
+    if (options.json) {
+      console.log(JSON.stringify(plan, null, 2));
+    } else if (options.list || (!options.bundle && !options.createFeedback && !options.id)) {
+      console.log(formatFeedbackList(plan));
+    } else if (plan.thread && !plan.action) {
+      console.log(formatFeedbackPlan({ action: "get", status: plan.status, thread: plan.thread, warnings: [], next: [] }));
+      console.log(JSON.stringify(plan.thread, null, 2));
+    } else {
+      console.log(formatFeedbackPlan(plan));
+    }
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   if (options.action === "serve") {
     const api = createCockpitApi({
       root,
@@ -1693,6 +1846,8 @@ export {
   formatHostConfigSummary,
   formatProbeReport,
   formatPromotePlan,
+  formatFeedbackList,
+  formatFeedbackPlan,
   formatRunIndex,
   formatScaffoldPlan,
   formatSetupPlan,
@@ -1700,9 +1855,14 @@ export {
   inspectProject,
   isJsonValue,
   loadHostConfig,
+  listFeedback,
   matchesExpected,
   parseArgs,
   promoteExpectsFromRun,
+  createFeedback,
+  updateFeedback,
+  bundleFeedback,
+  agentPanelState,
   probeApp,
   runScenario,
   setupProject,

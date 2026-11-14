@@ -11,6 +11,14 @@ import {
 } from "./workspace.mjs";
 import { compareRuns } from "./compare-runs.mjs";
 import { promoteExpectsFromRun } from "./promote.mjs";
+import {
+  agentPanelState,
+  bundleFeedback,
+  createFeedback,
+  getFeedback,
+  listFeedback,
+  updateFeedback,
+} from "./feedback.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -131,7 +139,12 @@ async function buildOverview(root, { refresh = true } = {}) {
     api: {
       readOnly: false,
       loopbackOnly: true,
-      localWrites: ["POST /api/v1/workspace/adopt"],
+      localWrites: [
+        "POST /api/v1/workspace/adopt",
+        "POST /api/v1/feedback",
+        "PATCH /api/v1/feedback/:id",
+        "POST /api/v1/feedback/bundle",
+      ],
       endpoints: [
         "GET /api/v1/health",
         "GET /api/v1/overview",
@@ -143,6 +156,12 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/runs/:runId",
         "GET /api/v1/compare",
         "GET /api/v1/promote",
+        "GET /api/v1/feedback",
+        "GET /api/v1/feedback/:id",
+        "POST /api/v1/feedback",
+        "PATCH /api/v1/feedback/:id",
+        "POST /api/v1/feedback/bundle",
+        "GET /api/v1/agent",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
         "GET /api/v1/artifacts/*",
@@ -290,7 +309,12 @@ function apiIndexPayload(projectRoot) {
     version: 1,
     readOnly: false,
     loopbackOnly: true,
-    localWrites: ["POST /api/v1/workspace/adopt"],
+    localWrites: [
+      "POST /api/v1/workspace/adopt",
+      "POST /api/v1/feedback",
+      "PATCH /api/v1/feedback/:id",
+      "POST /api/v1/feedback/bundle",
+    ],
     root: projectRoot,
     links: {
       ui: "/",
@@ -303,10 +327,12 @@ function apiIndexPayload(projectRoot) {
       runs: "/api/v1/runs",
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
       promote: "/api/v1/promote?from=last-green",
+      feedback: "/api/v1/feedback",
+      agent: "/api/v1/agent",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Adopt is the only write; promote apply stays on the CLI.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt + feedback. No remote agent required.",
   };
 }
 
@@ -357,8 +383,53 @@ function createCockpitApi({
         return;
       }
 
+      if (pathname === "/api/v1/feedback" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await createFeedback(projectRoot, {
+          body: body.body ?? body.text ?? body.message,
+          apply: body.apply !== false,
+          route: body.route ?? null,
+          viewport: body.viewport ?? null,
+          branch: body.branch ?? null,
+          commit: body.commit ?? null,
+          runId: body.runId ?? null,
+          screenshot: body.screenshot ?? null,
+          appState: body.appState ?? null,
+          element: body.element ?? null,
+          source: body.source ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/feedback/bundle" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await bundleFeedback(projectRoot, {
+          threadIds: body.threadIds || body.ids || [],
+          from: body.from || "last-green",
+          note: body.note ?? null,
+          apply: body.apply !== false,
+          force: body.force === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      const feedbackWriteMatch = pathname.match(/^\/api\/v1\/feedback\/([^/]+)$/);
+      if (feedbackWriteMatch && method === "PATCH") {
+        const body = await readJsonBody(request);
+        const plan = await updateFeedback(projectRoot, {
+          threadId: decodeURIComponent(feedbackWriteMatch[1]),
+          body: body.body ?? body.text ?? null,
+          status: body.status ?? null,
+          apply: body.apply !== false,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
       if (method !== "GET" && method !== "HEAD") {
-        response.writeHead(405, { Allow: "GET, HEAD, POST" }).end("Method not allowed");
+        response.writeHead(405, { Allow: "GET, HEAD, POST, PATCH" }).end("Method not allowed");
         return;
       }
 
@@ -454,6 +525,31 @@ function createCockpitApi({
       const runMatch = pathname.match(/^\/api\/v1\/runs\/([^/]+)$/);
       if (runMatch) {
         sendJson(response, 200, await getRun(projectRoot, decodeURIComponent(runMatch[1])));
+        return;
+      }
+
+      if (pathname === "/api/v1/feedback") {
+        const status = searchParams.get("status") || null;
+        sendJson(response, 200, await listFeedback(projectRoot, { status }));
+        return;
+      }
+
+      const feedbackMatch = pathname.match(/^\/api\/v1\/feedback\/([^/]+)$/);
+      if (feedbackMatch) {
+        try {
+          sendJson(response, 200, await getFeedback(projectRoot, decodeURIComponent(feedbackMatch[1])));
+        } catch (error) {
+          if (error.code === "NOT_FOUND") {
+            sendJson(response, 404, { error: error.message });
+            return;
+          }
+          throw error;
+        }
+        return;
+      }
+
+      if (pathname === "/api/v1/agent") {
+        sendJson(response, 200, agentPanelState());
         return;
       }
 

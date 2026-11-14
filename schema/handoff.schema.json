@@ -69,6 +69,19 @@
           "items": { "type": "string", "minLength": 1 }
         }
       }
+    },
+    "feedback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["threadIds", "file"],
+      "properties": {
+        "threadIds": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        },
+        "file": { "const": "feedback-threads.json" }
+      }
     }
   }
 }
