@@ -12,10 +12,11 @@ providers, inspect internal plumbing, or manually prepare app state.
   using its native actions and state. A new-project experience can follow.
 - **Local solo work first.** Local operation needs no account, cloud service,
   central maintainer backend, or project upload.
-- **Collaboration is opt-in.** When collaboration needs a reachable service,
-  the agent should guide the owner through private self-hosting and the
-  minimum required provider setup. Architecture must remain portable across
-  hosting providers.
+- **Collaboration is opt-in.** Local share invites come first (view/comment
+  JSON under `artifacts/shares/`). When collaboration needs a reachable
+  service, the agent should guide the owner through private self-hosting and
+  the minimum required provider setup. A future web link carries the same
+  policy JSON; architecture must remain portable across hosting providers.
 - **Branches are isolated workspaces.** Each contributor works on their own
   branch. Previews and feedback identify the branch and exact code revision.
   The first hosted collaboration slice can update a preview after a push;
