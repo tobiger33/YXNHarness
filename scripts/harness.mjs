@@ -59,6 +59,10 @@ import {
   updateFeedback,
 } from "./feedback.mjs";
 import {
+  formatAttachPlan,
+  runAttach,
+} from "./attach.mjs";
+import {
   DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
   createCockpitApi,
 } from "./cockpit-api.mjs";
@@ -96,6 +100,7 @@ const USAGE = `Usage:
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
   npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
   npm run harness -- feedback [--root path] [--list|--create|--id <threadId>|--bundle ids] [--body text] [--route path] [--viewport name] [--element id] [--run-id id] [--resolve|--reopen] [--from last-green] [--note text] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- attach [--root path] [--until doctor|setup|browser|probe|scaffold|run|promote] [--name smoke] [--out path] [--scenario path] [--from last-green] [--dry-run|--apply] [--install-browser] [--yes] [--force] [--strict] [--skip-doctor] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
@@ -111,7 +116,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "attach", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -149,6 +154,9 @@ function parseArgs(argv) {
     bundle: null,
     resolve: false,
     reopen: false,
+    until: null,
+    scenarioFile: null,
+    skipDoctor: false,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -268,6 +276,18 @@ function parseArgs(argv) {
       options.resolve = true;
     } else if (argument === "--reopen") {
       options.reopen = true;
+    } else if (argument === "--until") {
+      const until = rest[index + 1];
+      if (!until || until.startsWith("--")) throw new Error("--until requires doctor|setup|browser|probe|scaffold|run|promote.");
+      options.until = until;
+      index += 1;
+    } else if (argument === "--scenario") {
+      const scenarioFile = rest[index + 1];
+      if (!scenarioFile || scenarioFile.startsWith("--")) throw new Error("--scenario requires a YAML path.");
+      options.scenarioFile = scenarioFile;
+      index += 1;
+    } else if (argument === "--skip-doctor") {
+      options.skipDoctor = true;
     } else if (argument === "--note") {
       const note = rest[index + 1];
       if (note === undefined || note.startsWith("--")) throw new Error("--note requires text.");
@@ -301,6 +321,15 @@ function parseArgs(argv) {
   if (options.dryRun && options.apply) throw new Error("--dry-run and --apply cannot be used together.");
   if (action === "run" && !options.scenario) throw new Error("A scenario YAML path is required.");
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
+  if (action === "attach") {
+    if (options.note || options.baseline || options.against || options.port !== null ||
+        options.init || options.checkout || options.create || options.review || options.adopt ||
+        options.path || options.start || options.list || options.createFeedback || options.body ||
+        options.route || options.viewport || options.element || options.runId || options.id ||
+        options.bundle || options.resolve || options.reopen) {
+      throw new Error("attach accepts --root/--json/--until/--name/--out/--scenario/--from/--dry-run/--apply/--install-browser/--yes/--force/--strict/--skip-doctor only.");
+    }
+  }
   if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
       options.baseline || options.against || options.strict || options.port !== null)) {
@@ -363,23 +392,32 @@ function parseArgs(argv) {
   if (action === "setup" && options.yes && !options.installBrowser) {
     throw new Error("--yes is only valid with setup when also passing --install-browser.");
   }
-  if (options.installBrowser && action !== "setup") {
-    throw new Error("--install-browser is only valid with setup.");
+  if (options.installBrowser && !["setup", "attach"].includes(action)) {
+    throw new Error("--install-browser is only valid with setup or attach.");
   }
-  if (options.name && !["scaffold", "promote"].includes(action)) {
-    throw new Error("--name is only valid with scaffold or promote.");
+  if (options.name && !["scaffold", "promote", "attach"].includes(action)) {
+    throw new Error("--name is only valid with scaffold, promote, or attach.");
   }
-  if (options.out && !["scaffold", "handoff", "promote"].includes(action)) {
-    throw new Error("--out is only valid with scaffold, handoff, or promote.");
+  if (options.out && !["scaffold", "handoff", "promote", "attach"].includes(action)) {
+    throw new Error("--out is only valid with scaffold, handoff, promote, or attach.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, or feedback.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback", "attach"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, feedback, or attach.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if (options.from && !["handoff", "promote", "feedback"].includes(action)) {
-    throw new Error("--from is only valid with handoff, promote, or feedback --bundle.");
+  if (options.from && !["handoff", "promote", "feedback", "attach"].includes(action)) {
+    throw new Error("--from is only valid with handoff, promote, feedback --bundle, or attach.");
+  }
+  if (options.until && action !== "attach") {
+    throw new Error("--until is only valid with attach.");
+  }
+  if (options.scenarioFile && action !== "attach") {
+    throw new Error("--scenario is only valid with attach.");
+  }
+  if (options.skipDoctor && action !== "attach") {
+    throw new Error("--skip-doctor is only valid with attach.");
   }
   if (options.note && !["handoff", "workspace", "feedback"].includes(action)) {
     throw new Error("--note is only valid with handoff, workspace --adopt, or feedback --bundle.");
@@ -392,8 +430,8 @@ function parseArgs(argv) {
   if ((options.baseline || options.against) && action !== "compare") {
     throw new Error("--baseline and --against are only valid with compare.");
   }
-  if (options.strict && action !== "promote") {
-    throw new Error("--strict is only valid with promote.");
+  if (options.strict && !["promote", "attach"].includes(action)) {
+    throw new Error("--strict is only valid with promote or attach.");
   }
   if (options.port !== null && action !== "serve") {
     throw new Error("--port is only valid with serve.");
@@ -470,6 +508,12 @@ function explainNextSteps(report) {
       why: "Writes only a missing harness.config.json (start command + local URL). Preview first, then apply.",
     });
   }
+  steps.push({
+    id: "attach",
+    command: "npm run harness -- attach --dry-run",
+    then: "npm run harness -- attach --until scaffold --apply --yes",
+    why: "One-command path: doctor → setup → probe → scaffold (optional run/promote). Prefer this for agent attach.",
+  });
   steps.push({
     id: "browser",
     command: "npm run harness -- setup --install-browser",
@@ -1474,6 +1518,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("compare diffs last-green vs last-run (or explicit run ids) — state + screenshot evidence.");
     console.log("promote copies after-state from a green run into scenario expects (--dry-run, then --apply).");
     console.log("feedback creates local visual threads and bundles them into handoffs for your coding agent.");
+    console.log("attach chains doctor→setup→probe→scaffold→run→promote (--dry-run by default; --until sets the stop phase).");
     console.log(`serve starts the cockpit UI + API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
   }
@@ -1696,6 +1741,30 @@ async function main(argv = process.argv.slice(2)) {
     if (!plan.ok) process.exitCode = 1;
     return plan;
   }
+  if (options.action === "attach") {
+    const plan = await runAttach(root, {
+      until: options.until,
+      apply: options.apply,
+      yes: options.yes,
+      force: options.force,
+      installBrowser: options.installBrowser,
+      name: options.name,
+      out: options.out,
+      scenario: options.scenarioFile,
+      from: options.from || "last-green",
+      strict: options.strict,
+      skipDoctor: options.skipDoctor,
+      probeApp,
+      runScenario,
+      loadJson,
+      validateConfig,
+      loadScenario,
+      validateScenario,
+    });
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatAttachPlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   if (options.action === "feedback") {
     let plan;
     if (options.bundle) {
@@ -1846,6 +1915,7 @@ export {
   formatHostConfigSummary,
   formatProbeReport,
   formatPromotePlan,
+  formatAttachPlan,
   formatFeedbackList,
   formatFeedbackPlan,
   formatRunIndex,
@@ -1863,6 +1933,7 @@ export {
   updateFeedback,
   bundleFeedback,
   agentPanelState,
+  runAttach,
   probeApp,
   runScenario,
   setupProject,
