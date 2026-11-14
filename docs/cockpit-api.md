@@ -38,12 +38,15 @@ this package). JSON stays under `/api/v1/…`.
 
 ## Review & Übernehmen
 
-The shell lists other local branches in the left rail. Selecting one opens a
-clean file list + unified diff (Cursor / VS Code / GitHub style). **Übernehmen**
-opens a slim confirm sheet (diff stays visible) with an optional note — then
-POSTs to `/api/v1/workspace/adopt` (`apply: true`, optional `comment`).
+The shell follows a Codex/Cursor-style review layout:
 
-The note is recorded on the merge commit when provided. Empty note = take as-is.
+- Top: mode tabs (Review / Runs / Handoffs)
+- Left context: branches, summary, files changed, bottom composer
+- Right stage: unified diff
+
+Selecting a branch loads the PR-style file list. **Übernehmen** (with optional
+note) POSTs to `/api/v1/workspace/adopt`. Empty note = take as-is; a note is
+recorded on the merge commit.
 
 That is the only write route. Create/checkout remain CLI-only until a broader
 authenticated control plane exists.

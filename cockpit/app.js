@@ -2,30 +2,38 @@ const els = {
   refreshBtn: document.getElementById("refresh-btn"),
   branchCurrent: document.getElementById("branch-current"),
   branchesList: document.getElementById("branches-list"),
-  runsSummary: document.getElementById("runs-summary"),
-  runsList: document.getElementById("runs-list"),
-  handoffsList: document.getElementById("handoffs-list"),
-  detailTitle: document.getElementById("detail-title"),
-  detailLede: document.getElementById("detail-lede"),
-  detailBody: document.getElementById("detail-body"),
-  stageActions: document.getElementById("stage-actions"),
-  adoptSheet: document.getElementById("adopt-sheet"),
-  adoptSheetLede: document.getElementById("adopt-sheet-lede"),
+  reviewContext: document.getElementById("review-context"),
+  reviewHeading: document.getElementById("review-heading"),
+  reviewMeta: document.getElementById("review-meta"),
+  reviewSummaryText: document.getElementById("review-summary-text"),
+  reviewStats: document.getElementById("review-stats"),
+  filesCount: document.getElementById("files-count"),
+  filesList: document.getElementById("files-list"),
+  composer: document.getElementById("composer"),
   adoptComment: document.getElementById("adopt-comment"),
   adoptCancel: document.getElementById("adopt-cancel"),
   adoptConfirm: document.getElementById("adopt-confirm"),
-  generatedAt: document.getElementById("generated-at"),
+  diffTitle: document.getElementById("diff-title"),
+  diffBody: document.getElementById("diff-body"),
+  runsSummary: document.getElementById("runs-summary"),
+  runsList: document.getElementById("runs-list"),
+  runDetail: document.getElementById("run-detail"),
+  handoffsList: document.getElementById("handoffs-list"),
+  handoffDetail: document.getElementById("handoff-detail"),
+  viewReview: document.getElementById("view-review"),
+  viewRuns: document.getElementById("view-runs"),
+  viewHandoffs: document.getElementById("view-handoffs"),
 };
 
 const state = {
-  overview: null,
+  mode: "review",
   workspace: null,
-  selected: null,
   review: null,
   reviewFile: null,
+  selectedBranch: null,
+  selectedRun: null,
+  selectedHandoff: null,
   adopting: false,
-  adoptOpen: false,
-  adoptForce: false,
 };
 
 function escapeHtml(value) {
@@ -57,7 +65,7 @@ function formatTime(iso, compact = false) {
 function statusClass(status) {
   if (status === "passed") return "status-passed";
   if (status === "failed") return "status-failed";
-  return "status-unknown";
+  return "";
 }
 
 function shortId(id) {
@@ -94,150 +102,56 @@ async function apiPost(pathname, body) {
   return data;
 }
 
-function stageEmpty(title, body) {
-  return `<div class="stage-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span></div>`;
-}
-
-function detailCards(entries) {
-  return `<div class="detail-grid">${entries.map(([title, body]) => `
-    <div class="detail-card">
-      <h3>${escapeHtml(title)}</h3>
-      <p>${body}</p>
+function emptyState(title, copy) {
+  return `
+    <div class="empty-state">
+      <p class="empty-title">${escapeHtml(title)}</p>
+      <p class="empty-copy">${escapeHtml(copy)}</p>
     </div>
-  `).join("")}</div>`;
-}
-
-function clearActions() {
-  els.stageActions.hidden = true;
-  els.stageActions.innerHTML = "";
-}
-
-function closeAdoptSheet({ restoreAction = false } = {}) {
-  const wasOpen = state.adoptOpen;
-  state.adoptOpen = false;
-  state.adoptForce = false;
-  els.adoptSheet.hidden = true;
-  els.adoptComment.value = "";
-  els.adoptConfirm.disabled = false;
-  els.adoptConfirm.textContent = "Übernehmen";
-  if (restoreAction && wasOpen && state.selected?.type === "review" && state.review) {
-    setAdoptAction(true);
-  }
-}
-
-function openAdoptSheet({ force = false } = {}) {
-  const review = state.review;
-  const theirs = state.selected?.id || review?.theirs?.branch || "—";
-  const yours = review?.yours?.branch || state.workspace?.branch || "—";
-  const summary = review?.summary || {};
-  const files = summary.filesChanged ?? "—";
-  const stats = summary.additions != null
-    ? ` · +${summary.additions}/-${summary.deletions}`
-    : "";
-  state.adoptOpen = true;
-  state.adoptForce = force;
-  clearActions();
-  els.adoptSheetLede.textContent = `Merge ${theirs} → ${yours} (${files} files${stats}). Note is optional — leave empty to take as-is.`;
-  els.adoptSheet.hidden = false;
-  els.adoptConfirm.disabled = false;
-  els.adoptConfirm.textContent = force ? "Force Übernehmen" : "Übernehmen";
-  queueMicrotask(() => els.adoptComment.focus());
-}
-
-function setAdoptAction(enabled, label = "Übernehmen") {
-  els.stageActions.hidden = false;
-  els.stageActions.innerHTML = `
-    <button type="button" class="btn btn-primary" id="adopt-btn" ${enabled ? "" : "disabled"}>
-      ${escapeHtml(label)}
-    </button>
   `;
 }
 
+function setMode(mode) {
+  state.mode = mode;
+  for (const tab of document.querySelectorAll(".mode-tab")) {
+    tab.classList.toggle("active", tab.dataset.mode === mode);
+  }
+  els.viewReview.hidden = mode !== "review";
+  els.viewRuns.hidden = mode !== "runs";
+  els.viewHandoffs.hidden = mode !== "handoffs";
+}
+
 function renderBranches(workspace) {
-  const branches = workspace?.branches || [];
   if (!workspace?.available) {
     els.branchCurrent.textContent = "no git";
-    els.branchesList.innerHTML = `<p class="empty">Not a Git workspace.</p>`;
+    els.branchesList.innerHTML = `<p class="empty-inline">Not a Git workspace.</p>`;
     return;
   }
   const current = workspace.branch || "(detached)";
   const short = workspace.shortCommit || "";
-  els.branchCurrent.textContent = `${current}${short ? ` @ ${short}` : ""}${workspace.dirty ? " · dirty" : ""}`;
+  els.branchCurrent.textContent = `on ${current}${short ? ` @ ${short}` : ""}${workspace.dirty ? " · dirty" : ""}`;
 
-  const others = branches.filter((entry) => !entry.current);
+  const others = (workspace.branches || []).filter((entry) => !entry.current);
   if (!others.length) {
-    els.branchesList.innerHTML = `<p class="empty">No other local branches.</p>`;
+    els.branchesList.innerHTML = `<p class="empty-inline">No other local branches.</p>`;
     return;
   }
 
   els.branchesList.innerHTML = others.map((entry) => {
-    const active = state.selected?.type === "review" && state.selected.id === entry.name ? " active" : "";
+    const active = state.selectedBranch === entry.name ? " active" : "";
     return `
-      <button type="button" class="row${active}" data-kind="review" data-id="${escapeHtml(entry.name)}" role="listitem" title="Review ${escapeHtml(entry.name)}">
-        <span class="row-title">
-          <span>${escapeHtml(entry.name)}</span>
-          <span class="mark">review</span>
-        </span>
-        <span class="row-meta">${escapeHtml(entry.shortCommit || "")}</span>
+      <button type="button" class="branch-item${active}" data-kind="branch" data-id="${escapeHtml(entry.name)}" role="listitem">
+        <span class="branch-name">${escapeHtml(entry.name)}</span>
+        <span class="branch-meta">${escapeHtml(entry.shortCommit || "")}</span>
       </button>
     `;
   }).join("");
-}
-
-function renderRunRows(runs) {
-  if (!runs.length) {
-    els.runsList.innerHTML = `<p class="empty">No runs yet.</p>`;
-    return;
-  }
-  els.runsList.innerHTML = runs.map((run) => {
-    const id = run.runId || run.id;
-    const status = run.status || "unknown";
-    const label = run.scenario?.name || run.scenario || shortId(id);
-    const active = state.selected?.type === "run" && state.selected.id === id ? " active" : "";
-    return `
-      <button type="button" class="row${active}" data-kind="run" data-id="${escapeHtml(id)}" role="listitem" title="${escapeHtml(id)}">
-        <span class="row-title">
-          <span>${escapeHtml(label)}</span>
-          <span class="status ${statusClass(status)}">${escapeHtml(status)}</span>
-        </span>
-        <span class="row-meta">${escapeHtml(formatTime(run.finishedAt || run.startedAt || run.createdAt, true))}</span>
-      </button>
-    `;
-  }).join("");
-}
-
-function renderHandoffs(items) {
-  if (!items?.length) {
-    els.handoffsList.innerHTML = `<p class="empty">No handoffs yet.</p>`;
-    return;
-  }
-  els.handoffsList.innerHTML = items.map((item) => {
-    const id = item.handoffId;
-    const active = state.selected?.type === "handoff" && state.selected.id === id ? " active" : "";
-    const status = item.status || "—";
-    return `
-      <button type="button" class="row${active}" data-kind="handoff" data-id="${escapeHtml(id)}" role="listitem" title="${escapeHtml(id)}">
-        <span class="row-title">
-          <span>${escapeHtml(shortId(id))}</span>
-          <span class="status ${statusClass(status)}">${escapeHtml(status)}</span>
-        </span>
-        <span class="row-meta">${escapeHtml(formatTime(item.createdAt, true))}</span>
-      </button>
-    `;
-  }).join("");
-}
-
-function highlightSelection() {
-  for (const button of document.querySelectorAll(".row[data-kind]")) {
-    const match = state.selected
-      && button.dataset.kind === state.selected.type
-      && button.dataset.id === state.selected.id;
-    button.classList.toggle("active", Boolean(match));
-  }
 }
 
 function renderDiffLines(text) {
-  if (!text) return `<div class="diff-empty">No textual patch for this file.</div>`;
+  if (!text) {
+    return `<div class="empty-state"><p class="empty-copy">No textual patch for this file.</p></div>`;
+  }
   const lines = text.split("\n");
   return `<pre class="diff-code" aria-label="Unified diff">${lines.map((line) => {
     let kind = "";
@@ -258,61 +172,65 @@ function paintReview(review, selectedPath, message = null) {
   const yours = review.yours?.branch || "—";
   const theirs = review.theirs?.branch || "—";
   const summary = review.summary || { filesChanged: 0, additions: 0, deletions: 0 };
-  els.detailTitle.textContent = `Review · ${theirs}`;
-  els.detailLede.textContent = `${yours} ← ${theirs} · ${summary.filesChanged} files · +${summary.additions}/-${summary.deletions}`;
 
-  const canAdopt = review.status === "ready" || review.status === "noop";
-  if (!state.adoptOpen) {
-    setAdoptAction(canAdopt && !state.adopting, state.adopting ? "Übernehmen…" : "Übernehmen");
-  }
+  els.reviewContext.hidden = false;
+  els.composer.hidden = false;
+  els.reviewHeading.textContent = theirs;
+  els.reviewMeta.textContent = `${yours} ← ${theirs}`;
+  els.reviewSummaryText.textContent = review.explanation || "Review changes on their branch since the merge-base.";
+  els.reviewStats.innerHTML = `<span class="stat-add">+${summary.additions}</span> <span class="stat-del">-${summary.deletions}</span>`;
+  els.filesCount.textContent = String(summary.filesChanged ?? 0);
 
   if (!review.files?.length) {
-    els.detailBody.innerHTML = `
+    els.filesList.innerHTML = `<p class="empty-inline">No unique file changes.</p>`;
+    els.diffTitle.textContent = "";
+    els.diffBody.innerHTML = `
       ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
-      ${stageEmpty("No unique changes", review.explanation || "Nothing to adopt from this branch.")}
+      ${emptyState("Nothing to adopt", review.explanation || "That branch has no unique changes.")}
     `;
+    els.adoptConfirm.disabled = review.status === "blocked";
     return;
   }
 
   const path = selectedPath || review.files[0].path;
-  const filesHtml = review.files.map((file) => {
+  els.filesList.innerHTML = review.files.map((file) => {
     const active = file.path === path ? " active" : "";
     return `
-      <button type="button" class="file-row${active}" data-kind="file" data-id="${escapeHtml(file.path)}" title="${escapeHtml(file.path)}">
-        <span class="file-status">${escapeHtml(file.status)}</span>
+      <button type="button" class="file-item${active}" data-kind="file" data-id="${escapeHtml(file.path)}" role="listitem" title="${escapeHtml(file.path)}">
         <span class="file-path">${escapeHtml(file.path)}</span>
         <span class="file-stats"><span class="stat-add">+${file.additions}</span> <span class="stat-del">-${file.deletions}</span></span>
       </button>
     `;
   }).join("");
 
+  els.diffTitle.textContent = path;
   const patchText = review.patch?.path === path ? review.patch.text : null;
-  els.detailBody.innerHTML = `
+  els.diffBody.innerHTML = `
     ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
-    <div class="review">
-      <aside class="file-pane">
-        <h3>Changed files</h3>
-        ${filesHtml}
-      </aside>
-      <section class="diff-pane">
-        <div class="diff-head">${escapeHtml(path)}</div>
-        ${patchText == null
-    ? `<div class="diff-empty">Loading patch…</div>`
+    <div class="diff-frame">
+      <div class="diff-frame-head">${escapeHtml(path)}</div>
+      ${patchText == null
+    ? `<div class="empty-state"><p class="empty-copy">Loading patch…</p></div>`
     : renderDiffLines(patchText)}
-      </section>
     </div>
   `;
+  els.adoptConfirm.disabled = state.adopting || review.status === "blocked";
+  els.adoptConfirm.textContent = state.adopting ? "Übernehmen…" : "Übernehmen";
 }
 
 async function showReview(branchName, { path = null, message = null } = {}) {
-  state.selected = { type: "review", id: branchName };
+  setMode("review");
+  state.selectedBranch = branchName;
   state.reviewFile = path;
-  highlightSelection();
-  if (!state.adopting && !state.adoptOpen) closeAdoptSheet();
-  if (!state.adoptOpen) clearActions();
-  els.detailTitle.textContent = `Review · ${branchName}`;
-  els.detailLede.textContent = "Loading diff…";
-  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching branch review…");
+  renderBranches(state.workspace);
+  els.diffBody.innerHTML = emptyState("Loading", "Fetching branch review…");
+  els.reviewContext.hidden = false;
+  els.composer.hidden = false;
+  els.reviewHeading.textContent = branchName;
+  els.reviewMeta.textContent = "Loading…";
+  els.reviewSummaryText.textContent = "";
+  els.reviewStats.textContent = "";
+  els.filesList.innerHTML = "";
 
   try {
     const list = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(branchName)}`);
@@ -329,16 +247,15 @@ async function showReview(branchName, { path = null, message = null } = {}) {
       paintReview(list, null, message);
     }
   } catch (error) {
-    clearActions();
-    els.detailBody.innerHTML = stageEmpty("Review failed", error.message);
+    els.diffBody.innerHTML = emptyState("Review failed", error.message);
   }
 }
 
-async function adoptCurrent({ force = false, comment = null } = {}) {
-  if (!state.selected || state.selected.type !== "review" || state.adopting) return;
-  const ref = state.selected.id;
+async function adoptCurrent({ force = false } = {}) {
+  if (!state.selectedBranch || state.adopting) return;
+  const ref = state.selectedBranch;
+  const comment = els.adoptComment.value.trim() || null;
   state.adopting = true;
-  setAdoptAction(false, "Übernehmen…");
   els.adoptConfirm.disabled = true;
   els.adoptConfirm.textContent = "Übernehmen…";
   try {
@@ -347,7 +264,6 @@ async function adoptCurrent({ force = false, comment = null } = {}) {
       throw new Error(preview.blockedReasons?.join("; ") || "Adopt blocked");
     }
     if (preview.status === "noop") {
-      closeAdoptSheet();
       await showReview(ref, { path: state.reviewFile, message: { ok: true, text: preview.explanation || "Already on that branch." } });
       return;
     }
@@ -355,168 +271,194 @@ async function adoptCurrent({ force = false, comment = null } = {}) {
     if (applied.status === "blocked") {
       throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
     }
-    closeAdoptSheet();
+    els.adoptComment.value = "";
     await refresh({ keepSelection: false });
-    els.detailTitle.textContent = "Adopted";
-    els.detailLede.textContent = applied.explanation || `Merged ${ref} into your branch.`;
-    clearActions();
+    els.reviewContext.hidden = true;
+    els.composer.hidden = true;
+    els.diffTitle.textContent = "";
     const noteLine = applied.comment
-      ? `Note recorded on the merge commit: “${applied.comment}”`
-      : "Taken as-is (no merge note).";
-    els.detailBody.innerHTML = stageEmpty(
+      ? `Note on merge commit: “${applied.comment}”`
+      : "Taken as-is.";
+    els.diffBody.innerHTML = emptyState(
       "Übernommen",
-      `${applied.explanation || `Changes from ${ref} are now on your current branch.`} ${noteLine}`,
+      `${applied.explanation || `Merged ${ref} into your branch.`} ${noteLine}`,
     );
   } catch (error) {
     const dirty = /dirty/i.test(error.message);
-    closeAdoptSheet();
     await showReview(ref, {
       path: state.reviewFile,
       message: {
         ok: false,
         text: dirty
-          ? `${error.message} — open Übernehmen again and use Force after host consent.`
+          ? `${error.message} Use Force after host consent.`
           : error.message,
       },
     });
     if (dirty) {
-      setAdoptAction(true, "Force Übernehmen");
-      const btn = document.getElementById("adopt-btn");
-      if (btn) btn.dataset.force = "1";
+      els.adoptConfirm.dataset.force = "1";
+      els.adoptConfirm.textContent = "Force Übernehmen";
+      els.adoptCancel.hidden = false;
     }
   } finally {
     state.adopting = false;
+    if (!els.adoptConfirm.dataset.force) {
+      els.adoptConfirm.disabled = false;
+      els.adoptConfirm.textContent = "Übernehmen";
+    } else {
+      els.adoptConfirm.disabled = false;
+    }
   }
 }
 
-async function showRun(runId) {
-  state.selected = { type: "run", id: runId };
-  state.review = null;
-  closeAdoptSheet();
-  clearActions();
-  els.detailTitle.textContent = "Run";
-  els.detailLede.textContent = runId;
-  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching run evidence…");
-  highlightSelection();
+function detailCards(entries) {
+  return `<div class="detail-grid">${entries.map(([title, body]) => `
+    <div class="detail-card">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${body}</p>
+    </div>
+  `).join("")}</div>`;
+}
 
+function renderRunRows(runs) {
+  if (!runs.length) {
+    els.runsList.innerHTML = `<p class="empty-inline">No runs yet.</p>`;
+    return;
+  }
+  els.runsList.innerHTML = runs.map((run) => {
+    const id = run.runId || run.id;
+    const status = run.status || "unknown";
+    const label = run.scenario?.name || run.scenario || shortId(id);
+    const active = state.selectedRun === id ? " active" : "";
+    return `
+      <button type="button" class="stack-item${active}" data-kind="run" data-id="${escapeHtml(id)}" role="listitem">
+        <span class="stack-title">${escapeHtml(label)} <span class="${statusClass(status)}">${escapeHtml(status)}</span></span>
+        <span class="stack-meta">${escapeHtml(formatTime(run.finishedAt || run.startedAt || run.createdAt, true))}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderHandoffs(items) {
+  if (!items?.length) {
+    els.handoffsList.innerHTML = `<p class="empty-inline">No handoffs yet.</p>`;
+    return;
+  }
+  els.handoffsList.innerHTML = items.map((item) => {
+    const id = item.handoffId;
+    const active = state.selectedHandoff === id ? " active" : "";
+    return `
+      <button type="button" class="stack-item${active}" data-kind="handoff" data-id="${escapeHtml(id)}" role="listitem">
+        <span class="stack-title">${escapeHtml(shortId(id))}</span>
+        <span class="stack-meta">${escapeHtml(formatTime(item.createdAt, true))}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+async function showRun(runId) {
+  setMode("runs");
+  state.selectedRun = runId;
+  renderRunRows((state._runs || []));
+  els.runDetail.innerHTML = emptyState("Loading", "Fetching run evidence…");
   const run = await apiGet(`/api/v1/runs/${encodeURIComponent(runId)}`);
   const result = run.result || {};
   const files = run.files || {};
   const sheetHref = files.contactSheet
     ? `/api/v1/artifacts/${encodeURIComponent(runId)}/${files.contactSheet}`
     : null;
-
   const cards = detailCards([
     ["Status", escapeHtml(result.status || "—")],
     ["Scenario", escapeHtml(result.scenario?.name || result.scenario?.path || "—")],
     ["Duration", escapeHtml(result.durationMs != null ? `${result.durationMs} ms` : "—")],
     ["Finished", escapeHtml(formatTime(result.finishedAt))],
     ["Path", escapeHtml(run.path || "—")],
-    ["Result", files.result
-      ? `<a href="/api/v1/artifacts/${encodeURIComponent(runId)}/${files.result}" target="_blank" rel="noreferrer">${escapeHtml(files.result)}</a>`
-      : "—"],
   ]);
-
   const sheet = sheetHref
     ? `<div class="sheet"><img src="${sheetHref}" alt="Contact sheet for ${escapeHtml(runId)}"></div>`
-    : stageEmpty("No contact sheet", "This run has no visual evidence yet.");
-
-  els.detailBody.innerHTML = cards + sheet;
+    : emptyState("No contact sheet", "This run has no visual evidence yet.");
+  els.runDetail.innerHTML = cards + sheet;
 }
 
 async function showHandoff(handoffId) {
-  state.selected = { type: "handoff", id: handoffId };
-  state.review = null;
-  closeAdoptSheet();
-  clearActions();
-  els.detailTitle.textContent = "Handoff";
-  els.detailLede.textContent = handoffId;
-  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching handoff package…");
-  highlightSelection();
-
+  setMode("handoffs");
+  state.selectedHandoff = handoffId;
+  renderHandoffs(state._handoffs || []);
+  els.handoffDetail.innerHTML = emptyState("Loading", "Fetching handoff package…");
   const handoff = await apiGet(`/api/v1/handoffs/${encodeURIComponent(handoffId)}`);
   const manifest = handoff.manifest || {};
-  const note = manifest.note || "—";
-  const guidance = manifest.guidance?.commentsAreContextNotInstructions
-    ? "Comments are context, not instructions."
-    : "—";
   const sourceRunId = manifest.source?.runId || null;
   const sheetHref = sourceRunId
     ? `/api/v1/artifacts/${encodeURIComponent(sourceRunId)}/contact-sheet.png`
     : null;
-
   const cards = detailCards([
     ["Source run", escapeHtml(sourceRunId || "—")],
     ["Status", escapeHtml(manifest.source?.status || "—")],
     ["Created", escapeHtml(formatTime(manifest.createdAt))],
-    ["Note", escapeHtml(note)],
-    ["Guidance", escapeHtml(guidance)],
+    ["Note", escapeHtml(manifest.note || "—")],
     ["Path", escapeHtml(handoff.path || "—")],
   ]);
-
   let sheet = "";
   if (sheetHref) {
     sheet = `<div class="sheet"><img src="${sheetHref}" alt="Source run contact sheet" onerror="this.closest('.sheet').replaceWith()"></div>`;
   }
-
-  els.detailBody.innerHTML = cards + sheet;
+  els.handoffDetail.innerHTML = cards + sheet;
 }
 
 async function refresh({ keepSelection = true } = {}) {
   try {
-    const overview = await apiGet("/api/v1/overview");
     const [workspace, runsPayload, handoffsPayload] = await Promise.all([
       apiGet("/api/v1/workspace"),
       apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
     ]);
-    state.overview = overview;
     state.workspace = workspace;
+    state._runs = runsPayload.runs || [];
+    state._handoffs = handoffsPayload.handoffs || [];
     renderBranches(workspace);
-    const runs = runsPayload.runs || [];
-    const summary = runsPayload.summary || overview.index?.summary || {};
-    const count = summary.runCount ?? runs.length;
+    const summary = runsPayload.summary || {};
+    const count = summary.runCount ?? state._runs.length;
     els.runsSummary.textContent = `${count} · ${summary.passed ?? 0}✓ · ${summary.failed ?? 0}✗`;
-    renderRunRows(runs);
-    renderHandoffs(handoffsPayload.handoffs || overview.handoffs?.items || []);
-    els.generatedAt.textContent = formatTime(overview.generatedAt, true);
+    renderRunRows(state._runs);
+    renderHandoffs(state._handoffs);
 
-    if (keepSelection && state.selected?.type === "review") {
-      await showReview(state.selected.id, { path: state.reviewFile });
-    } else if (keepSelection && state.selected?.type === "run") {
-      await showRun(state.selected.id);
-    } else if (keepSelection && state.selected?.type === "handoff") {
-      await showHandoff(state.selected.id);
-    } else {
-      state.selected = null;
-      clearActions();
-      const current = workspace.branch || "—";
-      els.detailTitle.textContent = "Workspace";
-      els.detailLede.textContent = `On ${current}. Pick a branch to review, or a run for evidence.`;
-      els.detailBody.innerHTML = stageEmpty(
-        "Clean stage",
-        "Left rail: other branches open a GitHub-style diff. Übernehmen merges that branch into yours (local only).",
+    if (keepSelection && state.mode === "review" && state.selectedBranch) {
+      await showReview(state.selectedBranch, { path: state.reviewFile });
+    } else if (keepSelection && state.mode === "runs" && state.selectedRun) {
+      await showRun(state.selectedRun);
+    } else if (keepSelection && state.mode === "handoffs" && state.selectedHandoff) {
+      await showHandoff(state.selectedHandoff);
+    } else if (state.mode === "review" && !state.selectedBranch) {
+      els.reviewContext.hidden = true;
+      els.composer.hidden = true;
+      els.diffTitle.textContent = "";
+      els.diffBody.innerHTML = emptyState(
+        "Pick a branch",
+        "Select another local branch to review its changes against yours — then adopt with an optional note.",
       );
-      highlightSelection();
     }
   } catch (error) {
-    els.runsSummary.textContent = "offline";
-    clearActions();
-    els.detailBody.innerHTML = stageEmpty("API offline", error.message);
+    els.diffBody.innerHTML = emptyState("API offline", error.message);
   }
 }
 
-els.refreshBtn.addEventListener("click", () => {
-  refresh();
+document.querySelectorAll(".mode-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    setMode(tab.dataset.mode);
+    if (tab.dataset.mode === "runs" && state.selectedRun) showRun(state.selectedRun);
+    if (tab.dataset.mode === "handoffs" && state.selectedHandoff) showHandoff(state.selectedHandoff);
+  });
 });
 
+els.refreshBtn.addEventListener("click", () => refresh());
+
 els.adoptCancel.addEventListener("click", () => {
-  closeAdoptSheet({ restoreAction: true });
+  delete els.adoptConfirm.dataset.force;
+  els.adoptCancel.hidden = true;
+  els.adoptConfirm.textContent = "Übernehmen";
 });
 
 els.adoptConfirm.addEventListener("click", () => {
-  const comment = els.adoptComment.value.trim() || null;
-  adoptCurrent({ force: state.adoptForce, comment });
+  adoptCurrent({ force: els.adoptConfirm.dataset.force === "1" });
 });
 
 els.adoptComment.addEventListener("keydown", (event) => {
@@ -524,25 +466,13 @@ els.adoptComment.addEventListener("keydown", (event) => {
     event.preventDefault();
     els.adoptConfirm.click();
   }
-  if (event.key === "Escape") {
-    event.preventDefault();
-    closeAdoptSheet({ restoreAction: true });
-  }
 });
 
 document.addEventListener("click", (event) => {
-  const adopt = event.target.closest("#adopt-btn");
-  if (adopt) {
-    openAdoptSheet({ force: adopt.dataset.force === "1" });
-    return;
-  }
   const button = event.target.closest("[data-kind][data-id]");
   if (!button) return;
-  if (button.dataset.kind === "review") {
-    closeAdoptSheet();
-    showReview(button.dataset.id);
-  }
-  if (button.dataset.kind === "file") showReview(state.selected?.id, { path: button.dataset.id });
+  if (button.dataset.kind === "branch") showReview(button.dataset.id);
+  if (button.dataset.kind === "file") showReview(state.selectedBranch, { path: button.dataset.id });
   if (button.dataset.kind === "run") showRun(button.dataset.id);
   if (button.dataset.kind === "handoff") showHandoff(button.dataset.id);
 });
