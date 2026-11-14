@@ -11,10 +11,47 @@ software projects. The long-term goal is to support UI and animation work
 across web, mobile, and desktop stacks, with agents working through native
 project APIs instead of patching rendered interfaces.
 
-## First vertical slice
+**Product split:** the coding agent does setup and proposals; the host only
+reviews and **Accepts** (or Rejects). Users should not wire terminals, ports,
+or adapter config by hand when an agent is available.
 
-This repository starts with a local, two-step web example and a declarative
-Playwright scenario runner. It demonstrates the core interaction:
+## Agent cold start (“Mach das”)
+
+If the host gives you this GitHub repo and says “make it work”, **you (the
+coding agent)** bring the loop up. Do **not** ask the host to run setup
+commands, and do **not** start with the scenario runner below.
+
+Requirements: Node.js 20+ and npm. This repo’s `harness.host.json` already
+opts into `workspace-edit`.
+
+```sh
+npm ci
+# You start both processes (background / separate shells — host does not):
+npm run harness -- serve
+node examples/foreign-booking/server.mjs
+```
+
+Then **you** open the cockpit (`http://127.0.0.1:8787/#/workspace`), **Open
+app** (prefilled `http://127.0.0.1:4173/`), wait for “Live inspector ready”,
+drive Select → send a short instruction, and leave a proposal ready.
+
+**Host-only steps:** Preview / **Accept** or Reject, then Commit/merge when
+they want the change kept. Never Accept or merge without host consent.
+
+Prove setup without a human click path:
+`node --test tests/cockpit-harbor-loop.test.mjs`.
+
+For an arbitrary existing app (not this fixture), use
+[`docs/attach-existing.md`](docs/attach-existing.md) — same split: agent
+attaches, host Accepts.
+
+Details: [`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md),
+[`docs/agent-adapter.md`](docs/agent-adapter.md), [`AGENTS.md`](AGENTS.md).
+
+## Scenario runner (verification foundation)
+
+This repository also ships a local, two-step web example and a declarative
+Playwright scenario runner. It demonstrates the control-surface foundation:
 
 1. A target app deliberately exposes `window.__harness`.
 2. A YAML scenario discovers and calls supported commands, then checks
@@ -29,12 +66,11 @@ requiring a particular model provider.
 See [`docs/vision.md`](docs/vision.md) for product direction and
 [`AGENTS.md`](AGENTS.md) for contribution and agent rules.
 
-## Run the example
+## Run a scenario
 
-Requirements: Node.js 20+ and npm.
+After `npm ci` (and a one-time browser install with host consent):
 
 ```sh
-npm ci
 npm run harness -- setup --install-browser
 # Ask the host, then:
 npm run harness -- setup --install-browser --yes
@@ -186,19 +222,9 @@ Open `http://127.0.0.1:8787/` for the UI. `GET/POST /api/v1/attach` is the
 one-command attach loop over HTTP (same as `harness attach`). See
 [`docs/cockpit-api.md`](docs/cockpit-api.md) and [`docs/attach.md`](docs/attach.md).
 
-Optional connected agent adapter (provider-neutral; default stays disconnected):
-
-```json
-{ "agent": { "adapter": "local" } }
-```
-
-Set that in `harness.host.json` to package composer turns under
-`artifacts/agent/` without calling a remote model. Custom project modules work
-too — see [`docs/agent-adapter.md`](docs/agent-adapter.md).
-
-The UI/backend handoff and acceptance flow for element selection, comments,
-adaptation requests and screenshot transport is in
-[`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
+This repo’s `harness.host.json` already sets `"agent": { "adapter": "workspace-edit" }`
+for the Harbor Desk demo. Other projects stay disconnected until they opt in —
+see [`docs/agent-adapter.md`](docs/agent-adapter.md).
 
 ## Attach to an existing repo
 
@@ -214,6 +240,8 @@ for the agent playbook, and fixtures
 
 - The user's chosen coding agent remains in control; the harness is the
   portable cockpit and verification layer.
+- Agents do setup and proposals; hosts Accept. Do not make the host run the
+  install/start/attach path when an agent is available.
 - Build target changes natively through the target project's actions,
   configuration, events, and hooks.
 - Local solo work does not require an account or hosted service.

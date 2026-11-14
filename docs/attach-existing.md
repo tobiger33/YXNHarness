@@ -6,12 +6,16 @@ layout.
 
 ## Goal
 
-Make visual runs possible on a repo that was never started for YXNHarness:
+Make visual runs possible on a repo that was never started for YXNHarness.
+The **agent** does this work; the host should not manually wire ports or
+config when you are available.
 
 1. Discover how the app starts and which URL it serves.
-2. Write only `harness.config.json` (preview → apply).
+2. Write only `harness.config.json` (preview → apply after host consent).
 3. If missing, implement a **thin native** `window.__harness` adapter.
 4. Probe → scaffold scenario → run → handoff evidence.
+5. For file edits via `workspace-edit` / custom adapters: propose, then wait
+   for **host Accept** — never write source or merge without it.
 
 ## Hard rules
 

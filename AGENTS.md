@@ -4,6 +4,37 @@ YXNHarness is an agent-neutral toolkit for building and validating visual
 changes in existing software projects. The user chooses the coding agent; this
 repo provides project-native control and evidence, not a model-specific agent.
 
+## Cold start (“Mach das”) — agent owns setup
+
+YXNHarness is built so the **host does almost nothing**. You (the coding agent)
+own install, start, attach, and proposals. The host only **Accepts** (or
+Rejects) writes/merges and consents to destructive flags (`--yes`, `--force`).
+
+When the host gives you this repository and says make it work / demo / prove
+it — **do not** start with `scenarios/minimal.yaml`, and **do not** hand them
+a multi-step terminal checklist.
+
+1. `npm ci`
+2. Start cockpit: `npm run harness -- serve` (keep it running)
+3. Start Harbor Desk: `node examples/foreign-booking/server.mjs` (keep it running)
+4. Open the cockpit yourself → **Open app** (`http://127.0.0.1:4173/`) → wait for live inspector
+5. Drive Select → Kommentieren → send so a proposal appears
+6. Tell the host: “Preview is ready — Accept when you want the file write”
+7. Only after host Accept: Commit/push/merge-propose as they ask (merge Accept stays host/leader)
+
+Automated proof you can run without asking the host to click:
+`node --test tests/cockpit-harbor-loop.test.mjs`.
+
+For a **different** existing project: follow
+[attach-existing](docs/attach-existing.md) (`attach --dry-run` → show plan →
+`attach --apply --yes` after consent). Same split: you attach, they Accept.
+
+Full product checklist:
+[`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
+
+Only when the host asks for scenario verification, use “Running and reviewing
+scenarios” below.
+
 ## Non-negotiable rules
 
 - Implement target changes in the target project's own language and supported
