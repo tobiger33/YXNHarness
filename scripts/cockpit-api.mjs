@@ -373,11 +373,18 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/workspace/adopt" && method === "POST") {
         const body = await readJsonBody(request);
+        const paths = Array.isArray(body.paths)
+          ? body.paths
+          : body.path
+            ? [body.path]
+            : null;
         const plan = planWorkspaceAdopt(projectRoot, {
           theirs: body.ref || body.theirs || body.branch,
           apply: body.apply === true,
           force: body.force === true,
           comment: body.comment ?? body.note ?? null,
+          paths,
+          hunks: body.hunks ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;

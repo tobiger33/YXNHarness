@@ -53,7 +53,9 @@ their branch since the merge-base.
 Returns file list + `+`/`-` counts. With `--path`, includes the unified patch
 for that file.
 
-## Adopt (merge into yours)
+## Adopt (merge / files / hunks)
+
+### Whole branch
 
 ```sh
 npm run harness -- workspace --adopt feature/demo --dry-run
@@ -68,12 +70,35 @@ Optional `--note` is host/agent context (not instructions). When present it is
 written into a merge commit (`git merge --no-ff -m …`). Without a note, a normal
 fast-forward-capable merge is used.
 
+### Selected files
+
+```sh
+npm run harness -- workspace --adopt feature/demo --path src/app.js --dry-run
+npm run harness -- workspace --adopt feature/demo --path src/app.js --path src/styles.css --apply
+```
+
+Checks out (or deletes) only those paths from **theirs** into your index.
+No merge commit — review with `git status` / `git diff --cached`, then commit.
+
+### Selected hunks
+
+```sh
+npm run harness -- workspace --review feature/demo --path src/app.js
+npm run harness -- workspace --adopt feature/demo --path src/app.js --hunks 1,3 --dry-run
+npm run harness -- workspace --adopt feature/demo --path src/app.js --hunks 1,3 --apply
+```
+
+Applies 1-based unified-diff hunks from the three-dot patch into the index.
+Hunk adopt supports **modified** files only; added/deleted/renamed files use
+whole-file `--path` adopt.
+
 Guards (create + checkout + adopt):
 
 - Unknown / unsafe branch names → blocked
 - Dirty working tree → blocked unless the host consents with `--force`
 - Already on the target (checkout/adopt) → `noop`
-- Merge conflicts → blocked; resolve with plain `git` (no auto-resolve)
+- Merge conflicts / patch rejects → blocked; resolve with plain `git` (no auto-resolve)
+- Paths must appear in the review file list
 - No fetch, push, or upstream setup
 
 ## Run stamps
@@ -104,16 +129,22 @@ npm run harness -- serve
 | --- | --- | --- |
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
-| POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force? }` — loopback only |
+| POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — loopback only |
 | GET | `/api/v1/overview` | Includes a short `workspace` summary |
 
-Adopt is the only write route on `serve`. Checkout/create stay on the CLI.
+Adopt body modes:
+
+- omit `paths` → whole-branch merge
+- `paths: ["a.js"]` (or `path`) → file adopt into the index
+- `path` + `hunks: [1,3]` → hunk adopt into the index
+
+Adopt is the only write route on `serve` for git. Checkout/create stay on the CLI.
 
 ## What this is not
 
 - Not fetch / push / upstream setup
 - Not hosted preview binding
-- Not per-hunk cherry-pick yet (whole-branch merge first)
+- Not interactive `git checkout -p` / conflict auto-resolve
 - Not a substitute for the coding agent's own Git UI
 
 See also [`vision.md`](vision.md) and [`cockpit-foundation.md`](cockpit-foundation.md).

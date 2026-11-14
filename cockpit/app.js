@@ -460,6 +460,7 @@ async function loadChanges() {
       <details class="file-diff"${index === 0 ? " open" : ""}>
         <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
           <span>+${file.additions} −${file.deletions}</span>
+          <button type="button" class="ghost file-adopt" data-adopt-path="${escapeHtml(file.path)}">Datei übernehmen</button>
         </summary>
         <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
       </details>
@@ -476,29 +477,43 @@ async function loadChanges() {
     </label>
   `;
   actions.hidden = false;
-  q("#changes-note").textContent = "Real git review · Übernehmen merges into your current branch.";
+  q("#changes-note").textContent = "Real git review · Übernehmen = whole branch · Datei übernehmen = one path into the index.";
+  qa("[data-adopt-path]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      adoptSelected({ paths: [button.getAttribute("data-adopt-path")] });
+    });
+  });
   icons();
 }
 
-async function adoptSelected() {
+async function adoptSelected({ paths = null } = {}) {
   const theirs = state.reviewBranch;
   if (!theirs) return;
   const note = q("#adopt-note")?.value?.trim() || null;
   q("#apply").disabled = true;
   try {
-    const preview = await apiPost("/api/v1/workspace/adopt", { ref: theirs, apply: false, comment: note });
+    const payload = { ref: theirs, apply: false, comment: note };
+    if (paths?.length) payload.paths = paths;
+    const preview = await apiPost("/api/v1/workspace/adopt", payload);
     if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Blocked");
     if (preview.status === "noop") {
       toast(preview.explanation || "Already on that branch.");
       return;
     }
-    const applied = await apiPost("/api/v1/workspace/adopt", { ref: theirs, apply: true, comment: note });
+    const applied = await apiPost("/api/v1/workspace/adopt", { ...payload, apply: true });
     if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
-    toast(applied.explanation || `Merged ${theirs}.`);
-    pushActivity(`Adopted ${theirs}`);
-    state.reviewBranch = null;
-    await refresh();
-    setView("preview");
+    toast(applied.explanation || (paths?.length ? `Adopted ${paths.join(", ")}.` : `Merged ${theirs}.`));
+    pushActivity(paths?.length ? `Adopted file(s) from ${theirs}` : `Adopted ${theirs}`);
+    if (!paths?.length) {
+      state.reviewBranch = null;
+      await refresh();
+      setView("preview");
+    } else {
+      await refresh();
+      setView("changes");
+    }
   } catch (error) {
     toast(error.message);
   } finally {

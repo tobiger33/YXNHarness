@@ -95,7 +95,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch] [--path file] [--start branch] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch] [--path file] [--hunks 1,3] [--start branch] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
   npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
@@ -140,6 +140,8 @@ function parseArgs(argv) {
     review: null,
     adopt: null,
     path: null,
+    paths: [],
+    hunks: null,
     baseline: null,
     against: null,
     strict: false,
@@ -201,7 +203,13 @@ function parseArgs(argv) {
     } else if (argument === "--path") {
       const filePath = rest[index + 1];
       if (!filePath || filePath.startsWith("--")) throw new Error("--path requires a repository-relative file path.");
-      options.path = filePath;
+      options.paths.push(filePath);
+      options.path = options.paths[0];
+      index += 1;
+    } else if (argument === "--hunks") {
+      const hunks = rest[index + 1];
+      if (!hunks || hunks.startsWith("--")) throw new Error("--hunks requires a comma-separated list of 1-based hunk indices.");
+      options.hunks = hunks;
       index += 1;
     } else if (argument === "--start") {
       const start = rest[index + 1];
@@ -352,7 +360,7 @@ function parseArgs(argv) {
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
       options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--start/--note/--dry-run/--apply/--force only.");
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
   }
   if (action === "workspace" && options.note && !options.adopt) {
     throw new Error("--note is only valid with workspace --adopt (or handoff).");
@@ -368,8 +376,17 @@ function parseArgs(argv) {
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
   }
-  if (action === "workspace" && options.path && !options.review) {
-    throw new Error("--path is only valid with workspace --review.");
+  if (action === "workspace" && options.path && !options.review && !options.adopt) {
+    throw new Error("--path is only valid with workspace --review or --adopt.");
+  }
+  if (action === "workspace" && options.hunks && !options.adopt) {
+    throw new Error("--hunks is only valid with workspace --adopt.");
+  }
+  if (action === "workspace" && options.hunks && options.paths.length !== 1) {
+    throw new Error("--hunks requires exactly one --path.");
+  }
+  if (options.hunks && action !== "workspace") {
+    throw new Error("--hunks is only valid with workspace --adopt.");
   }
   if (options.checkout && action !== "workspace") {
     throw new Error("--checkout is only valid with workspace.");
@@ -1666,6 +1683,8 @@ async function main(argv = process.argv.slice(2)) {
         apply: options.apply,
         force: options.force,
         comment: options.note,
+        paths: options.paths.length ? options.paths : null,
+        hunks: options.hunks,
       });
       plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
       console.log(options.json ? JSON.stringify(plan, null, 2) : formatAdoptPlan(plan));

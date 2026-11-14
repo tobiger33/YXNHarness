@@ -227,6 +227,8 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     review: null,
     adopt: null,
     path: null,
+    paths: [],
+    hunks: null,
     baseline: null,
     against: null,
     strict: false,
@@ -318,6 +320,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     action: "workspace",
     review: "feature/demo",
     path: "app.js",
+    paths: ["app.js"],
   });
   assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--apply"]), {
     ...base,
@@ -402,7 +405,25 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
   assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /only one of/);
-  assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review/);
+  assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review or --adopt/);
+  assert.throws(() => parseArgs(["workspace", "--hunks", "1"]), /only valid with workspace --adopt/);
+  assert.throws(() => parseArgs(["workspace", "--adopt", "feature/x", "--hunks", "1"]), /exactly one --path/);
+  assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--path", "a.js", "--path", "b.js", "--apply"]), {
+    ...base,
+    action: "workspace",
+    adopt: "feature/demo",
+    path: "a.js",
+    paths: ["a.js", "b.js"],
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--path", "a.js", "--hunks", "1,3"]), {
+    ...base,
+    action: "workspace",
+    adopt: "feature/demo",
+    path: "a.js",
+    paths: ["a.js"],
+    hunks: "1,3",
+  });
   assert.throws(() => parseArgs(["workspace", "--start", "main"]), /only valid with workspace --create/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["compare", "--apply"]), /compare accepts|--baseline|--against|only/);
@@ -751,6 +772,68 @@ test("workspace collects read-only git branch inventory", async () => {
       comment: "x".repeat(2001),
     });
     assert.equal(tooLong.status, "blocked");
+
+    // File adopt: diverge again, take only one path into the index.
+    git(["checkout", "-b", "feature/partial"]);
+    await writeFile(path.join(root, "keep-me.txt"), "keep\n");
+    await writeFile(path.join(root, "take-me.txt"), "take\n");
+    git(["add", "keep-me.txt", "take-me.txt"]);
+    git(["commit", "-m", "partial files"]);
+    git(["checkout", "feature/from-main"]);
+    const filePreview = planWorkspaceAdopt(root, {
+      theirs: "feature/partial",
+      paths: ["take-me.txt"],
+      apply: false,
+    });
+    assert.equal(filePreview.status, "ready");
+    assert.equal(filePreview.mode, "files");
+    assert.deepEqual(filePreview.paths, ["take-me.txt"]);
+    const fileAdopted = planWorkspaceAdopt(root, {
+      theirs: "feature/partial",
+      paths: ["take-me.txt"],
+      apply: true,
+    });
+    assert.equal(fileAdopted.status, "applied");
+    assert.equal(await readFile(path.join(root, "take-me.txt"), "utf8"), "take\n");
+    assert.equal(await readFile(path.join(root, "keep-me.txt"), "utf8").catch(() => null), null);
+    // Reset staged partial adopt so later checks stay clean.
+    git(["reset", "--hard", "HEAD"]);
+
+    // Hunk adopt on a modified tracked file (two distant hunks; take only the first).
+    const baseLines = Array.from({ length: 40 }, (_, index) => `line-${index + 1}`);
+    await writeFile(path.join(root, "shared.txt"), `${baseLines.join("\n")}\n`);
+    git(["add", "shared.txt"]);
+    git(["commit", "-m", "shared base"]);
+    git(["checkout", "-b", "feature/hunks"]);
+    const edited = [...baseLines];
+    edited[1] = "LINE-2-EDIT";
+    edited[35] = "LINE-36-EDIT";
+    await writeFile(path.join(root, "shared.txt"), `${edited.join("\n")}\n`);
+    git(["add", "shared.txt"]);
+    git(["commit", "-m", "shared edits"]);
+    git(["checkout", "feature/from-main"]);
+    const hunkReview = buildWorkspaceReview(root, { theirs: "feature/hunks", path: "shared.txt" });
+    assert.equal(hunkReview.status, "ready");
+    assert.match(hunkReview.patch?.text || "", /LINE-2-EDIT/);
+    const hunkPreview = planWorkspaceAdopt(root, {
+      theirs: "feature/hunks",
+      paths: ["shared.txt"],
+      hunks: [1],
+      apply: false,
+    });
+    assert.equal(hunkPreview.status, "ready");
+    assert.equal(hunkPreview.mode, "hunks");
+    assert.ok((hunkPreview.hunksAvailable || 0) >= 2);
+    const hunkApplied = planWorkspaceAdopt(root, {
+      theirs: "feature/hunks",
+      paths: ["shared.txt"],
+      hunks: [1],
+      apply: true,
+    });
+    assert.equal(hunkApplied.status, "applied");
+    const sharedAfter = await readFile(path.join(root, "shared.txt"), "utf8");
+    assert.match(sharedAfter, /LINE-2-EDIT/);
+    assert.doesNotMatch(sharedAfter, /LINE-36-EDIT/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
