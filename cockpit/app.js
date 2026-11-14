@@ -279,8 +279,64 @@ function pushActivity(text) {
 function renderActivity() {
   q("#activity-count").textContent = String(state.activity.length);
   q("#activity-panel").innerHTML = state.activity.length
-    ? state.activity.map((item) => `<div>✓ ${escapeHtml(item.text)} <span>${escapeHtml(item.stamp)}</span></div>`).join("")
-    : `<div>No activity yet <span>—</span></div>`;
+    ? state.activity.map((item) => `<div class="activity-line"><span>${escapeHtml(item.text)}</span> <span>${escapeHtml(item.stamp)}</span></div>`).join("")
+    : `<div class="activity-line"><span>No activity yet</span> <span>—</span></div>`;
+}
+
+/** Quiet Cursor-style agent timeline lines (Thought / Exploring / Ran / Read). */
+function appendAgentTimeline(host, events = [], { skipTypes = new Set() } = {}) {
+  if (!host || !events.length) return;
+  const reuse = host.classList?.contains("agent-timeline");
+  const timeline = reuse ? host : document.createElement("div");
+  if (!reuse) timeline.className = "agent-timeline";
+  let wrote = 0;
+  let lastKey = "";
+  for (const event of events) {
+    if (!event || skipTypes.has(event.type)) continue;
+    let verb = "";
+    let meta = "";
+    if (event.type === "received" || event.type === "reading-context") {
+      verb = "Thought";
+      meta = "briefly";
+    } else if (event.type === "reading-files") {
+      verb = "Exploring";
+      meta = "";
+    } else if (event.type === "wrote-task") {
+      verb = "Ran";
+      meta = "Packaged coding-agent task";
+    } else if (event.type === "wrote-feedback") {
+      verb = "Ran";
+      meta = "Saved feedback";
+    } else if (event.type === "attachments") {
+      verb = "Read";
+      meta = "attachments";
+    } else if (event.type === "proposed-file-change") {
+      // Edited rows live on the proposal card — skip duplicate timeline noise.
+      continue;
+    } else if (event.type === "awaiting-approval" || event.type === "applied-file-change" || event.type === "rejected-file-change" || event.type === "awaiting-host") {
+      continue;
+    } else if (event.type === "blocked") {
+      verb = "Blocked";
+      meta = event.summary || "";
+    } else if (event.summary) {
+      verb = "Ran";
+      meta = event.summary;
+    } else {
+      continue;
+    }
+    const key = `${verb}\0${meta}`;
+    if (key === lastKey) continue;
+    lastKey = key;
+    const line = document.createElement("div");
+    line.className = "agent-timeline-line";
+    line.innerHTML = meta
+      ? `<span class="tl-verb">${escapeHtml(verb)}</span> <span class="tl-meta">${escapeHtml(meta)}</span>`
+      : `<span class="tl-verb">${escapeHtml(verb)}</span>`;
+    timeline.append(line);
+    wrote += 1;
+  }
+  if (wrote && !reuse) host.append(timeline);
+  return wrote;
 }
 
 function setView(view, save = true) {
@@ -479,10 +535,7 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   const card = document.createElement("div");
   card.className = "proposal-card";
   card.dataset.proposalId = proposal.proposalId;
-  const title = document.createElement("p");
-  title.className = "proposal-summary";
-  title.textContent = proposal.summary || "Proposed change";
-  card.append(title);
+  // Quiet Cursor-style: skip loud summary; Edited rows carry the story.
 
   for (const file of proposal.files || []) {
     const add = Number(file.additions) || 0;
@@ -1267,15 +1320,15 @@ async function sendMessage() {
   const answer = document.createElement("div");
   answer.className = "agent-response";
   const thought = document.createElement("div");
-  thought.className = "thought";
-  thought.textContent = state.mode === "external" ? "Preparing external task…" : "Saving local feedback…";
+  thought.className = "agent-timeline";
+  thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">${state.mode === "external" ? "Ran" : "Thought"}</span> <span class="tl-meta">${state.mode === "external" ? "Preparing external task…" : "briefly"}</span></div>`;
   answer.append(thought);
   feed.append(answer);
 
   try {
     let attachmentIds = [];
     if (attachments.names().length) {
-      thought.textContent = "Uploading images…";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Uploading images…</span></div>`;
       attachmentIds = await attachments.ensureUploaded();
     }
     const imageAttachments = attachments.metadata();
@@ -1332,14 +1385,14 @@ async function sendMessage() {
         toast("Task selected. Copy with ⌘C / Ctrl+C.");
       };
       answer.append(copy);
-      thought.textContent = "External task ready";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">External task ready</span></div>`;
       pushActivity("Prepared external agent task");
       await attachments.clear();
     } else if (state.agent?.connected) {
       if (attachmentIds.length && state.agent.capabilities?.images === false) {
         throw new Error("Connected adapter does not support images. Remove attachments or switch adapters.");
       }
-      thought.textContent = "Working…";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Thought</span> <span class="tl-meta">briefly</span></div>`;
       const plan = await apiPost("/api/v1/agent/turns", {
         body: requestBody,
         apply: true,
@@ -1359,32 +1412,29 @@ async function sendMessage() {
         sessionId: state.agent.session?.sessionId || undefined,
       });
       if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Agent turn blocked");
-      const p = document.createElement("p");
-      p.textContent = plan.reply?.body || plan.explanation || "Done.";
-      answer.append(p);
+      thought.replaceChildren();
+      appendAgentTimeline(thought, plan.activity || []);
       const hasProposals = Array.isArray(plan.proposals) && plan.proposals.length > 0;
-      // Keep package/feedback breadcrumbs only when there is no file proposal to review.
-      if (!hasProposals && plan.taskPath) {
-        const meta = document.createElement("div");
-        meta.className = "agent-event";
-        meta.textContent = `✓ Task package · ${plan.taskPath}`;
-        answer.append(meta);
-      }
-      if (!hasProposals && plan.thread?.threadId) {
-        const meta = document.createElement("div");
-        meta.className = "agent-event";
-        meta.textContent = `✓ Feedback ${plan.thread.threadId}`;
-        answer.append(meta);
-      }
       for (const proposal of plan.proposals || []) {
         appendProposalCard(answer, proposal, { focus: true });
+      }
+      if (plan.reply?.body) {
+        const p = document.createElement("p");
+        p.className = "agent-reply";
+        p.textContent = plan.reply.body;
+        answer.append(p);
+      }
+      if (!hasProposals && plan.taskPath) {
+        const meta = document.createElement("div");
+        meta.className = "agent-timeline-line";
+        meta.innerHTML = `<span class="tl-verb">Ran</span> <span class="tl-meta">${escapeHtml(plan.taskPath)}</span>`;
+        answer.append(meta);
       }
       for (const event of (plan.activity || []).slice(-4)) {
         if (event.type === "proposed-file-change" || event.type === "applied-file-change" || event.type === "rejected-file-change") {
           pushActivity(event.summary || event.type);
         }
       }
-      thought.textContent = hasProposals ? "Ready for review" : "Done";
       await attachments.clear();
       await refreshFeedbackOnly();
       try {
@@ -1416,10 +1466,11 @@ async function sendMessage() {
       } catch (error) {
         throw new Error(`${saved} of ${groups.size} page groups saved. ${error.message}`);
       }
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Saved element request</span></div>`;
       const p = document.createElement("p");
+      p.className = "agent-reply";
       p.textContent = "Element request saved as feedback with its source and target context. No code was merged and no agent has run yet.";
       answer.append(p);
-      thought.textContent = "Element request saved";
       pushActivity(`Element request · ${selection.id}`);
       await attachments.clear();
       await refreshFeedbackOnly();
@@ -1439,27 +1490,23 @@ async function sendMessage() {
         commit: state.workspace?.commit || null,
         attachmentIds: attachmentIds.length ? attachmentIds : undefined,
       });
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Saved feedback</span></div>`;
       const p = document.createElement("p");
+      p.className = "agent-reply";
       p.textContent = `Saved as feedback ${plan.thread?.threadId || ""}. No coding agent is connected — bundle threads into a handoff when ready.`;
       answer.append(p);
-      const actions = document.createElement("div");
-      actions.className = "agent-event";
-      actions.textContent = attachmentIds.length
-        ? `✓ Local feedback written · ${attachmentIds.length} image(s) · comments are context`
-        : "✓ Local feedback written · comments are context";
-      answer.append(actions);
       if (plan.thread?.threadId) {
         const review = document.createElement("button"); review.type = "button"; review.className = "button"; review.textContent = "Review / edit comment";
         review.onclick = () => elementDetails.openThread(plan.thread.threadId); answer.append(review);
       }
-      thought.textContent = "Feedback saved";
       pushActivity("Created feedback thread");
       await attachments.clear();
       await refreshFeedbackOnly();
     }
   } catch (error) {
-    thought.textContent = "Failed";
+    thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Blocked</span> <span class="tl-meta">${escapeHtml(error.message || "Failed")}</span></div>`;
     const p = document.createElement("p");
+    p.className = "agent-reply";
     p.textContent = error.message;
     answer.append(p);
   } finally {

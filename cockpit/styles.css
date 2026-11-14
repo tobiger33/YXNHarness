@@ -283,11 +283,57 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   pointer-events: none;
 }
 
+/* Quiet agent timeline — Cursor-style Thought / Exploring / Ran / Read. */
+#yxn-workbench .agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 10px;
+}
+#yxn-workbench .agent-timeline-line,
+#yxn-workbench .activity-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+#yxn-workbench .agent-timeline-line .tl-verb {
+  color: var(--text);
+  font-weight: 500;
+}
+#yxn-workbench .agent-timeline-line .tl-meta {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+#yxn-workbench .agent-reply {
+  margin: 8px 0 4px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text);
+}
+#yxn-workbench .activity-panel .activity-line span:last-child {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10px;
+}
+#yxn-workbench .agent-event {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 0;
+}
+#yxn-workbench .agent-event svg { display: none; }
+
 /* Host-approved agent file proposals — Cursor-style Edited rows. */
 #yxn-workbench .proposal-card {
-  margin-top: 8px;
-  padding: 8px 0 0;
-  border-top: 1px solid var(--line);
+  margin-top: 4px;
+  padding: 0;
+  border-top: 0;
   background: transparent;
 }
 #yxn-workbench .proposal-summary { margin: 0 0 8px; font-size: 12px; color: var(--text); }
@@ -437,6 +483,7 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   gap: 6px;
   min-height: 26px;
   align-items: center;
+  margin-top: 8px;
 }
 #yxn-workbench .proposal-actions .button {
   padding: 3px 8px;

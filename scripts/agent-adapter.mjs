@@ -380,7 +380,11 @@ async function runWorkspaceEditTurn(root, context = {}) {
 
   await push("proposed-file-change", proposed.proposal.summary, {
     proposalId: proposed.proposal.proposalId,
-    files: proposed.proposal.files.map((file) => file.path),
+    files: proposed.proposal.files.map((file) => ({
+      path: file.path,
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+    })),
   });
   await push("awaiting-approval", "Waiting for host Accept or Reject.");
 
