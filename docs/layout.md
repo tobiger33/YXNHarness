@@ -22,7 +22,8 @@ The local cockpit follows the accepted workbench design:
 |---------|----------|
 | Branches / Runs / Feedback / Handoffs | Live API data |
 | Changes + Übernehmen | Real `workspace/review` + `workspace/adopt` |
-| Preview / Compare demos | Layout examples only |
+| Preview | Interactive example or an embedded running application |
+| Compare demos | Layout examples only |
 | Connected agent | Honest: no adapter unless one is connected |
 | External mode | Builds a copyable task (no fake model replies) |
 
@@ -77,3 +78,28 @@ URLs, query parameters and non-HTTPS/non-loopback addresses are rejected.
 The backend still serves one root per instance. A cross-repository catalog,
 GitHub repository discovery, clone/open actions and shared repository storage
 require a backend contract; the UI does not pretend to provide those features.
+
+## Preview interaction
+
+Interact is the default. Normal app actions never add agent context. In the
+built-in example, Continue → details form → Submit → completion is a real local
+UI flow, including required-field validation and Back/Edit navigation. Select
+must be explicitly enabled; Escape returns to Interact. Explicit selections
+include the example screen route in their context.
+
+Open app embeds a running HTTPS or loopback development server in an iframe.
+Its navigation, links and form submissions run natively; the harness does not
+rewrite target DOM, intercept its events or scrape UI state. The iframe remains
+mounted when changing workbench tabs or visiting Home. Its address is restored
+on reload. Reload and Open in new tab remain available. The application must
+permit embedding; browser CSP/X-Frame-Options restrictions are not bypassed.
+
+Live element selection is disabled until an opt-in inspector adapter exists.
+The displayed URL is the initial preview address, not an inferred internal
+router location. A target adapter must explicitly provide route and element
+identity for accurate cross-origin element feedback. Screenshot attachment and
+normal navigation remain available independently.
+
+The Home rail shares the workbench's expanded sidebar width, gutter and label
+spacing. Hidden workspaces retain their geometry. Home and Workbench fill the
+window; long content scrolls inside the panes.

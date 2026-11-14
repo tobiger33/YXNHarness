@@ -1,3 +1,4 @@
+import { mountPreview } from "/cockpit/preview.js";
 import { mountHome } from "/cockpit/home.js";
 import { mountAttachments } from "/cockpit/attachments.js";
 
@@ -33,7 +34,7 @@ let panels = {
   rightCollapsed: false,
 };
 
-let selecting = true;
+let selecting = false;
 let busy = false;
 let noticeTimer = null;
 
@@ -149,12 +150,14 @@ function renderPanels() {
   let left = clamp(Number(panels.leftWidth) || 175, 150, 320);
   let right = clamp(Number(panels.rightWidth) || 315, 260, 480);
   if (!mobile) {
-    const available = workspaceEl.clientWidth - 300 - (desktop ? 10 : 5);
+    // A hidden workbench has width 0; use the shell to keep its saved geometry stable.
+    const available = (workspaceEl.clientWidth || root.clientWidth) - 300 - (desktop ? 10 : 5);
     if (desktop && !panels.rightCollapsed) left = Math.min(left, Math.max(150, available - right));
     else left = Math.min(left, Math.max(150, available));
     if (desktop) right = Math.min(right, Math.max(260, available - (panels.leftCollapsed ? 0 : left)));
   }
   workspaceEl.style.setProperty("--left-width", `${left}px`);
+  root.style.setProperty("--navigation-width", `${left}px`);
   workspaceEl.style.setProperty("--right-width", `${right}px`);
   workspaceEl.classList.toggle("left-collapsed", panels.leftCollapsed);
   workspaceEl.classList.toggle("right-collapsed", panels.rightCollapsed);
@@ -681,7 +684,7 @@ async function sendMessage() {
       const plan = await apiPost("/api/v1/feedback", {
         body: value,
         apply: true,
-        route: state.view === "preview" ? "/" : null,
+        route: state.view === "preview" ? (root.dataset.previewRoute || "/") : null,
         element: state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
@@ -868,16 +871,11 @@ q("#use-selection").addEventListener("click", async () => {
     button.disabled = !state.picks.length;
   }
 });
-q("#inspect-target").addEventListener("click", () => {
-  if (selecting) {
-    addContext("PrimaryButton");
-    q("#inspect-target").classList.add("inspected");
-    q("#element-label").hidden = false;
-    toast("PrimaryButton added to context (layout example).");
-  }
-});
 function setTool(on) {
   selecting = on;
+  root.classList.toggle("is-selecting", on);
+  q("#select-tool").setAttribute("aria-pressed", String(on));
+  q("#interact-tool").setAttribute("aria-pressed", String(!on));
   q("#select-tool").classList.toggle("active", on);
   q("#interact-tool").classList.toggle("active", !on);
   q("#inspect-target").classList.toggle("inspected", on);
@@ -887,6 +885,12 @@ q("#select-tool").addEventListener("click", () => setTool(true));
 q("#interact-tool").addEventListener("click", () => setTool(false));
 const attachments = mountAttachments(root, toast);
 const home = mountHome(root, toast);
+mountPreview(root, {
+  selecting: () => selecting,
+  select: addContext,
+  interact: () => setTool(false),
+  notify: toast,
+});
 q("#add-context").addEventListener("click", () => addContext(state.workspace?.branch || "branch"));
 q("#device").addEventListener("change", (event) => {
   q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";

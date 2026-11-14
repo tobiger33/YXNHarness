@@ -67,28 +67,47 @@
         <button id="tab-changes" class="tab" data-view="changes" role="tab" aria-selected="false" aria-controls="screen-changes"><i data-lucide="git-compare-arrows" aria-hidden="true"></i>Changes<span class="count" id="changes-count">0</span></button>
         <span class="grow"></span>
       </div>
-      <div class="address"><i data-lucide="globe" aria-hidden="true"></i><span id="route">local workbench</span><span class="grow"></span><button class="icon-button" id="refresh" aria-label="Preview neu laden"><i data-lucide="rotate-cw" aria-hidden="true"></i></button></div>
+      <div class="address"><i data-lucide="globe" aria-hidden="true"></i><span id="route">local workbench</span><span class="grow"></span><button class="tool" id="open-preview"><i data-lucide="link-2" aria-hidden="true"></i>Open app</button><a class="icon-button" id="preview-external" target="_blank" rel="noopener noreferrer" aria-label="Open app in a new tab" hidden><i data-lucide="external-link" aria-hidden="true"></i></a><button class="icon-button" id="refresh" aria-label="Preview neu laden"><i data-lucide="rotate-cw" aria-hidden="true"></i></button></div>
       <section class="screen preview-screen" id="screen-preview" role="tabpanel" aria-labelledby="tab-preview">
-        <div class="preview-label"><span><span class="status-dot"></span>Interactive preview</span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
+        <div class="preview-label"><span><span class="status-dot"></span><span id="preview-kind">Example application</span></span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
         <div class="app-preview" id="app-preview">
           <div class="region-status preview-status" id="preview-status" role="status" aria-live="polite" hidden>
             <img src="/cockpit/assets/yxn-loader.svg" width="22" height="22" alt="" aria-hidden="true">
             <span></span><button type="button" class="button" id="preview-retry" hidden>Retry</button>
           </div>
+          <div class="region-status preview-status" id="live-preview-status" role="status" hidden><img src="/cockpit/assets/yxn-loader.svg" width="22" height="22" alt="" aria-hidden="true"><span></span><button type="button" class="button" hidden>Retry</button></div>
+          <iframe id="live-preview" title="Application preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" referrerpolicy="no-referrer" hidden></iframe>
+          <div id="demo-preview">
           <div class="puls-header"><b><i data-lucide="asterisk" aria-hidden="true"></i>PULS</b><span>Personal banking</span></div>
-          <div class="puls-body" id="puls-body">
+          <div class="puls-body" id="puls-body" data-demo-step="onboarding">
             <div class="step"><span>Getting to know you</span><span>02 / 04</span></div><div class="step-track"><span></span></div>
             <h2>Build your<br>financial future.</h2><p>A little about you. A clearer way forward.</p>
             <fieldset><legend>What would you like to focus on?</legend>
               <label class="goal"><i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span><b>Financial overview</b><small>See the bigger picture.</small></span><input type="radio" name="goal" checked value="overview"></label>
               <label class="goal"><i data-lucide="move-up-right" aria-hidden="true"></i><span><b>Future planning</b><small>Make room for what's next.</small></span><input type="radio" name="goal" value="planning"></label>
             </fieldset>
-            <button id="inspect-target" class="puls-continue inspected">Continue<i data-lucide="arrow-right" aria-hidden="true"></i></button>
-            <div class="element-label" id="element-label"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>PrimaryButton</div>
+            <button id="inspect-target" type="button" data-demo-element="PrimaryButton" class="puls-continue">Continue<i data-lucide="arrow-right" aria-hidden="true"></i></button>
+            <div class="element-label" id="element-label" hidden><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>PrimaryButton</div>
             <div class="puls-safe"><i data-lucide="lock-keyhole" aria-hidden="true"></i>Your goals. Your pace.</div>
           </div>
+          <div class="puls-body" data-demo-step="details" hidden>
+            <div class="step"><span>A little about you</span><span>03 / 04</span></div>
+            <h2>Your next<br>chapter.</h2><p>Tell us how to address you.</p>
+            <form id="demo-details-form" class="demo-form">
+              <label>Name<input id="demo-name" name="name" autocomplete="off" required placeholder="Your name"></label>
+              <label>Email<input id="demo-email" name="email" type="email" autocomplete="off" required placeholder="you@example.com"></label>
+              <button type="submit" class="puls-continue" data-demo-element="SubmitButton">Submit<i data-lucide="arrow-right" aria-hidden="true"></i></button>
+              <button type="button" class="tool" id="demo-back" data-demo-element="BackButton">Back</button>
+            </form>
+          </div>
+          <div class="puls-body" data-demo-step="complete" hidden>
+            <div class="step"><span>Ready to begin</span><span>04 / 04</span></div>
+            <h2>You're all set,<br><span id="demo-complete-name"></span>.</h2><p>Your example onboarding is complete.</p>
+            <button type="button" class="puls-continue" id="demo-edit" data-demo-element="EditDetailsButton">Edit details</button>
+          </div>
+          </div>
         </div>
-        <div class="preview-toolbar"><button id="select-tool" class="tool active"><i data-lucide="scan" aria-hidden="true"></i>Select</button><button id="interact-tool" class="tool"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>Interact</button><span class="grow"></span><button id="capture" class="tool"><i data-lucide="camera" aria-hidden="true"></i>Capture</button></div>
+        <div class="preview-toolbar"><button id="select-tool" class="tool" aria-pressed="false"><i data-lucide="scan" aria-hidden="true"></i>Select</button><button id="interact-tool" class="tool active" aria-pressed="true"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>Interact</button><button id="disconnect-preview" class="tool" hidden>Example app</button><span class="grow"></span><button id="capture" class="tool"><i data-lucide="camera" aria-hidden="true"></i>Capture</button></div>
       </section>
       <section class="screen compare-screen" id="screen-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
         <div class="view-heading"><h2>Compare branches</h2><p>Select the elements you want to bring into your branch.</p></div>
@@ -134,6 +153,11 @@
       </div>
     </aside>
   </div>
+  <dialog class="workspace-dialog" id="connect-preview-dialog" aria-labelledby="preview-connect-title">
+    <header><h2 id="preview-connect-title">Open an application</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+    <p>Enter your running app's address. Navigate its pages and submit forms normally.</p>
+    <form><label>Application URL<input type="url" name="url" required placeholder="http://localhost:4173/" autocomplete="off"></label><p id="preview-connect-error" role="alert" hidden></p><button type="submit" class="button primary">Open preview</button></form>
+  </dialog>
   <dialog class="attachment-viewer" id="attachment-viewer" aria-labelledby="attachment-title">
     <header class="attachment-viewer-head"><div><h2 id="attachment-title">Screenshot</h2><p class="attachment-details"></p></div><button type="button" class="icon-button attachment-close" aria-label="Close image preview">×</button></header>
     <div class="attachment-image-area"><img alt=""></div>
