@@ -9,7 +9,14 @@
 <body>
 <div id="yxn-workbench" aria-label="YXNHarness Workbench">
   <header class="topbar">
-    <div class="brand"><i data-lucide="box" aria-hidden="true"></i><b>YXN<span>Harness</span></b></div>
+    <div class="brand" id="workspace-brand" role="img" aria-label="YXNHarness" aria-busy="false">
+      <span class="brand-symbol" aria-hidden="true">
+        <img class="brand-idle" src="/cockpit/assets/yxn-symbol.svg" width="20" height="20" alt="">
+        <img class="brand-loading" src="/cockpit/assets/yxn-loader.svg" width="20" height="20" alt="">
+      </span>
+      <img class="brand-wordmark" src="/cockpit/assets/yxn-lettering.svg" width="49" height="20" alt="" aria-hidden="true">
+      <span class="brand-harness" aria-hidden="true">Harness</span>
+    </div>
     <span class="slash">/</span><span class="project" id="project-name">workspace</span><span class="slash">/</span>
     <span class="current-branch"><i data-lucide="git-branch" aria-hidden="true"></i><span id="active-branch">…</span></span>
     <span class="grow"></span><span class="prototype">Local cockpit</span><div class="layout-controls" aria-label="Panels"><button class="icon-button" data-toggle-panel="left" aria-label="Workspace einklappen" aria-expanded="true" aria-controls="workspace-sidebar"><i data-lucide="panel-left" aria-hidden="true"></i></button><button class="icon-button" data-toggle-panel="right" aria-label="Agent einklappen" aria-expanded="true" aria-controls="agent-sidebar"><i data-lucide="panel-right" aria-hidden="true"></i></button></div>

@@ -670,7 +670,12 @@ function showExtra(nav) {
   icons();
 }
 
+let pendingRefreshes = 0;
+
 async function refresh() {
+  pendingRefreshes += 1;
+  q("#workspace-brand").setAttribute("aria-busy", "true");
+  q("#refresh").disabled = true;
   try {
     const [workspace, runsPayload, handoffsPayload, feedback, agent] = await Promise.all([
       apiGet("/api/v1/workspace"),
@@ -700,6 +705,10 @@ async function refresh() {
     pushActivity("Workspace refreshed");
   } catch (error) {
     toast(`API offline: ${error.message}`);
+  } finally {
+    pendingRefreshes -= 1;
+    q("#workspace-brand").setAttribute("aria-busy", String(pendingRefreshes > 0));
+    q("#refresh").disabled = pendingRefreshes > 0;
   }
   icons();
 }

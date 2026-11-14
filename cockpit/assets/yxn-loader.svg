@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none" role="img" aria-labelledby="title">
+<title id="title">YXN — Loading</title>
+<style>
+:root{color-scheme:light dark;color:#252525}@media(prefers-color-scheme:dark){:root{color:#e8e8e8}}
+.a{animation:join-left 1.8s cubic-bezier(.4,0,.2,1) infinite}.b{animation:join-right 1.8s cubic-bezier(.4,0,.2,1) infinite}.c{animation:join-base 1.8s cubic-bezier(.4,0,.2,1) infinite}
+@keyframes join-left{0%,100%{transform:translate(-2px,-2px);opacity:.3}30%,65%{transform:translate(0,0);opacity:1}}
+@keyframes join-right{0%,100%{transform:translate(2px,-2px);opacity:.3}40%,65%{transform:translate(0,0);opacity:1}}
+@keyframes join-base{0%,20%,100%{transform:translate(0,2px);opacity:.3}50%,70%{transform:translate(0,0);opacity:1}}
+@media(prefers-reduced-motion:reduce){.a,.b,.c{animation:none}}
+</style>
+<g fill="currentColor"><path class="a" d="M5 6h8l6 6v8L5 6Z"/><path class="b" d="M27 6h8L21 20v-8l6-6Z"/><path class="c" d="M17 23h6v12h-6z"/></g>
+</svg>

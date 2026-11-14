@@ -67,3 +67,14 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .panel-splitter{min-width:12px}
 }
 
+
+/* YXN identity: animate only the symbol while workspace requests are pending. */
+#yxn-workbench .topbar { padding-left: 12px; }
+#yxn-workbench .brand { gap: 0; flex-shrink: 0; }
+#yxn-workbench .brand img { display: block; }
+#yxn-workbench .brand-symbol { display: block; width: 20px; height: 20px; margin-right: 4px; }
+#yxn-workbench .brand-harness { font-size: 13px; font-weight: 400; line-height: 20px; letter-spacing: -.35px; color: var(--muted); }
+#yxn-workbench .brand .brand-loading { display: none; }
+#yxn-workbench .brand[aria-busy="true"] .brand-idle { display: none; }
+#yxn-workbench .brand[aria-busy="true"] .brand-loading { display: block; }
+#yxn-workbench #refresh:disabled { cursor: progress; }
