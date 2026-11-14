@@ -29,18 +29,117 @@ function isSafeRelativePath(rel) {
   return true;
 }
 
-function unifiedDiff(filePath, before, after) {
+function longestCommonSubsequence(a, b) {
+  const rows = a.length;
+  const cols = b.length;
+  const dp = Array.from({ length: rows + 1 }, () => new Uint16Array(cols + 1));
+  for (let i = 1; i <= rows; i += 1) {
+    for (let j = 1; j <= cols; j += 1) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1] + 1
+        : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const ops = [];
+  let i = rows;
+  let j = cols;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+      ops.push({ type: "equal", line: a[i - 1] });
+      i -= 1;
+      j -= 1;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: "add", line: b[j - 1] });
+      j -= 1;
+    } else {
+      ops.push({ type: "del", line: a[i - 1] });
+      i -= 1;
+    }
+  }
+  ops.reverse();
+  return ops;
+}
+
+function unifiedDiff(filePath, before, after, { context = 3 } = {}) {
   const beforeLines = String(before).split("\n");
   const afterLines = String(after).split("\n");
+  // Drop a single trailing empty split so small CSS files stay tidy.
+  if (beforeLines.length && beforeLines.at(-1) === "") beforeLines.pop();
+  if (afterLines.length && afterLines.at(-1) === "") afterLines.pop();
+  const ops = longestCommonSubsequence(beforeLines, afterLines);
   const lines = [
     `--- a/${filePath}`,
     `+++ b/${filePath}`,
   ];
-  // Simple full-file hunk — honest and reviewable for small visual edits.
-  lines.push(`@@ -1,${beforeLines.length} +1,${afterLines.length} @@`);
-  for (const line of beforeLines) lines.push(`-${line}`);
-  for (const line of afterLines) lines.push(`+${line}`);
+
+  // Build change blocks with surrounding context — classic coding-agent look.
+  const marked = ops.map((op) => ({ ...op, keep: op.type !== "equal" }));
+  for (let index = 0; index < marked.length; index += 1) {
+    if (marked[index].type !== "equal") continue;
+    const nearby = marked.slice(Math.max(0, index - context), index + context + 1)
+      .some((entry) => entry.type !== "equal");
+    if (nearby) marked[index].keep = true;
+  }
+
+  let oldLine = 1;
+  let newLine = 1;
+  let hunk = null;
+  const flush = () => {
+    if (!hunk) return;
+    lines.push(`@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`);
+    lines.push(...hunk.body);
+    hunk = null;
+  };
+
+  for (const entry of marked) {
+    if (!entry.keep) {
+      flush();
+      if (entry.type === "equal") {
+        oldLine += 1;
+        newLine += 1;
+      }
+      continue;
+    }
+    if (!hunk) {
+      hunk = {
+        oldStart: entry.type === "add" ? oldLine : oldLine,
+        newStart: entry.type === "del" ? newLine : newLine,
+        oldCount: 0,
+        newCount: 0,
+        body: [],
+      };
+    }
+    if (entry.type === "equal") {
+      hunk.body.push(` ${entry.line}`);
+      hunk.oldCount += 1;
+      hunk.newCount += 1;
+      oldLine += 1;
+      newLine += 1;
+    } else if (entry.type === "del") {
+      hunk.body.push(`-${entry.line}`);
+      hunk.oldCount += 1;
+      oldLine += 1;
+    } else {
+      hunk.body.push(`+${entry.line}`);
+      hunk.newCount += 1;
+      newLine += 1;
+    }
+  }
+  flush();
+  if (lines.length === 2) {
+    lines.push("@@ -0,0 +0,0 @@");
+  }
   return `${lines.join("\n")}\n`;
+}
+
+function countDiffStats(diffText) {
+  let additions = 0;
+  let deletions = 0;
+  for (const line of String(diffText || "").split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions += 1;
+  }
+  return { additions, deletions };
 }
 
 async function proposalPaths(root, proposalId) {
@@ -74,13 +173,20 @@ async function writeProposal(root, {
   const paths = await proposalPaths(root, proposalId);
   await mkdir(paths.dir, { recursive: true });
   const createdAt = nowIso();
-  const entries = files.map((file) => ({
-    path: file.path.replace(/\\/g, "/"),
-    before: file.before,
-    after: file.after,
-    diff: file.diff || unifiedDiff(file.path.replace(/\\/g, "/"), file.before, file.after),
-    byteDelta: Buffer.byteLength(file.after) - Buffer.byteLength(file.before),
-  }));
+  const entries = files.map((file) => {
+    const rel = file.path.replace(/\\/g, "/");
+    const diff = file.diff || unifiedDiff(rel, file.before, file.after);
+    const stats = countDiffStats(diff);
+    return {
+      path: rel,
+      before: file.before,
+      after: file.after,
+      diff,
+      additions: stats.additions,
+      deletions: stats.deletions,
+      byteDelta: Buffer.byteLength(file.after) - Buffer.byteLength(file.before),
+    };
+  });
   const proposal = {
     version: 1,
     proposalId,
@@ -91,7 +197,13 @@ async function writeProposal(root, {
     summary: String(summary || "Proposed file change").slice(0, 500),
     createdAt,
     updatedAt: createdAt,
-    files: entries.map(({ path: filePath, diff, byteDelta }) => ({ path: filePath, diff, byteDelta })),
+    files: entries.map(({ path: filePath, diff, byteDelta, additions, deletions }) => ({
+      path: filePath,
+      diff,
+      byteDelta,
+      additions,
+      deletions,
+    })),
     // Keep full before/after only on disk for accept; list endpoint omits bodies.
     _bodies: entries.map(({ path: filePath, before, after }) => ({ path: filePath, before, after })),
   };
@@ -271,6 +383,7 @@ async function rejectProposal(root, proposalId, {
 export {
   PROPOSALS_DIR,
   acceptProposal,
+  countDiffStats,
   listProposals,
   publicProposal,
   readProposal,

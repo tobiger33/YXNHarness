@@ -1231,6 +1231,10 @@ test("workspace-edit adapter proposes reversible visual change and host accept w
     const proposalId = turn.proposals[0].proposalId;
     assert.ok(proposalId.startsWith("prop-"));
     assert.match(turn.proposals[0].files[0].diff, /--accent/);
+    assert.match(turn.proposals[0].files[0].diff, /^-[^\n]*#0f6b63/m);
+    assert.match(turn.proposals[0].files[0].diff, /^\+[^\n]*#085c8f/m);
+    assert.ok(turn.proposals[0].files[0].additions >= 1);
+    assert.ok(turn.proposals[0].files[0].deletions >= 1);
     // Source unchanged until Accept.
     assert.equal(await readFile(path.join(root, styleRel), "utf8"), original);
 

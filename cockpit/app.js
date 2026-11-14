@@ -447,6 +447,26 @@ async function showProposalPreview(proposalId, card) {
   }
 }
 
+function renderProposalDiff(diffText, { maxLines = 48 } = {}) {
+  const rows = String(diffText || "").split("\n");
+  const visible = [];
+  for (const line of rows) {
+    if (!line && visible.length === 0) continue;
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+    visible.push(line);
+    if (visible.length >= maxLines) break;
+  }
+  const truncated = rows.filter((line) => !(line.startsWith("--- ") || line.startsWith("+++ "))).length > visible.length;
+  const html = visible.map((line) => {
+    let cls = "";
+    if (line.startsWith("+") && !line.startsWith("+++")) cls = "added";
+    else if (line.startsWith("-") && !line.startsWith("---")) cls = "removed";
+    else if (line.startsWith("@@")) cls = "hunk";
+    return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
+  }).join("");
+  return `${html}${truncated ? `<div class="hunk"><span></span>…</div>` : ""}`;
+}
+
 function appendProposalCard(host, proposal, { focus = false } = {}) {
   if (!proposal?.proposalId || !host) return null;
   const existing = host.querySelector(`[data-proposal-id="${CSS.escape(proposal.proposalId)}"]`);
@@ -461,10 +481,41 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   title.className = "proposal-summary";
   title.textContent = proposal.summary || "Proposed change";
   card.append(title);
-  const pathLine = document.createElement("div");
-  pathLine.className = "proposal-path";
-  pathLine.textContent = (proposal.files || []).map((file) => file.path).filter(Boolean).join(", ") || "—";
-  card.append(pathLine);
+
+  let totalAdd = 0;
+  let totalDel = 0;
+  for (const file of proposal.files || []) {
+    totalAdd += Number(file.additions) || 0;
+    totalDel += Number(file.deletions) || 0;
+    const fileBlock = document.createElement("div");
+    fileBlock.className = "proposal-file";
+    const head = document.createElement("div");
+    head.className = "proposal-file-head";
+    const path = document.createElement("span");
+    path.className = "proposal-path";
+    path.textContent = file.path || "—";
+    const stats = document.createElement("span");
+    stats.className = "proposal-diff-stats";
+    const add = Number(file.additions) || 0;
+    const del = Number(file.deletions) || 0;
+    stats.innerHTML = `<b>+${add}</b> <em>−${del}</em>`;
+    head.append(path, stats);
+    fileBlock.append(head);
+    if (file.diff) {
+      const code = document.createElement("div");
+      code.className = "code proposal-diff-code";
+      code.innerHTML = renderProposalDiff(file.diff);
+      fileBlock.append(code);
+    }
+    card.append(fileBlock);
+  }
+  if ((proposal.files || []).length > 1) {
+    const rollup = document.createElement("div");
+    rollup.className = "proposal-diff-stats proposal-diff-rollup";
+    rollup.innerHTML = `<b>+${totalAdd}</b> <em>−${totalDel}</em>`;
+    card.append(rollup);
+  }
+
   const actions = document.createElement("div");
   actions.className = "proposal-actions";
   if (proposal.status === "pending") {
