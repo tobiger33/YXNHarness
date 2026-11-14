@@ -21,7 +21,7 @@ The local cockpit follows the accepted workbench design:
 | Surface | Behavior |
 |---------|----------|
 | Branches / Runs / Feedback / Handoffs | Live API data |
-| Changes + Übernehmen | Real `workspace/review` + `workspace/adopt` |
+| Changes + Übernehmen / Design passt | Real `workspace/review` + `adopt` / `approve` |
 | Preview | Interactive example or an embedded running application |
 | Compare demos | Layout examples only |
 | Connected agent | Honest: no adapter unless one is connected |

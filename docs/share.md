@@ -39,15 +39,19 @@ grants.
 
 ## Design “yes” → visible to others
 
-1. Host reviews the branch in Preview / Changes.
-2. Host approves → adopt/merge on the host machine:
+1. Host reviews the branch in Changes (or Preview).
+2. Host clicks **Design passt** in the cockpit, or:
 
 ```sh
-npm run harness -- workspace --adopt <their-branch> --apply --note "Design approved"
+npm run harness -- workspace --approve <their-branch> --dry-run
+npm run harness -- workspace --approve <their-branch> --apply
 ```
 
+That whole-branch merges with note `Design approved` (override with `--note`).
+It does **not** push.
+
 3. Host pushes (plain `git push` — still outside the harness).
-4. Collaborators refresh remotes on demand:
+4. Collaborators refresh remotes on demand (cockpit button or):
 
 ```sh
 npm run harness -- workspace --fetch --dry-run
@@ -56,6 +60,8 @@ npm run harness -- workspace --fetch --apply
 
 Fetch updates **remote-tracking refs only**. It does not checkout, merge, or
 background-poll. Run it after a known push (efficient), not on a timer.
+
+See also [`workspace.md`](workspace.md).
 
 ## Cockpit API
 

@@ -90,6 +90,10 @@ import {
   formatSharePlan,
   listShares,
 } from "./share.mjs";
+import {
+  formatDesignApprovePlan,
+  planDesignApprove,
+} from "./design-approve.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -106,7 +110,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch|--fetch] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--fetch] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- share [--root path] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
@@ -152,6 +156,7 @@ function parseArgs(argv) {
     start: null,
     review: null,
     adopt: null,
+    approve: null,
     fetch: false,
     remote: null,
     path: null,
@@ -223,6 +228,11 @@ function parseArgs(argv) {
         options.adopt = adopt;
         index += 1;
       }
+    } else if (argument === "--approve") {
+      const approve = rest[index + 1];
+      if (!approve || approve.startsWith("--")) throw new Error("--approve requires an existing local branch name.");
+      options.approve = approve;
+      index += 1;
     } else if (argument === "--fetch") {
       options.fetch = true;
     } else if (argument === "--remote") {
@@ -402,27 +412,31 @@ function parseArgs(argv) {
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
       options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--fetch/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--fetch/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
   }
-  if (action === "workspace" && options.note && !options.adopt) {
-    throw new Error("--note is only valid with workspace --adopt (or handoff / share).");
+  if (action === "workspace" && options.note && !options.adopt && !options.approve) {
+    throw new Error("--note is only valid with workspace --adopt/--approve (or handoff / share).");
   }
   const workspaceMutators = [
     options.checkout,
     options.create,
     options.review,
     options.adopt,
+    options.approve,
     options.fetch ? "fetch" : null,
   ].filter(Boolean);
   if (action === "workspace" && workspaceMutators.length > 1) {
-    throw new Error("Use only one of --checkout, --create, --review, --adopt, or --fetch.");
+    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, or --fetch.");
   }
   if (action === "workspace" && (options.apply || options.dryRun || options.force) &&
-      !options.checkout && !options.create && !options.adopt && !options.fetch) {
-    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, or --fetch for workspace.");
+      !options.checkout && !options.create && !options.adopt && !options.approve && !options.fetch) {
+    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, or --fetch for workspace.");
   }
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
+  }
+  if (action === "workspace" && options.approve && (options.path || options.hunks || options.paths.length)) {
+    throw new Error("Design approve is whole-branch only (no --path / --hunks).");
   }
   if (action === "workspace" && options.path && !options.review && !options.adopt) {
     throw new Error("--path is only valid with workspace --review or --adopt.");
@@ -456,6 +470,9 @@ function parseArgs(argv) {
   }
   if (options.adopt && action !== "workspace") {
     throw new Error("--adopt is only valid with workspace.");
+  }
+  if (options.approve && action !== "workspace") {
+    throw new Error("--approve is only valid with workspace.");
   }
   if (options.path && action !== "workspace") {
     throw new Error("--path is only valid with workspace.");
@@ -503,7 +520,7 @@ function parseArgs(argv) {
     throw new Error("--skip-doctor is only valid with attach.");
   }
   if (options.note && !["handoff", "workspace", "feedback", "elements", "share"].includes(action)) {
-    throw new Error("--note is only valid with handoff, workspace --adopt, feedback --bundle, elements --adopt, or share.");
+    throw new Error("--note is only valid with handoff, workspace --adopt/--approve, feedback --bundle, elements --adopt, or share.");
   }
   if (options.sourceBranch && action !== "elements") {
     throw new Error("--source-branch is only valid with elements --adopt.");
@@ -1792,6 +1809,17 @@ async function main(argv = process.argv.slice(2)) {
       if (!plan.ok) process.exitCode = 1;
       return plan;
     }
+    if (options.approve) {
+      const plan = await planDesignApprove(root, {
+        theirs: options.approve,
+        apply: options.apply,
+        force: options.force,
+        note: options.note,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatDesignApprovePlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     if (options.review) {
       const review = buildWorkspaceReview(root, { theirs: options.review, path: options.path });
       review.ok = review.status === "ready" || review.status === "noop";
@@ -2099,6 +2127,8 @@ export {
   planElementAdopt,
   formatElementAdoptPlan,
   planWorkspaceFetch,
+  planDesignApprove,
+  formatDesignApprovePlan,
   listShares,
   probeApp,
   runScenario,

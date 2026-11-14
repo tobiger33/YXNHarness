@@ -30,6 +30,7 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
 | POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
+| POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"? }` — design approve (whole-branch; default note Design approved) |
 | POST | `/api/v1/workspace/fetch` | `{ "apply"?, "remote"?, "prune"? }` — on-demand `git fetch` (remote-tracking only) |
 | GET | `/api/v1/share` | List local share invites |
 | POST | `/api/v1/share` | `{ "apply"?, "force"?, "note"? }` — create view/comment share invite |
@@ -58,8 +59,10 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 - Panel widths persist in `localStorage`; double-click a splitter to reset
 
 **Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
-`/api/v1/workspace/adopt`. Composer messages become local feedback when no
-agent adapter is connected. Preview/Compare demos are layout examples only.
+`/api/v1/workspace/adopt`; **Design passt** POSTs
+`/api/v1/workspace/approve` then offers push/fetch next steps. Composer
+messages become local feedback when no agent adapter is connected.
+Preview/Compare demos are layout examples only.
 
 See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
 [`share.md`](share.md), [`cockpit-foundation.md`](cockpit-foundation.md), and
