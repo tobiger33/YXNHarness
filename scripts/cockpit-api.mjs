@@ -15,6 +15,7 @@ import { promoteExpectsFromRun } from "./promote.mjs";
 import { planElementAdopt } from "./element-adopt.mjs";
 import { PHASES as ATTACH_PHASES } from "./attach.mjs";
 import { createShareInvite, listShares } from "./share.mjs";
+import { planDesignApprove } from "./design-approve.mjs";
 import {
   agentPanelState,
   bundleFeedback,
@@ -145,6 +146,7 @@ async function buildOverview(root, { refresh = true } = {}) {
       loopbackOnly: true,
       localWrites: [
         "POST /api/v1/workspace/adopt",
+        "POST /api/v1/workspace/approve",
         "POST /api/v1/workspace/fetch",
         "POST /api/v1/feedback",
         "PATCH /api/v1/feedback/:id",
@@ -160,6 +162,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/workspace",
         "GET /api/v1/workspace/review",
         "POST /api/v1/workspace/adopt",
+        "POST /api/v1/workspace/approve",
         "POST /api/v1/workspace/fetch",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
@@ -325,6 +328,7 @@ function apiIndexPayload(projectRoot) {
     loopbackOnly: true,
     localWrites: [
       "POST /api/v1/workspace/adopt",
+      "POST /api/v1/workspace/approve",
       "POST /api/v1/workspace/fetch",
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
@@ -342,6 +346,7 @@ function apiIndexPayload(projectRoot) {
       workspace: "/api/v1/workspace",
       review: "/api/v1/workspace/review?ref=",
       adopt: "/api/v1/workspace/adopt",
+      approve: "/api/v1/workspace/approve",
       fetch: "/api/v1/workspace/fetch",
       runs: "/api/v1/runs",
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
@@ -354,7 +359,7 @@ function apiIndexPayload(projectRoot) {
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt, fetch, feedback, element adopt, attach, share invite. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, fetch, feedback, element adopt, attach, share invite. No remote agent required.",
   };
 }
 
@@ -458,6 +463,18 @@ function createCockpitApi({
           remote: body.remote ?? null,
           prune: body.prune !== false,
           apply: body.apply === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/approve" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await planDesignApprove(projectRoot, {
+          theirs: body.ref || body.theirs || body.branch,
+          apply: body.apply === true,
+          force: body.force === true,
+          note: body.note ?? body.comment ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;
