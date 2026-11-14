@@ -542,8 +542,9 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
     const del = Number(file.deletions) || 0;
     const fileBlock = document.createElement("details");
     fileBlock.className = "proposal-edit";
-    // New / focused proposals open so the host sees the diff; otherwise start collapsed.
-    fileBlock.open = Boolean(focus) || proposal.status === "pending";
+    // Only freshly appended cards open — pending seeds stay collapsed so the
+    // composer is not pushed out of the agent panel after the first send.
+    fileBlock.open = Boolean(focus);
     const head = document.createElement("summary");
     head.className = "proposal-edit-summary";
     const label = document.createElement("span");
@@ -1511,9 +1512,11 @@ async function sendMessage() {
     answer.append(p);
   } finally {
     busy = false;
-    q(".send").disabled = false;
+    const send = q(".send");
+    if (send) send.disabled = false;
     feed.scrollTop = feed.scrollHeight;
     icons();
+    q("#chat-input")?.focus();
   }
 }
 

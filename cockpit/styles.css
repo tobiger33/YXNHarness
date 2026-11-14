@@ -3,8 +3,13 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .workspace{flex:1;min-height:0;overflow:hidden}
 #yxn-workbench .stage,#yxn-workbench .sidebar,#yxn-workbench .agent{min-height:0;overflow:auto}
 #yxn-workbench .agent{overflow:hidden}
-#yxn-workbench .chat-feed{overflow:auto}
+/* Flex child must shrink so tall proposal diffs scroll inside the feed
+   instead of pushing the composer off-screen after the first send. */
+#yxn-workbench .chat-feed{overflow:auto;min-height:0;flex:1 1 auto}
+#yxn-workbench .agent-header,
+#yxn-workbench .agent-mode,
 #yxn-workbench .composer-area{flex-shrink:0}
+#yxn-workbench .composer-area{position:relative;z-index:2;background:var(--bg)}
 #yxn-workbench .screen{overflow:auto}
 
 
