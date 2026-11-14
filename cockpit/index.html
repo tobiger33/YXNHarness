@@ -17,14 +17,13 @@
         <p class="brand-sub">Cockpit</p>
       </div>
 
-      <div class="rail-status">
-        <span id="live-pill" class="pill pill-pending">connecting</span>
-        <button type="button" id="refresh-btn" class="ghost" title="Refresh">↻</button>
-      </div>
-
-      <section class="rail-section" aria-labelledby="host-title">
-        <h2 id="host-title">Host</h2>
-        <dl id="host-facts" class="facts"></dl>
+      <section class="rail-section" aria-labelledby="branch-title">
+        <div class="rail-section-head">
+          <h2 id="branch-title">Branches</h2>
+          <button type="button" id="refresh-btn" class="ghost" title="Refresh">↻</button>
+        </div>
+        <p id="branch-current" class="rail-meta">…</p>
+        <div id="branches-list" class="list" role="list"></div>
       </section>
 
       <section class="rail-section rail-grow" aria-labelledby="runs-title">
@@ -50,10 +49,11 @@
 
     <main class="stage" aria-labelledby="detail-title">
       <header class="stage-bar">
-        <div>
+        <div class="stage-bar-text">
           <h1 id="detail-title">Workspace</h1>
-          <p id="detail-lede" class="stage-lede">Select a run or handoff from the rail.</p>
+          <p id="detail-lede" class="stage-lede">Select a branch to review, or a run from the rail.</p>
         </div>
+        <div id="stage-actions" class="stage-actions" hidden></div>
       </header>
       <div id="detail-body" class="stage-body"></div>
     </main>

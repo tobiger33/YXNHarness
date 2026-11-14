@@ -1,7 +1,8 @@
 # Workspace (local Git context)
 
 Branches are the isolated workspaces for harness work. The harness exposes a
-local inventory plus **host-controlled** create/switch for local branches.
+local inventory plus **host-controlled** create/switch/review/adopt for local
+branches.
 
 Fetch and push stay outside this CLI — use the coding agent's Git tools or plain
 `git` for remotes.
@@ -38,11 +39,36 @@ npm run harness -- workspace --checkout feature/demo --apply
 Preview by default (`--dry-run` or omit `--apply`). `--apply` runs
 `git switch` onto an **existing local** branch.
 
-Guards (create + checkout):
+## Review (diff, GitHub-style)
+
+```sh
+npm run harness -- workspace --review feature/demo
+npm run harness -- workspace --review feature/demo --path src/app.js --json
+```
+
+Compares **your** current branch to **theirs** with a three-dot diff
+(`HEAD...theirs`) — the same shape GitHub uses for a PR file list: changes on
+their branch since the merge-base.
+
+Returns file list + `+`/`-` counts. With `--path`, includes the unified patch
+for that file.
+
+## Adopt (merge into yours)
+
+```sh
+npm run harness -- workspace --adopt feature/demo --dry-run
+npm run harness -- workspace --adopt feature/demo --apply
+```
+
+Merges **their** local branch into **your** current branch (`git merge --no-edit`).
+This is the CLI equivalent of the cockpit **Übernehmen** button.
+
+Guards (create + checkout + adopt):
 
 - Unknown / unsafe branch names → blocked
 - Dirty working tree → blocked unless the host consents with `--force`
-- Already on the checkout target → `noop`
+- Already on the target (checkout/adopt) → `noop`
+- Merge conflicts → blocked; resolve with plain `git` (no auto-resolve)
 - No fetch, push, or upstream setup
 
 ## Run stamps
@@ -63,7 +89,7 @@ a repository:
 Handoff manifests reuse the same stamp. The run index surfaces `git` per run
 when present.
 
-## Read API
+## Cockpit API
 
 ```sh
 npm run harness -- serve
@@ -72,14 +98,17 @@ npm run harness -- serve
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
+| GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
+| POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force? }` — loopback only |
 | GET | `/api/v1/overview` | Includes a short `workspace` summary |
 
-Checkout stays on the CLI for now (no write routes on `serve`).
+Adopt is the only write route on `serve`. Checkout/create stay on the CLI.
 
 ## What this is not
 
 - Not fetch / push / upstream setup
 - Not hosted preview binding
+- Not per-hunk cherry-pick yet (whole-branch merge first)
 - Not a substitute for the coding agent's own Git UI
 
 See also [`vision.md`](vision.md) and [`cockpit-foundation.md`](cockpit-foundation.md).

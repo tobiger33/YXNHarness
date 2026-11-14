@@ -1,25 +1,25 @@
 const els = {
-  livePill: document.getElementById("live-pill"),
   refreshBtn: document.getElementById("refresh-btn"),
-  hostFacts: document.getElementById("host-facts"),
+  branchCurrent: document.getElementById("branch-current"),
+  branchesList: document.getElementById("branches-list"),
   runsSummary: document.getElementById("runs-summary"),
   runsList: document.getElementById("runs-list"),
   handoffsList: document.getElementById("handoffs-list"),
   detailTitle: document.getElementById("detail-title"),
   detailLede: document.getElementById("detail-lede"),
   detailBody: document.getElementById("detail-body"),
+  stageActions: document.getElementById("stage-actions"),
   generatedAt: document.getElementById("generated-at"),
 };
 
 const state = {
   overview: null,
+  workspace: null,
   selected: null,
+  review: null,
+  reviewFile: null,
+  adopting: false,
 };
-
-function setLive(kind, label) {
-  els.livePill.className = `pill pill-${kind}`;
-  els.livePill.textContent = label;
-}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -61,29 +61,88 @@ function shortId(id) {
 
 async function apiGet(pathname) {
   const response = await fetch(pathname, { headers: { Accept: "application/json" } });
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`${response.status} ${pathname}: ${text.slice(0, 180)}`);
+    const message = data.blockedReasons?.join("; ") || data.error || `${response.status} ${pathname}`;
+    const error = new Error(message);
+    error.payload = data;
+    throw error;
   }
-  return response.json();
+  return data;
 }
 
-function renderHost(host) {
-  const config = host?.config || {};
-  const rows = [
-    ["Project", config.host?.projectLabel || "—"],
-    ["Visibility", config.access?.visibility || "—"],
-    ["Merge", config.access?.mergeAuthority || "—"],
-    ["Share", config.access?.shareLinkGrant || "—"],
-    ["Browser", config.consent?.browserInstallPolicy || "—"],
-    ["Config", host?.path || (host?.exists === false ? "missing" : "—")],
-  ];
-  els.hostFacts.innerHTML = rows.map(([term, value]) => `
-    <div>
-      <dt>${escapeHtml(term)}</dt>
-      <dd title="${escapeHtml(value)}">${escapeHtml(value)}</dd>
+async function apiPost(pathname, body) {
+  const response = await fetch(pathname, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data.blockedReasons?.join("; ") || data.error || `${response.status} ${pathname}`;
+    const error = new Error(message);
+    error.payload = data;
+    throw error;
+  }
+  return data;
+}
+
+function stageEmpty(title, body) {
+  return `<div class="stage-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span></div>`;
+}
+
+function detailCards(entries) {
+  return `<div class="detail-grid">${entries.map(([title, body]) => `
+    <div class="detail-card">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${body}</p>
     </div>
-  `).join("");
+  `).join("")}</div>`;
+}
+
+function clearActions() {
+  els.stageActions.hidden = true;
+  els.stageActions.innerHTML = "";
+}
+
+function setAdoptAction(enabled, label = "Übernehmen") {
+  els.stageActions.hidden = false;
+  els.stageActions.innerHTML = `
+    <button type="button" class="btn btn-primary" id="adopt-btn" ${enabled ? "" : "disabled"}>
+      ${escapeHtml(label)}
+    </button>
+  `;
+}
+
+function renderBranches(workspace) {
+  const branches = workspace?.branches || [];
+  if (!workspace?.available) {
+    els.branchCurrent.textContent = "no git";
+    els.branchesList.innerHTML = `<p class="empty">Not a Git workspace.</p>`;
+    return;
+  }
+  const current = workspace.branch || "(detached)";
+  const short = workspace.shortCommit || "";
+  els.branchCurrent.textContent = `${current}${short ? ` @ ${short}` : ""}${workspace.dirty ? " · dirty" : ""}`;
+
+  const others = branches.filter((entry) => !entry.current);
+  if (!others.length) {
+    els.branchesList.innerHTML = `<p class="empty">No other local branches.</p>`;
+    return;
+  }
+
+  els.branchesList.innerHTML = others.map((entry) => {
+    const active = state.selected?.type === "review" && state.selected.id === entry.name ? " active" : "";
+    return `
+      <button type="button" class="row${active}" data-kind="review" data-id="${escapeHtml(entry.name)}" role="listitem" title="Review ${escapeHtml(entry.name)}">
+        <span class="row-title">
+          <span>${escapeHtml(entry.name)}</span>
+          <span class="mark">review</span>
+        </span>
+        <span class="row-meta">${escapeHtml(entry.shortCommit || "")}</span>
+      </button>
+    `;
+  }).join("");
 }
 
 function renderRunRows(runs) {
@@ -123,27 +182,169 @@ function renderHandoffs(items) {
           <span>${escapeHtml(shortId(id))}</span>
           <span class="status ${statusClass(status)}">${escapeHtml(status)}</span>
         </span>
-        <span class="row-meta">${escapeHtml(formatTime(item.createdAt, true))} · ${escapeHtml(shortId(item.sourceRunId || "—"))}</span>
+        <span class="row-meta">${escapeHtml(formatTime(item.createdAt, true))}</span>
       </button>
     `;
   }).join("");
 }
 
-function detailCards(entries) {
-  return `<div class="detail-grid">${entries.map(([title, body]) => `
-    <div class="detail-card">
-      <h3>${escapeHtml(title)}</h3>
-      <p>${body}</p>
-    </div>
-  `).join("")}</div>`;
+function highlightSelection() {
+  for (const button of document.querySelectorAll(".row[data-kind]")) {
+    const match = state.selected
+      && button.dataset.kind === state.selected.type
+      && button.dataset.id === state.selected.id;
+    button.classList.toggle("active", Boolean(match));
+  }
 }
 
-function stageEmpty(title, body) {
-  return `<div class="stage-empty"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span></div>`;
+function renderDiffLines(text) {
+  if (!text) return `<div class="diff-empty">No textual patch for this file.</div>`;
+  const lines = text.split("\n");
+  return `<pre class="diff-code" aria-label="Unified diff">${lines.map((line) => {
+    let kind = "";
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) {
+      kind = "meta";
+    } else if (line.startsWith("@@")) {
+      kind = "hunk";
+    } else if (line.startsWith("+")) {
+      kind = "add";
+    } else if (line.startsWith("-")) {
+      kind = "del";
+    }
+    return `<span class="diff-line ${kind}">${escapeHtml(line) || " "}</span>`;
+  }).join("")}</pre>`;
+}
+
+function paintReview(review, selectedPath, message = null) {
+  const yours = review.yours?.branch || "—";
+  const theirs = review.theirs?.branch || "—";
+  const summary = review.summary || { filesChanged: 0, additions: 0, deletions: 0 };
+  els.detailTitle.textContent = `Review · ${theirs}`;
+  els.detailLede.textContent = `${yours} ← ${theirs} · ${summary.filesChanged} files · +${summary.additions}/-${summary.deletions}`;
+
+  const canAdopt = review.status === "ready" || review.status === "noop";
+  setAdoptAction(canAdopt && !state.adopting, state.adopting ? "Übernehmen…" : "Übernehmen");
+
+  if (!review.files?.length) {
+    els.detailBody.innerHTML = `
+      ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
+      ${stageEmpty("No unique changes", review.explanation || "Nothing to adopt from this branch.")}
+    `;
+    return;
+  }
+
+  const path = selectedPath || review.files[0].path;
+  const filesHtml = review.files.map((file) => {
+    const active = file.path === path ? " active" : "";
+    return `
+      <button type="button" class="file-row${active}" data-kind="file" data-id="${escapeHtml(file.path)}" title="${escapeHtml(file.path)}">
+        <span class="file-status">${escapeHtml(file.status)}</span>
+        <span class="file-path">${escapeHtml(file.path)}</span>
+        <span class="file-stats"><span class="stat-add">+${file.additions}</span> <span class="stat-del">-${file.deletions}</span></span>
+      </button>
+    `;
+  }).join("");
+
+  const patchText = review.patch?.path === path ? review.patch.text : null;
+  els.detailBody.innerHTML = `
+    ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
+    <div class="review">
+      <aside class="file-pane">
+        <h3>Changed files</h3>
+        ${filesHtml}
+      </aside>
+      <section class="diff-pane">
+        <div class="diff-head">${escapeHtml(path)}</div>
+        ${patchText == null
+    ? `<div class="diff-empty">Loading patch…</div>`
+    : renderDiffLines(patchText)}
+      </section>
+    </div>
+  `;
+}
+
+async function showReview(branchName, { path = null, message = null } = {}) {
+  state.selected = { type: "review", id: branchName };
+  state.reviewFile = path;
+  highlightSelection();
+  clearActions();
+  els.detailTitle.textContent = `Review · ${branchName}`;
+  els.detailLede.textContent = "Loading diff…";
+  els.detailBody.innerHTML = stageEmpty("Loading", "Fetching branch review…");
+
+  try {
+    const list = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(branchName)}`);
+    state.review = list;
+    const filePath = path || list.files?.[0]?.path || null;
+    state.reviewFile = filePath;
+    if (filePath) {
+      const withPatch = await apiGet(
+        `/api/v1/workspace/review?ref=${encodeURIComponent(branchName)}&path=${encodeURIComponent(filePath)}`,
+      );
+      state.review = withPatch;
+      paintReview(withPatch, filePath, message);
+    } else {
+      paintReview(list, null, message);
+    }
+  } catch (error) {
+    clearActions();
+    els.detailBody.innerHTML = stageEmpty("Review failed", error.message);
+  }
+}
+
+async function adoptCurrent(force = false) {
+  if (!state.selected || state.selected.type !== "review" || state.adopting) return;
+  const ref = state.selected.id;
+  state.adopting = true;
+  setAdoptAction(false, "Übernehmen…");
+  try {
+    const preview = await apiPost("/api/v1/workspace/adopt", { ref, apply: false, force });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Adopt blocked");
+    }
+    if (preview.status === "noop") {
+      await showReview(ref, { path: state.reviewFile, message: { ok: true, text: preview.explanation || "Already on that branch." } });
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/adopt", { ref, apply: true, force });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
+    }
+    await refresh({ keepSelection: false });
+    els.detailTitle.textContent = "Adopted";
+    els.detailLede.textContent = applied.explanation || `Merged ${ref} into your branch.`;
+    clearActions();
+    els.detailBody.innerHTML = stageEmpty(
+      "Übernommen",
+      applied.explanation || `Changes from ${ref} are now on your current branch.`,
+    );
+  } catch (error) {
+    const dirty = /dirty/i.test(error.message);
+    await showReview(ref, {
+      path: state.reviewFile,
+      message: {
+        ok: false,
+        text: dirty
+          ? `${error.message} — retry with force only after host consent.`
+          : error.message,
+      },
+    });
+    if (dirty) {
+      setAdoptAction(true, "Force Übernehmen");
+      const btn = document.getElementById("adopt-btn");
+      if (btn) {
+        btn.dataset.force = "1";
+      }
+    }
+  } finally {
+    state.adopting = false;
+  }
 }
 
 async function showRun(runId) {
   state.selected = { type: "run", id: runId };
+  state.review = null;
+  clearActions();
   els.detailTitle.textContent = "Run";
   els.detailLede.textContent = runId;
   els.detailBody.innerHTML = stageEmpty("Loading", "Fetching run evidence…");
@@ -176,6 +377,8 @@ async function showRun(runId) {
 
 async function showHandoff(handoffId) {
   state.selected = { type: "handoff", id: handoffId };
+  state.review = null;
+  clearActions();
   els.detailTitle.textContent = "Handoff";
   els.detailLede.textContent = handoffId;
   els.detailBody.innerHTML = stageEmpty("Loading", "Fetching handoff package…");
@@ -199,9 +402,6 @@ async function showHandoff(handoffId) {
     ["Note", escapeHtml(note)],
     ["Guidance", escapeHtml(guidance)],
     ["Path", escapeHtml(handoff.path || "—")],
-    ["README", handoff.files?.readme
-      ? `<a href="/api/v1/artifacts/handoffs/${encodeURIComponent(handoffId)}/${handoff.files.readme}" target="_blank" rel="noreferrer">${escapeHtml(handoff.files.readme)}</a>`
-      : "—"],
   ]);
 
   let sheet = "";
@@ -212,25 +412,17 @@ async function showHandoff(handoffId) {
   els.detailBody.innerHTML = cards + sheet;
 }
 
-function highlightSelection() {
-  for (const button of document.querySelectorAll(".row[data-kind]")) {
-    const match = state.selected
-      && button.dataset.kind === state.selected.type
-      && button.dataset.id === state.selected.id;
-    button.classList.toggle("active", Boolean(match));
-  }
-}
-
-async function refresh() {
-  setLive("pending", "…");
+async function refresh({ keepSelection = true } = {}) {
   try {
     const overview = await apiGet("/api/v1/overview");
-    const [runsPayload, handoffsPayload] = await Promise.all([
+    const [workspace, runsPayload, handoffsPayload] = await Promise.all([
+      apiGet("/api/v1/workspace"),
       apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
     ]);
     state.overview = overview;
-    renderHost(overview.host);
+    state.workspace = workspace;
+    renderBranches(workspace);
     const runs = runsPayload.runs || [];
     const summary = runsPayload.summary || overview.index?.summary || {};
     const count = summary.runCount ?? runs.length;
@@ -238,22 +430,28 @@ async function refresh() {
     renderRunRows(runs);
     renderHandoffs(handoffsPayload.handoffs || overview.handoffs?.items || []);
     els.generatedAt.textContent = formatTime(overview.generatedAt, true);
-    setLive("live", "live");
 
-    if (state.selected?.type === "run") await showRun(state.selected.id);
-    else if (state.selected?.type === "handoff") await showHandoff(state.selected.id);
-    else if (runs[0]?.runId) await showRun(runs[0].runId);
-    else {
+    if (keepSelection && state.selected?.type === "review") {
+      await showReview(state.selected.id, { path: state.reviewFile });
+    } else if (keepSelection && state.selected?.type === "run") {
+      await showRun(state.selected.id);
+    } else if (keepSelection && state.selected?.type === "handoff") {
+      await showHandoff(state.selected.id);
+    } else {
+      state.selected = null;
+      clearActions();
+      const current = workspace.branch || "—";
       els.detailTitle.textContent = "Workspace";
-      els.detailLede.textContent = "Select a run or handoff from the rail.";
+      els.detailLede.textContent = `On ${current}. Pick a branch to review, or a run for evidence.`;
       els.detailBody.innerHTML = stageEmpty(
-        "Ready",
-        "Pick evidence in the left rail — this stage stays clear for the working view.",
+        "Clean stage",
+        "Left rail: other branches open a GitHub-style diff. Übernehmen merges that branch into yours (local only).",
       );
+      highlightSelection();
     }
   } catch (error) {
-    setLive("error", "offline");
     els.runsSummary.textContent = "offline";
+    clearActions();
     els.detailBody.innerHTML = stageEmpty("API offline", error.message);
   }
 }
@@ -263,8 +461,15 @@ els.refreshBtn.addEventListener("click", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const adopt = event.target.closest("#adopt-btn");
+  if (adopt) {
+    adoptCurrent(adopt.dataset.force === "1");
+    return;
+  }
   const button = event.target.closest("[data-kind][data-id]");
   if (!button) return;
+  if (button.dataset.kind === "review") showReview(button.dataset.id);
+  if (button.dataset.kind === "file") showReview(state.selected?.id, { path: button.dataset.id });
   if (button.dataset.kind === "run") showRun(button.dataset.id);
   if (button.dataset.kind === "handoff") showHandoff(button.dataset.id);
 });

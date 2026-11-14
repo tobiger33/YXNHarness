@@ -1,7 +1,7 @@
-# Cockpit read API (local)
+# Cockpit API (local)
 
-A loopback-only, read-only HTTP server: a small static cockpit shell plus a JSON
-API so UI work can consume host policy, runs, handoffs, and artifact files
+A loopback-only HTTP server: a small static cockpit shell plus a JSON API so UI
+work can consume host policy, runs, handoffs, artifacts, and branch review —
 without scraping the filesystem.
 
 ## Start
@@ -12,7 +12,7 @@ npm run harness -- serve --port 8787
 npm run harness -- serve --root /path/to/project --json
 ```
 
-Binds **127.0.0.1 only**. No write routes. Stop with Ctrl+C.
+Binds **127.0.0.1 only**. Stop with Ctrl+C.
 
 Open `http://127.0.0.1:8787/` for the cockpit shell (files from `cockpit/` in
 this package). JSON stays under `/api/v1/…`.
@@ -28,17 +28,22 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/overview` | Host + run summary + recent handoffs |
 | GET | `/api/v1/host-config` | `harness.host.json` (or missing) |
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
+| GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
+| POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"? }` — merge theirs → yours |
 | GET | `/api/v1/runs` | Run index (`?refresh=0` to skip rebuild) |
 | GET | `/api/v1/runs/:runId` | One run + `result.json` |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
 
-## For UI work
+## Review & Übernehmen
 
-The shell under `cockpit/` talks to the same origin. Treat API responses as
-data. Do not invent write APIs here — host actions stay on the CLI (`setup`,
-`handoff`, etc.) until an explicit authenticated control plane exists.
+The shell lists other local branches in the left rail. Selecting one opens a
+clean file list + unified diff (Cursor / VS Code / GitHub style). **Übernehmen**
+POSTs to `/api/v1/workspace/adopt` with `apply: true` after a dry-run preview.
 
-See also [`cockpit-foundation.md`](cockpit-foundation.md) and
-[`handoff.md`](handoff.md).
+That is the only write route. Create/checkout remain CLI-only until a broader
+authenticated control plane exists.
+
+See also [`workspace.md`](workspace.md), [`cockpit-foundation.md`](cockpit-foundation.md),
+and [`handoff.md`](handoff.md).

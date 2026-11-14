@@ -129,8 +129,312 @@ function collectWorkspace(root) {
     behind,
     branches,
     readOnly: true,
-    note: "Local branches: workspace --checkout|--create <branch> --dry-run|--apply. Push/fetch stay out of scope.",
+    note: "Local branches: --checkout|--create|--review|--adopt. Push/fetch stay out of scope.",
   };
+}
+
+function isSafeRelPath(relPath) {
+  if (!relPath || typeof relPath !== "string") return false;
+  if (relPath.length > 500) return false;
+  if (relPath.startsWith("/") || relPath.includes("\\") || relPath.includes("\0")) return false;
+  if (relPath.split("/").some((part) => part === ".." || part === "")) return false;
+  return true;
+}
+
+function parseNumstat(raw) {
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean).map((line) => {
+    const [added, deleted, ...rest] = line.split("\t");
+    const pathName = rest.join("\t");
+    // renames: "old => new" in path with curly braces sometimes; keep raw path label
+    return {
+      path: pathName || null,
+      additions: added === "-" ? null : Number(added),
+      deletions: deleted === "-" ? null : Number(deleted),
+    };
+  }).filter((entry) => entry.path);
+}
+
+function parseNameStatus(raw) {
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean).map((line) => {
+    const [status, ...parts] = line.split("\t");
+    if (status?.startsWith("R") || status?.startsWith("C")) {
+      return { status: status[0], path: parts[1] || parts[0] || null, from: parts[0] || null };
+    }
+    return { status: status || "M", path: parts[0] || null, from: null };
+  }).filter((entry) => entry.path);
+}
+
+/**
+ * GitHub/Cursor-style review: what would change on *your* branch if you adopt *theirs*.
+ * Uses three-dot diff (merge-base...theirs), like a PR file list.
+ */
+function buildWorkspaceReview(root, { theirs, path: filePath = null } = {}) {
+  const projectRoot = path.resolve(root);
+  const before = collectWorkspace(projectRoot);
+  const targetName = typeof theirs === "string" ? theirs.trim() : "";
+
+  const base = {
+    version: 1,
+    action: "review",
+    root: projectRoot,
+    yours: before.available
+      ? { branch: before.branch, commit: before.commit, shortCommit: before.shortCommit }
+      : null,
+    theirs: null,
+    mergeBase: null,
+    files: [],
+    summary: { filesChanged: 0, additions: 0, deletions: 0 },
+    patch: null,
+    blockedReasons: [],
+  };
+
+  if (!before.available) {
+    return { ...base, status: "blocked", blockedReasons: ["Not a Git repository."] };
+  }
+  if (!targetName || !isSafeBranchName(targetName)) {
+    return { ...base, status: "blocked", blockedReasons: ["--review requires an existing local branch name."] };
+  }
+  const target = resolveLocalBranch(projectRoot, targetName);
+  if (!target) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [`Local branch "${targetName}" not found.`],
+      availableBranches: before.branches.map((entry) => entry.name),
+    };
+  }
+  if (before.branch === target.name) {
+    return {
+      ...base,
+      status: "noop",
+      theirs: { branch: target.name, commit: target.commit, shortCommit: target.shortCommit },
+      explanation: "Already on that branch — nothing to review.",
+    };
+  }
+
+  base.theirs = { branch: target.name, commit: target.commit, shortCommit: target.shortCommit };
+  const mergeBase = runGit(projectRoot, ["merge-base", "HEAD", target.name]);
+  base.mergeBase = mergeBase
+    ? { commit: mergeBase, shortCommit: runGit(projectRoot, ["rev-parse", "--short", mergeBase]) }
+    : null;
+
+  const range = `HEAD...${target.name}`;
+  const nameStatus = parseNameStatus(runGit(projectRoot, ["diff", "--name-status", "-M", range]) || "");
+  const numstat = parseNumstat(runGit(projectRoot, ["diff", "--numstat", "-M", range]) || "");
+  const byPath = new Map(numstat.map((entry) => [entry.path, entry]));
+  const files = nameStatus.map((entry) => {
+    const stats = byPath.get(entry.path) || {};
+    return {
+      path: entry.path,
+      status: entry.status,
+      from: entry.from,
+      additions: Number.isFinite(stats.additions) ? stats.additions : 0,
+      deletions: Number.isFinite(stats.deletions) ? stats.deletions : 0,
+    };
+  });
+
+  base.files = files;
+  base.summary = {
+    filesChanged: files.length,
+    additions: files.reduce((sum, file) => sum + (file.additions || 0), 0),
+    deletions: files.reduce((sum, file) => sum + (file.deletions || 0), 0),
+  };
+
+  if (filePath) {
+    if (!isSafeRelPath(filePath)) {
+      return { ...base, status: "blocked", blockedReasons: [`Invalid path "${filePath}".`] };
+    }
+    const matched = files.find((file) => file.path === filePath);
+    if (!matched) {
+      return { ...base, status: "blocked", blockedReasons: [`Path "${filePath}" is not in this review.`] };
+    }
+    const filePatch = runGit(projectRoot, ["diff", "-M", range, "--", filePath]);
+    base.patch = {
+      path: filePath,
+      status: matched.status,
+      text: filePatch || "",
+      truncated: false,
+    };
+    if (base.patch.text.length > 200_000) {
+      base.patch.text = `${base.patch.text.slice(0, 200_000)}\n\n… truncated …\n`;
+      base.patch.truncated = true;
+    }
+  }
+
+  return {
+    ...base,
+    status: "ready",
+    explanation: files.length
+      ? `Review ${before.branch || "HEAD"} ← ${target.name}: ${files.length} file(s), +${base.summary.additions}/-${base.summary.deletions}.`
+      : `${target.name} has no unique changes since the merge-base.`,
+  };
+}
+
+function formatWorkspaceReview(review) {
+  const lines = [
+    `Review: ${review.status}`,
+    `Yours: ${review.yours?.branch || "—"} @ ${review.yours?.shortCommit || "—"}`,
+    `Theirs: ${review.theirs?.branch || "—"} @ ${review.theirs?.shortCommit || "—"}`,
+  ];
+  if (review.explanation) lines.push(review.explanation);
+  for (const reason of review.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  if (review.files?.length) {
+    lines.push("Files:");
+    for (const file of review.files.slice(0, 40)) {
+      lines.push(`  ${file.status} ${file.path} (+${file.additions}/-${file.deletions})`);
+    }
+    if (review.files.length > 40) lines.push(`  … ${review.files.length - 40} more`);
+  }
+  if (review.patch?.text) {
+    lines.push("", `Patch ${review.patch.path}:`, review.patch.text);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Adopt *theirs* into the current branch (git merge). Host-controlled; no push.
+ */
+function planWorkspaceAdopt(root, { theirs, apply = false, force = false } = {}) {
+  const projectRoot = path.resolve(root);
+  const before = collectWorkspace(projectRoot);
+  const targetName = typeof theirs === "string" ? theirs.trim() : "";
+
+  const base = {
+    version: 1,
+    action: "adopt",
+    apply: Boolean(apply),
+    force: Boolean(force),
+    root: projectRoot,
+    yours: before.available
+      ? {
+          branch: before.branch,
+          commit: before.commit,
+          shortCommit: before.shortCommit,
+          dirty: before.dirty,
+          changedFiles: before.changedFiles,
+        }
+      : null,
+    theirs: null,
+    review: null,
+    blockedReasons: [],
+  };
+
+  if (!before.available) {
+    return { ...base, status: "blocked", blockedReasons: ["Not a Git repository."], workspace: before };
+  }
+  if (!before.branch) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: ["Detached HEAD — checkout a branch before adopting."],
+      workspace: before,
+    };
+  }
+  if (!targetName || !isSafeBranchName(targetName)) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: ["--adopt requires an existing local branch name."],
+      workspace: before,
+    };
+  }
+  const target = resolveLocalBranch(projectRoot, targetName);
+  if (!target) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [`Local branch "${targetName}" not found.`],
+      workspace: before,
+      availableBranches: before.branches.map((entry) => entry.name),
+    };
+  }
+  if (before.branch === target.name) {
+    return {
+      ...base,
+      status: "noop",
+      theirs: { branch: target.name, commit: target.commit, shortCommit: target.shortCommit },
+      explanation: "Already on that branch.",
+      workspace: before,
+    };
+  }
+
+  base.theirs = { branch: target.name, commit: target.commit, shortCommit: target.shortCommit };
+  const review = buildWorkspaceReview(projectRoot, { theirs: target.name });
+  base.review = {
+    status: review.status,
+    summary: review.summary,
+    files: review.files?.slice(0, 50) || [],
+  };
+
+  if (before.dirty && !force) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [
+        `Working tree is dirty (${before.changedFiles} changed files). Commit/stash first, or pass --force after host consent.`,
+      ],
+      workspace: before,
+    };
+  }
+
+  if (!apply) {
+    return {
+      ...base,
+      status: "ready",
+      explanation: `Ready to merge ${target.name} into ${before.branch}` +
+        (review.summary?.filesChanged
+          ? ` (${review.summary.filesChanged} files, +${review.summary.additions}/-${review.summary.deletions}).`
+          : " (no unique file changes — may still fast-forward/record merge)."),
+      workspace: before,
+    };
+  }
+
+  try {
+    runGit(projectRoot, ["merge", "--no-edit", "--", target.name], { allowFailure: false });
+  } catch (error) {
+    // Leave conflict state visible; agent/host must resolve with plain git.
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [
+        error.message,
+        "If this is a merge conflict, resolve it with git, then commit. Harness does not auto-resolve conflicts.",
+      ],
+      workspace: collectWorkspace(projectRoot),
+    };
+  }
+
+  const after = collectWorkspace(projectRoot);
+  return {
+    ...base,
+    status: "applied",
+    explanation: `Adopted ${target.name} into ${after.branch} @ ${after.shortCommit || after.commit}.`,
+    workspace: after,
+  };
+}
+
+function formatAdoptPlan(plan) {
+  const lines = [
+    `Adopt: ${plan.status}`,
+    `Yours: ${plan.yours?.branch || "—"} @ ${plan.yours?.shortCommit || "—"}`,
+    `Theirs: ${plan.theirs?.branch || "—"} @ ${plan.theirs?.shortCommit || "—"}`,
+  ];
+  if (plan.review?.summary) {
+    lines.push(
+      `Diff: ${plan.review.summary.filesChanged} files · +${plan.review.summary.additions}/-${plan.review.summary.deletions}`,
+    );
+  }
+  if (plan.explanation) lines.push(plan.explanation);
+  for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  if (plan.status === "ready") {
+    lines.push("Apply with: npm run harness -- workspace --adopt <branch> --apply");
+  }
+  if (plan.workspace?.available && plan.status === "applied") {
+    lines.push(formatWorkspace(plan.workspace));
+  }
+  return lines.join("\n");
 }
 
 function resolveLocalBranch(root, branchName) {
@@ -504,13 +808,17 @@ function formatWorkspace(workspace) {
 }
 
 export {
+  buildWorkspaceReview,
   collectGit,
   collectWorkspace,
+  formatAdoptPlan,
   formatCheckoutPlan,
   formatCreatePlan,
   formatWorkspace,
+  formatWorkspaceReview,
   isSafeBranchName,
   listLocalBranches,
+  planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
   resolveLocalBranch,
