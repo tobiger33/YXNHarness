@@ -103,3 +103,10 @@ normal navigation remain available independently.
 The Home rail shares the workbench's expanded sidebar width, gutter and label
 spacing. Hidden workspaces retain their geometry. Home and Workbench fill the
 window; long content scrolls inside the panes.
+
+The built-in example registers selectable headers, text, progress, choice cards,
+form fields and buttons across all of its screens with app-owned stable IDs.
+Select highlights the hovered/chosen element; nested clicks choose the closest
+registered element. Enter/Space also select focused example elements. Interact
+restores normal controls and navigation. This does not implement an inspector
+for arbitrary embedded third-party apps; those still require their opt-in adapter.

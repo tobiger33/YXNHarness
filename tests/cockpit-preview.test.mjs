@@ -24,6 +24,14 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.goto("http://127.0.0.1:8808/#/workspace");
     await page.locator("#workspace-brand[aria-busy=false]").waitFor();
     assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
+    await page.locator("#select-tool").click();
+    await page.locator('[data-demo-element="OnboardingHeading"]').click();
+    assert.equal(await page.locator("#selection-context-name").innerText(), "OnboardingHeading");
+    await page.locator('[data-demo-element="FuturePlanningCard"]').click();
+    assert.equal(await page.locator("#selection-context-name").innerText(), "FuturePlanningCard");
+    assert.equal(await page.locator('input[value="overview"]').isChecked(), true, "selection must not change the radio choice");
+    await page.locator("#selection-context-clear").click();
+    await page.keyboard.press("Escape");
     await page.locator("#inspect-target").click();
     await page.locator('[data-demo-step="details"]').waitFor();
     assert.equal(await page.locator("#context-chips .chip").count(), 0);

@@ -919,8 +919,8 @@ function setTool(on) {
   q("#interact-tool").setAttribute("aria-pressed", String(!on));
   q("#select-tool").classList.toggle("active", on);
   q("#interact-tool").classList.toggle("active", !on);
-  q("#inspect-target").classList.toggle("inspected", on);
-  q("#element-label").hidden = !on;
+  q("#element-label").hidden = true;
+  root.dispatchEvent(new Event("yxn:selection-mode"));
   renderElementSelection();
 }
 q("#select-tool").addEventListener("click", () => setTool(true));
@@ -936,13 +936,7 @@ function renderElementSelection() {
   q("#selection-context-branches").textContent = `${selected.source.branch || "Current preview"} → ${state.workspace?.branch || "Current branch"}`;
   q("#selection-context-route").textContent = `${selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
   q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
-  if (q("#element-actions").hidden) return;
-  const anchor = selectedAnchor.getBoundingClientRect();
-  const surface = q("#app-preview").getBoundingClientRect();
-  const toolbar = q("#element-actions");
-  const left = Math.max(8, Math.min(anchor.left - surface.left, surface.width - toolbar.offsetWidth - 8));
-  toolbar.style.left = `${left}px`;
-  toolbar.style.top = `${Math.max(8, anchor.top - surface.top - toolbar.offsetHeight - 8)}px`;
+
 }
 function selectElement(element, anchor) {
   if (state.selection) state.contexts = state.contexts.filter((entry) => entry !== `${state.selection.id} · ${state.selection.route}`);
@@ -962,6 +956,7 @@ function clearElementSelection() {
   }
   state.selection = null;
   selectedAnchor = null;
+  root.dispatchEvent(new Event("yxn:selection-clear"));
   q("#element-actions").hidden = true;
   renderElementSelection();
   renderChips();

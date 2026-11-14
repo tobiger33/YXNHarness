@@ -114,14 +114,55 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     q("#route").textContent = `example://puls/${name}`;
     root.dataset.previewRoute = `/${name}`;
   }
-  for (const button of demo.querySelectorAll("[data-demo-element]")) {
-    button.addEventListener("click", (event) => {
-      if (!selecting()) return;
-      event.preventDefault();
-      select({ id: button.dataset.demoElement, label: button.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }, button);
-      notify("Element selected. Choose Kommentieren or Übernehmen, or press Escape to interact.");
-    });
+  // The example owns these stable IDs; never infer target app identity from DOM text.
+  let hovered = null;
+  function hover(element) {
+    hovered?.classList.remove("demo-hover");
+    hovered = element;
+    hovered?.classList.add("demo-hover");
   }
+  function choose(element) {
+    for (const selected of demo.querySelectorAll(".demo-selected")) selected.classList.remove("demo-selected");
+    element.classList.add("demo-selected");
+    select({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }, element);
+  }
+  demo.addEventListener("pointerover", (event) => {
+    if (selecting()) hover(event.target.closest("[data-demo-element]"));
+  });
+  demo.addEventListener("pointerleave", () => hover(null));
+  demo.addEventListener("click", (event) => {
+    if (!selecting()) return;
+    const element = event.target.closest("[data-demo-element]");
+    if (!element || !demo.contains(element)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    choose(element);
+  }, true);
+  root.addEventListener("yxn:selection-clear", () => {
+    hover(null);
+    for (const element of demo.querySelectorAll(".demo-selected")) element.classList.remove("demo-selected");
+  });
+  const tabIndices = new Map();
+  root.addEventListener("yxn:selection-mode", () => {
+    hover(null);
+    for (const element of demo.querySelectorAll("[data-demo-element]")) {
+      if (selecting()) {
+        if (!tabIndices.has(element)) tabIndices.set(element, element.getAttribute("tabindex"));
+        if (!element.matches("button,input,select,textarea,a[href]")) element.tabIndex = 0;
+      } else if (tabIndices.has(element)) {
+        const original = tabIndices.get(element);
+        if (original === null) element.removeAttribute("tabindex");
+        else element.setAttribute("tabindex", original);
+      }
+    }
+  });
+  demo.addEventListener("keydown", (event) => {
+    if (!selecting() || !["Enter", " "].includes(event.key)) return;
+    const element = event.target.closest("[data-demo-element]");
+    if (!element) return;
+    event.preventDefault(); event.stopPropagation();
+    choose(element);
+  }, true);
   q("#inspect-target").addEventListener("click", () => { if (!selecting()) step("details"); });
   q("#demo-back").addEventListener("click", () => { if (!selecting()) step("onboarding"); });
   q("#demo-details-form").addEventListener("submit", (event) => {
