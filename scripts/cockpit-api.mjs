@@ -10,6 +10,7 @@ import {
   planWorkspaceAdopt,
 } from "./workspace.mjs";
 import { compareRuns } from "./compare-runs.mjs";
+import { promoteExpectsFromRun } from "./promote.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,6 +142,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
         "GET /api/v1/compare",
+        "GET /api/v1/promote",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
         "GET /api/v1/artifacts/*",
@@ -300,10 +302,11 @@ function apiIndexPayload(projectRoot) {
       adopt: "/api/v1/workspace/adopt",
       runs: "/api/v1/runs",
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
+      promote: "/api/v1/promote?from=last-green",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Adopt is the only write; no remote bind.",
+    note: "Local cockpit UI + API (loopback). Adopt is the only write; promote apply stays on the CLI.",
   };
 }
 
@@ -431,6 +434,20 @@ function createCockpitApi({
           against: searchParams.get("against") || "last-run",
         });
         sendJson(response, report.status === "blocked" ? 400 : 200, report);
+        return;
+      }
+
+      if (pathname === "/api/v1/promote") {
+        // Read-only preview — writing expects stays on the CLI (`promote --apply`).
+        const plan = await promoteExpectsFromRun(projectRoot, {
+          from: searchParams.get("from") || "last-green",
+          out: searchParams.get("out") || null,
+          apply: false,
+          force: false,
+          strict: searchParams.get("strict") === "1",
+          name: searchParams.get("name") || null,
+        });
+        sendJson(response, plan.status === "blocked" ? 400 : 200, plan);
         return;
       }
 

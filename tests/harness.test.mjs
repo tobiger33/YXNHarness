@@ -19,6 +19,7 @@ import {
   loadHostConfig,
   matchesExpected,
   parseArgs,
+  promoteExpectsFromRun,
   setupProject,
   stopChild,
   validateConfig,
@@ -220,6 +221,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     path: null,
     baseline: null,
     against: null,
+    strict: false,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -323,6 +325,14 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     baseline: "last-green",
     against: "last-run",
   });
+  assert.deepEqual(parseArgs(["promote", "--from", "last-green", "--apply", "--force", "--strict"]), {
+    ...base,
+    action: "promote",
+    from: "last-green",
+    apply: true,
+    force: true,
+    strict: true,
+  });
   assert.deepEqual(parseArgs(["serve", "--port", "8791", "--json"]), {
     ...base,
     action: "serve",
@@ -335,7 +345,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, or workspace/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, or promote/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
@@ -345,6 +355,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["compare", "--apply"]), /compare accepts|--baseline|--against|only/);
   assert.throws(() => parseArgs(["handoff", "--baseline", "x"]), /only valid with compare/);
+  assert.throws(() => parseArgs(["compare", "--strict"]), /only valid with promote/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -381,6 +392,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "status"));
     assert.ok(steps.some((step) => step.id === "handoff"));
     assert.ok(steps.some((step) => step.id === "compare"));
+    assert.ok(steps.some((step) => step.id === "promote"));
     assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
@@ -676,6 +688,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.ok(apiIndex.links.review);
     assert.ok(apiIndex.links.adopt);
     assert.ok(apiIndex.links.compare);
+    assert.ok(apiIndex.links.promote);
 
     const reviewMissing = await fetch(`${listening.url}api/v1/workspace/review?ref=main`);
     assert.equal(reviewMissing.status, 400);
@@ -781,6 +794,92 @@ test("compare diffs state and screenshots between two runs", async () => {
 
     const same = await compareRuns(root, { baseline: baselineId, against: baselineId });
     assert.equal(same.status, "equal");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("promote copies after-state from a green run into scenario expects", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-promote-"));
+  try {
+    const runId = "2026-02-01T00-00-00-000Z-1";
+    await mkdir(path.join(root, "scenarios"), { recursive: true });
+    await mkdir(path.join(root, "artifacts", runId, "screenshots"), { recursive: true });
+    await writeFile(path.join(root, "scenarios", "demo.yaml"), [
+      "version: 1",
+      "name: demo",
+      "viewports:",
+      "  - name: desktop",
+      "    width: 1280",
+      "    height: 800",
+      "steps:",
+      "  - name: enter name",
+      "    command: setName",
+      "    payload:",
+      "      value: Alex",
+      "    snapshot: name-entered",
+      "  - name: advance clock",
+      "    clock:",
+      "      advance: 125",
+      "    snapshot: clock-advanced",
+      "",
+    ].join("\n"));
+    await writeFile(path.join(root, "artifacts", runId, "result.json"), JSON.stringify({
+      version: 1,
+      runId,
+      scenario: { name: "demo", path: "scenarios/demo.yaml" },
+      status: "passed",
+      startedAt: "2026-02-01T00:00:00.000Z",
+      finishedAt: "2026-02-01T00:00:01.000Z",
+      durationMs: 1000,
+      counts: { viewports: 1, steps: 2, failures: 0, screenshots: 0 },
+      viewports: [{
+        name: "desktop",
+        status: "passed",
+        steps: [
+          {
+            index: 0,
+            command: "setName",
+            status: "passed",
+            after: { step: "details", values: { name: "Alex" }, canNext: true },
+          },
+          {
+            index: 1,
+            name: "advance clock",
+            status: "passed",
+            clock: { operation: "advance", milliseconds: 125, now: 125 },
+            clockTime: 125,
+            after: { step: "details", values: { name: "Alex" }, canNext: true },
+          },
+        ],
+      }],
+      artifacts: { stateLog: "state.jsonl", appLog: "app.log", screenshots: [], contactSheet: null },
+    }));
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+    }));
+
+    const preview = await promoteExpectsFromRun(root, { from: "last-green", apply: false });
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.changedExpects, 2);
+    assert.equal(preview.changedClocks, 1);
+    assert.equal(preview.scenario.steps[0].expect.values.name, "Alex");
+    assert.equal(preview.scenario.steps[1].expectClock, 125);
+    assert.match(await readFile(path.join(root, "scenarios", "demo.yaml"), "utf8"), /snapshot: name-entered/);
+    assert.doesNotMatch(await readFile(path.join(root, "scenarios", "demo.yaml"), "utf8"), /expect:/);
+
+    const blocked = await promoteExpectsFromRun(root, { from: "last-green", apply: true });
+    assert.equal(blocked.status, "blocked");
+
+    const written = await promoteExpectsFromRun(root, { from: "last-green", apply: true, force: true });
+    assert.equal(written.status, "written");
+    const yamlText = await readFile(path.join(root, "scenarios", "demo.yaml"), "utf8");
+    assert.match(yamlText, /expect:/);
+    assert.match(yamlText, /expectClock: 125/);
+    assert.match(yamlText, /name: Alex/);
+    validateScenario(written.scenario, "scenarios/demo.yaml");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

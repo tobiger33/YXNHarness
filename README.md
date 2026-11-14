@@ -124,6 +124,15 @@ npm run harness -- compare --json
 
 See [`docs/compare.md`](docs/compare.md).
 
+Promote recorded state into scenario expects after a green run:
+
+```sh
+npm run harness -- promote --from last-green --dry-run
+npm run harness -- promote --from last-green --apply
+```
+
+See [`docs/promote.md`](docs/promote.md).
+
 Serve the local cockpit shell plus a loopback-only read API:
 
 ```sh

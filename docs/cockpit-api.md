@@ -33,6 +33,7 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/runs` | Run index (`?refresh=0` to skip rebuild) |
 | GET | `/api/v1/runs/:runId` | One run + `result.json` |
 | GET | `/api/v1/compare` | `?baseline=&against=` — state + screenshot diff |
+| GET | `/api/v1/promote` | `?from=` — preview expect promotion (no write) |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
