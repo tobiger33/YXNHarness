@@ -36,6 +36,21 @@ JSON for agents:
 npm run harness -- attach --dry-run --json
 ```
 
+## Cockpit API
+
+```sh
+npm run harness -- serve
+```
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/v1/attach?until=probe` | Always dry-run preview |
+| POST | `/api/v1/attach` | `{ until?, apply?, yes?, installBrowser?, force?, name?, out?, scenario?, from?, strict?, skipDoctor? }` |
+
+`serve` injects the same `runAttach` path as the CLI. GET never writes; POST requires `apply: true` to write config/scenarios. Chromium install still needs `yes: true` (host consent).
+
+In the Agent panel, the plug icon runs a dry-run attach preview into the chat feed.
+
 ## Flags
 
 | Flag | Role |

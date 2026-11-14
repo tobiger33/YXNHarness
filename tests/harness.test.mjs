@@ -900,6 +900,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
       "POST /api/v1/elements/adopt",
+      "POST /api/v1/attach",
     ]);
     assert.equal(overview.workspace.available, false);
 
@@ -926,7 +927,13 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.ok(apiIndex.links.compare);
     assert.ok(apiIndex.links.promote);
     assert.ok(apiIndex.links.feedback);
+    assert.ok(apiIndex.links.attach);
     assert.ok(apiIndex.links.agent);
+
+    const attachMissing = await fetch(`${listening.url}api/v1/attach`);
+    assert.equal(attachMissing.status, 503);
+    const attachMissingBody = await attachMissing.json();
+    assert.match(attachMissingBody.error || "", /Attach runner is not configured/);
 
     const agent = await fetch(`${listening.url}api/v1/agent`).then((response) => response.json());
     assert.equal(agent.connected, false);
@@ -970,6 +977,77 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
 
     const post = await fetch(`${listening.url}api/v1/overview`, { method: "POST" });
     assert.equal(post.status, 405);
+  } finally {
+    if (api) await api.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cockpit attach API dry-run and apply via injected runner", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-attach-api-"));
+  let api;
+  const calls = [];
+  try {
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify({
+      version: 1,
+      host: { projectLabel: "attach-api", preferredAgent: "cursor" },
+    }));
+    api = createCockpitApi({
+      root,
+      port: 0,
+      host: "127.0.0.1",
+      attachRunner: async (options) => {
+        calls.push(options);
+        return {
+          ok: true,
+          status: options.apply ? "applied" : "ready",
+          until: options.until || "probe",
+          stoppedAt: options.until || "probe",
+          dryRun: !options.apply,
+          explanation: options.apply ? "Attach applied (mock)." : "Attach dry-run (mock).",
+          next: ["npm run harness -- attach --until scaffold --apply"],
+          phases: [],
+        };
+      },
+    });
+    const listening = await api.listen();
+
+    const preview = await fetch(`${listening.url}api/v1/attach?until=probe`).then((response) => {
+      assert.equal(response.status, 200);
+      return response.json();
+    });
+    assert.equal(preview.status, "ready");
+    assert.equal(preview.http.apply, false);
+    assert.deepEqual(preview.phasesAvailable, PHASES);
+    assert.equal(calls.at(-1).apply, false);
+    assert.equal(calls.at(-1).until, "probe");
+    assert.equal(calls.at(-1).yes, false);
+
+    const dryPost = await fetch(`${listening.url}api/v1/attach`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ until: "scaffold", yes: true }),
+    }).then((response) => {
+      assert.equal(response.status, 200);
+      return response.json();
+    });
+    assert.equal(dryPost.status, "ready");
+    assert.equal(calls.at(-1).apply, false);
+    assert.equal(calls.at(-1).until, "scaffold");
+    assert.equal(calls.at(-1).yes, true);
+
+    const applied = await fetch(`${listening.url}api/v1/attach`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ until: "scaffold", apply: true, installBrowser: true }),
+    }).then((response) => {
+      assert.equal(response.status, 200);
+      return response.json();
+    });
+    assert.equal(applied.status, "applied");
+    assert.equal(calls.at(-1).apply, true);
+    assert.equal(calls.at(-1).installBrowser, true);
+    assert.equal(calls.length, 3);
   } finally {
     if (api) await api.close();
     await rm(root, { recursive: true, force: true });

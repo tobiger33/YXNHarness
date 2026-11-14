@@ -12,6 +12,7 @@ import {
 import { compareRuns } from "./compare-runs.mjs";
 import { promoteExpectsFromRun } from "./promote.mjs";
 import { planElementAdopt } from "./element-adopt.mjs";
+import { PHASES as ATTACH_PHASES } from "./attach.mjs";
 import {
   agentPanelState,
   bundleFeedback,
@@ -146,6 +147,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
         "POST /api/v1/elements/adopt",
+        "POST /api/v1/attach",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -164,6 +166,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
         "POST /api/v1/elements/adopt",
+        "GET /api/v1/attach",
+        "POST /api/v1/attach",
         "GET /api/v1/agent",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
@@ -318,6 +322,7 @@ function apiIndexPayload(projectRoot) {
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
       "POST /api/v1/elements/adopt",
+      "POST /api/v1/attach",
     ],
     root: projectRoot,
     links: {
@@ -333,12 +338,52 @@ function apiIndexPayload(projectRoot) {
       promote: "/api/v1/promote?from=last-green",
       feedback: "/api/v1/feedback",
       elementsAdopt: "/api/v1/elements/adopt",
+      attach: "/api/v1/attach",
       agent: "/api/v1/agent",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: workspace/file adopt, feedback, element adopt. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: workspace/file adopt, feedback, element adopt, attach. No remote agent required.",
   };
+}
+
+function parseBooleanFlag(value, fallback = false) {
+  if (value == null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function parseAttachOptions(input = {}, { allowApply = false } = {}) {
+  const apply = allowApply ? parseBooleanFlag(input.apply, false) : false;
+  return {
+    until: input.until != null && String(input.until).trim() ? String(input.until).trim() : null,
+    apply,
+    yes: parseBooleanFlag(input.yes, false),
+    force: parseBooleanFlag(input.force, false),
+    installBrowser: parseBooleanFlag(input.installBrowser ?? input.install_browser, false),
+    name: input.name != null && String(input.name).trim() ? String(input.name).trim() : null,
+    out: input.out != null && String(input.out).trim() ? String(input.out).trim() : null,
+    scenario: input.scenario != null && String(input.scenario).trim()
+      ? String(input.scenario).trim()
+      : (input.scenarioFile != null && String(input.scenarioFile).trim() ? String(input.scenarioFile).trim() : null),
+    from: input.from != null && String(input.from).trim() ? String(input.from).trim() : "last-green",
+    strict: parseBooleanFlag(input.strict, false),
+    skipDoctor: parseBooleanFlag(input.skipDoctor ?? input.skip_doctor, false),
+  };
+}
+
+async function executeAttach(attachRunner, options) {
+  if (typeof attachRunner !== "function") {
+    const error = new Error(
+      "Attach runner is not configured. Start the cockpit with `npm run harness -- serve` (not a bare createCockpitApi without attachRunner).",
+    );
+    error.statusCode = 503;
+    throw error;
+  }
+  return attachRunner(options);
 }
 
 async function readJsonBody(request) {
@@ -360,6 +405,7 @@ function createCockpitApi({
   port = DEFAULT_PORT,
   host = "127.0.0.1",
   uiRoot = DEFAULT_UI_ROOT,
+  attachRunner = null,
 } = {}) {
   const projectRoot = path.resolve(root);
   const staticRoot = path.resolve(uiRoot);
@@ -430,6 +476,40 @@ function createCockpitApi({
           note: body.note ?? body.comment ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/attach" && method === "GET") {
+        const options = parseAttachOptions({
+          until: searchParams.get("until"),
+          yes: searchParams.get("yes"),
+          force: searchParams.get("force"),
+          installBrowser: searchParams.get("installBrowser") ?? searchParams.get("install_browser"),
+          name: searchParams.get("name"),
+          out: searchParams.get("out"),
+          scenario: searchParams.get("scenario"),
+          from: searchParams.get("from"),
+          strict: searchParams.get("strict"),
+          skipDoctor: searchParams.get("skipDoctor") ?? searchParams.get("skip_doctor"),
+          apply: false,
+        }, { allowApply: false });
+        const plan = await executeAttach(attachRunner, options);
+        sendJson(response, plan.status === "blocked" || plan.ok === false ? 409 : 200, {
+          ...plan,
+          phasesAvailable: ATTACH_PHASES,
+          http: { method: "GET", apply: false, note: "GET is always dry-run. POST with apply:true to write." },
+        });
+        return;
+      }
+
+      if (pathname === "/api/v1/attach" && method === "POST") {
+        const body = await readJsonBody(request);
+        const options = parseAttachOptions(body, { allowApply: true });
+        const plan = await executeAttach(attachRunner, options);
+        sendJson(response, plan.status === "blocked" || plan.ok === false ? 409 : 200, {
+          ...plan,
+          phasesAvailable: ATTACH_PHASES,
+        });
         return;
       }
 

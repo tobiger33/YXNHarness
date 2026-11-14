@@ -138,7 +138,8 @@ Adopt body modes:
 - `paths: ["a.js"]` (or `path`) → file adopt into the index
 - `path` + `hunks: [1,3]` → hunk adopt into the index
 
-Adopt is the only write route on `serve` for git. Checkout/create stay on the CLI.
+Adopt is the only git write route on `serve`. Checkout/create stay on the CLI.
+Other local writes (feedback, element adopt, attach) are documented in [`cockpit-api.md`](cockpit-api.md).
 
 ## What this is not
 
