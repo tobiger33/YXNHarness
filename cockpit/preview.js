@@ -21,6 +21,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   let previewOrigin = null;
   let sessionId = null;
   let inspectorReady = false;
+  let stylePreviewReady = false;
   let loadingTimer;
   let timeout;
   let loadVersion = 0;
@@ -93,6 +94,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     if (message.type === "ready" || message.type === "capabilities") {
       const caps = message.payload?.capabilities || message.payload || {};
       inspectorReady = caps.selection === true;
+      stylePreviewReady = caps.stylePreview === true;
       setSelectAvailability(
         inspectorReady,
         "This app did not advertise selection. Navigation stays in Interact.",
@@ -101,6 +103,13 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
         notify?.("Live inspector ready — Select is available.");
         if (selecting()) postToFrame("set-mode", { mode: "select" });
       }
+      return;
+    }
+    if (message.type === "preview-style-changed") {
+      root.dataset.proposalPreviewActive = message.payload?.active ? "1" : "0";
+      root.dispatchEvent(new CustomEvent("yxn:proposal-preview", {
+        detail: { active: Boolean(message.payload?.active) },
+      }));
       return;
     }
     if (message.type === "route-changed" && typeof message.payload?.route === "string") {
@@ -158,6 +167,8 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     previewOrigin = null;
     sessionId = null;
     inspectorReady = false;
+    stylePreviewReady = false;
+    root.dataset.proposalPreviewActive = "0";
     ++loadVersion;
     clearTimeout(loadingTimer); clearTimeout(timeout);
     frame.removeAttribute("src"); frame.hidden = true;
@@ -370,4 +381,22 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     const saved = localStorage.getItem(PREVIEW_KEY);
     if (saved) load(validUrl(saved));
   } catch { /* Ignore obsolete preview URLs. */ }
+
+  return {
+    isLive: () => Boolean(previewUrl) && !frame.hidden,
+    canPreviewStyle: () => Boolean(previewUrl) && stylePreviewReady,
+    previewStyle(css) {
+      if (!previewUrl || !stylePreviewReady) return false;
+      const text = String(css || "");
+      if (!text || text.length > 24_000) return false;
+      postToFrame("preview-style", { css: text });
+      return true;
+    },
+    clearPreviewStyle() {
+      if (!previewUrl) return false;
+      postToFrame("clear-preview-style", {});
+      root.dataset.proposalPreviewActive = "0";
+      return true;
+    },
+  };
 }

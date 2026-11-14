@@ -10,8 +10,14 @@ export const PREVIEW_MESSAGE_TYPES = Object.freeze([
   "route-changed",
   "element-selected",
   "selection-cleared",
+  "preview-style",
+  "clear-preview-style",
+  "preview-style-changed",
   "error",
 ]);
+
+/** Soft cap for temporary CSS previews injected into the live app. */
+export const PREVIEW_STYLE_MAX_CHARS = 24_000;
 
 const MAX_JSON_CHARS = 32_000;
 

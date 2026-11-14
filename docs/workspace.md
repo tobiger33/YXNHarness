@@ -1,11 +1,11 @@
-# Workspace (local Git context)
+# Workspace (native YXN Git loop)
 
-Branches are the isolated workspaces for harness work. The harness exposes a
-local inventory plus **host-controlled** create/switch/review/adopt for local
-branches.
+Branches are the isolated workspaces for harness work — including branches from
+multiple people. YXN owns the native loop: create → checkout → review → commit
+→ push → merge-propose → host/leader Accept → fetch.
 
-Fetch and push stay outside this CLI — use the coding agent's Git tools or plain
-`git` for remotes.
+Remote-tracking refs (e.g. `origin/alice/hero`) appear after fetch and can be
+reviewed, tracked locally, or proposed for merge without leaving YXN.
 
 ## Inventory
 
@@ -29,15 +29,16 @@ npm run harness -- workspace --create feature/demo --start main --apply
 Creates a new local branch from `HEAD` (or `--start <existing-local-branch>`) and
 switches onto it. Refuses if the name already exists.
 
-## Checkout (local only)
+## Checkout (local or remote-tracking)
 
 ```sh
 npm run harness -- workspace --checkout feature/demo --dry-run
 npm run harness -- workspace --checkout feature/demo --apply
+npm run harness -- workspace --checkout origin/alice/hero --apply
 ```
 
-Preview by default (`--dry-run` or omit `--apply`). `--apply` runs
-`git switch` onto an **existing local** branch.
+Preview by default (`--dry-run` or omit `--apply`). Local refs use `git switch`.
+Remote-tracking refs create/track a local branch (`git switch -c … --track`).
 
 ## Review (diff, GitHub-style)
 
@@ -129,11 +130,18 @@ npm run harness -- serve
 | --- | --- | --- |
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
-| POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — loopback only |
-| POST | `/api/v1/workspace/approve` | `{ ref, apply?, force?, note? }` — design approve (whole-branch adopt) |
+| POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — local or remote-tracking ref |
+| POST | `/api/v1/workspace/checkout` | `{ ref\|branch, apply?, force? }` — switch local or track remote |
+| POST | `/api/v1/workspace/create` | `{ branch, from?, apply?, force? }` — create + switch |
+| POST | `/api/v1/workspace/approve` | `{ ref, apply?, force?, note?, role? }` — design approve (propose+Accept; YXN summary) |
+| POST | `/api/v1/workspace/commit` | `{ message\|summary, apply?, paths? }` — commit dirty tree; always appends `Summary written by YXN.` |
+| GET | `/api/v1/workspace/merge-proposals` | `?status=pending` — list merge proposals + host/leader policy |
+| POST | `/api/v1/workspace/merge-proposals` | `{ ref, summary?, apply? }` — queue merge for host/leader Accept |
+| POST | `/api/v1/workspace/merge-proposals/:id/accept` | `{ role?: "host"\|"leader", apply? }` — Accept gated merge |
+| POST | `/api/v1/workspace/merge-proposals/:id/reject` | `{ role?, reason? }` — Reject gated merge |
 | POST | `/api/v1/workspace/push` | `{ apply?, remote?, force? }` — push current branch (force = force-with-lease) |
 | POST | `/api/v1/workspace/fetch` | `{ apply?, remote?, prune? }` — on-demand remote refresh |
-| GET | `/api/v1/overview` | Includes a short `workspace` summary |
+| GET | `/api/v1/overview` | Includes a short `workspace` summary + `host.mergePolicy` |
 
 Adopt body modes:
 
@@ -141,18 +149,58 @@ Adopt body modes:
 - `paths: ["a.js"]` (or `path`) → file adopt into the index
 - `path` + `hunks: [1,3]` → hunk adopt into the index
 
+## Commit (YXN summary)
+
+```sh
+npm run harness -- workspace --commit --note "Hero spacing" --dry-run
+npm run harness -- workspace --commit --note "Hero spacing" --apply
+```
+
+The harness always appends `Summary written by YXN.` to the commit message.
+
+## Merge proposals (host / leader Accept)
+
+Merges proposed through YXN do not run until the host — or a configured
+`access.leader` — Accepts. Share links never grant merge.
+
+```sh
+npm run harness -- workspace --merge-propose feature/demo --note "Ship onboarding" --apply
+npm run harness -- workspace --merge-accept merge-<id> --role host
+# with harness.host.json access.leader.label set:
+npm run harness -- workspace --merge-accept merge-<id> --role leader
+```
+
+Optional host config:
+
+```json
+{
+  "access": {
+    "visibility": "private",
+    "shareLinkGrant": "view",
+    "mergeAuthority": "leader",
+    "leader": { "label": "Design lead" }
+  }
+}
+```
+
+`mergeAuthority: "leader"` marks the leader as preferred Approver; the host can
+always Accept. Without `leader`, only the host can Accept.
+
 ## Design approve
 
-Whole-branch host approval with a fixed semantic note. No push.
+Whole-branch host/leader Accept with a YXN-attributed summary. No push.
+Creates a merge proposal and Accepts it in one step (Design passt).
 
 ```sh
 npm run harness -- workspace --approve feature/demo --dry-run
 npm run harness -- workspace --approve feature/demo --apply
 npm run harness -- workspace --approve feature/demo --apply --note "Design approved · keep copy"
+npm run harness -- workspace --approve feature/demo --apply --role leader
 ```
 
-Cockpit Changes: **Design passt** → `POST /api/v1/workspace/approve`. After apply,
-the UI offers **Push** then **Remotes aktualisieren**.
+Cockpit Changes: **Design passt** → `POST /api/v1/workspace/approve`.
+**Merge vorschlagen** queues a pending proposal for host/leader Accept.
+After Accept, the UI offers **Push** then **Remotes aktualisieren**.
 
 ## Push (publish current branch)
 
@@ -179,8 +227,10 @@ npm run harness -- workspace --fetch --remote origin --apply
 Updates remote-tracking refs only (optional prune). No checkout, merge, or push.
 Prefer on-demand fetch after a known push — see [`share.md`](share.md).
 
-Adopt, approve, push, and fetch are the git write routes on `serve`. Checkout/create stay on the CLI.
-Other local writes (feedback, element adopt, attach, share) are documented in [`cockpit-api.md`](cockpit-api.md).
+Checkout, create, adopt, approve, commit, merge-propose/accept, push, and fetch
+are all available on `serve` so multi-person branch work stays inside YXN.
+Other local writes (feedback, element adopt, attach, share) are documented in
+[`cockpit-api.md`](cockpit-api.md).
 
 ## What this is not
 

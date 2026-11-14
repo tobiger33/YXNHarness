@@ -57,7 +57,20 @@
       "properties": {
         "visibility": { "type": "string", "enum": ["private", "restricted", "public"] },
         "shareLinkGrant": { "type": "string", "enum": ["none", "view", "comment"] },
-        "mergeAuthority": { "type": "string", "enum": ["host"] }
+        "mergeAuthority": {
+          "type": "string",
+          "enum": ["host", "leader"],
+          "description": "Who holds merge Accept rights. host always may Accept. leader may Accept only when access.leader.label is set; mergeAuthority=leader marks the leader as the preferred Approver."
+        },
+        "leader": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Optional merge Approver besides the host. When set, leader may Accept merge proposals.",
+          "properties": {
+            "label": { "type": "string", "minLength": 1, "maxLength": 120 }
+          },
+          "required": ["label"]
+        }
       }
     },
     "moderation": {
@@ -72,7 +85,7 @@
     "agent": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional connected agent adapter. null/omitted keeps solo local feedback. \"local\" enables the built-in task packager. A relative .mjs path loads a project module exporting createAdapter().",
+      "description": "Optional connected agent adapter. null/omitted keeps solo local feedback. \"local\" enables the built-in task packager. \"workspace-edit\" proposes reversible visual file changes for host Accept. A relative .mjs path loads a project module exporting createAdapter().",
       "properties": {
         "adapter": {
           "type": ["string", "null"],

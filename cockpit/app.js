@@ -28,6 +28,8 @@ const state = {
   agent: null,
   review: null,
   activity: [],
+  mergeProposals: [],
+  mergePolicy: null,
 };
 
 let panels = {
@@ -125,14 +127,16 @@ function persistUi() {
   }));
 }
 
-function toast(text) {
+function toast(text, { soft = false } = {}) {
   const notice = q("#notice");
   notice.textContent = text;
   notice.hidden = false;
+  notice.classList.toggle("notice-soft", soft);
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.hidden = true;
-  }, 4200);
+    notice.classList.remove("notice-soft");
+  }, soft ? 2200 : 4200);
 }
 
 function icons() {
@@ -275,8 +279,64 @@ function pushActivity(text) {
 function renderActivity() {
   q("#activity-count").textContent = String(state.activity.length);
   q("#activity-panel").innerHTML = state.activity.length
-    ? state.activity.map((item) => `<div>✓ ${escapeHtml(item.text)} <span>${escapeHtml(item.stamp)}</span></div>`).join("")
-    : `<div>No activity yet <span>—</span></div>`;
+    ? state.activity.map((item) => `<div class="activity-line"><span>${escapeHtml(item.text)}</span> <span>${escapeHtml(item.stamp)}</span></div>`).join("")
+    : `<div class="activity-line"><span>No activity yet</span> <span>—</span></div>`;
+}
+
+/** Quiet Cursor-style agent timeline lines (Thought / Exploring / Ran / Read). */
+function appendAgentTimeline(host, events = [], { skipTypes = new Set() } = {}) {
+  if (!host || !events.length) return;
+  const reuse = host.classList?.contains("agent-timeline");
+  const timeline = reuse ? host : document.createElement("div");
+  if (!reuse) timeline.className = "agent-timeline";
+  let wrote = 0;
+  let lastKey = "";
+  for (const event of events) {
+    if (!event || skipTypes.has(event.type)) continue;
+    let verb = "";
+    let meta = "";
+    if (event.type === "received" || event.type === "reading-context") {
+      verb = "Thought";
+      meta = "briefly";
+    } else if (event.type === "reading-files") {
+      verb = "Exploring";
+      meta = "";
+    } else if (event.type === "wrote-task") {
+      verb = "Ran";
+      meta = "Packaged coding-agent task";
+    } else if (event.type === "wrote-feedback") {
+      verb = "Ran";
+      meta = "Saved feedback";
+    } else if (event.type === "attachments") {
+      verb = "Read";
+      meta = "attachments";
+    } else if (event.type === "proposed-file-change") {
+      // Edited rows live on the proposal card — skip duplicate timeline noise.
+      continue;
+    } else if (event.type === "awaiting-approval" || event.type === "applied-file-change" || event.type === "rejected-file-change" || event.type === "awaiting-host") {
+      continue;
+    } else if (event.type === "blocked") {
+      verb = "Blocked";
+      meta = event.summary || "";
+    } else if (event.summary) {
+      verb = "Ran";
+      meta = event.summary;
+    } else {
+      continue;
+    }
+    const key = `${verb}\0${meta}`;
+    if (key === lastKey) continue;
+    lastKey = key;
+    const line = document.createElement("div");
+    line.className = "agent-timeline-line";
+    line.innerHTML = meta
+      ? `<span class="tl-verb">${escapeHtml(verb)}</span> <span class="tl-meta">${escapeHtml(meta)}</span>`
+      : `<span class="tl-verb">${escapeHtml(verb)}</span>`;
+    timeline.append(line);
+    wrote += 1;
+  }
+  if (wrote && !reuse) host.append(timeline);
+  return wrote;
 }
 
 function setView(view, save = true) {
@@ -360,6 +420,260 @@ function syncAgentControls() {
   reasoningSelect.hidden = connected && caps.reasoningEffort === false;
 }
 
+function extractCssAccent(cssText) {
+  const match = String(cssText || "").match(/--accent\s*:\s*([^;]+)/i);
+  return match ? match[1].trim() : null;
+}
+
+let previewApi = null;
+
+function clearProposalLivePreview() {
+  previewApi?.clearPreviewStyle?.();
+  qa(".proposal-card.is-previewing").forEach((card) => {
+    card.classList.remove("is-previewing");
+    const toggle = card.querySelector("[data-proposal-preview]");
+    if (toggle) {
+      toggle.textContent = "Preview";
+      toggle.dataset.active = "0";
+    }
+    const hint = card.querySelector(".proposal-preview-hint");
+    if (hint) hint.hidden = true;
+  });
+}
+
+function ensureProposalHint(card, { beforeAccent = null, afterAccent = null } = {}) {
+  let hint = card.querySelector(".proposal-preview-hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.className = "proposal-preview-hint";
+    hint.hidden = true;
+    const actions = card.querySelector(".proposal-actions");
+    card.insertBefore(hint, actions || null);
+  }
+  const swatches = beforeAccent && afterAccent
+    ? `<span class="proposal-swatch" style="background:${escapeHtml(beforeAccent)}"></span><span aria-hidden="true">→</span><span class="proposal-swatch" style="background:${escapeHtml(afterAccent)}"></span>`
+    : "";
+  hint.innerHTML = `${swatches}<span class="proposal-hint-text"></span>`;
+  return hint;
+}
+
+async function showProposalPreview(proposalId, card) {
+  // One live preview at a time — quiet strip, not stacked mock cards.
+  qa(".proposal-card.is-previewing").forEach((other) => {
+    if (other === card) return;
+    other.classList.remove("is-previewing");
+    const otherToggle = other.querySelector("[data-proposal-preview]");
+    if (otherToggle) {
+      otherToggle.textContent = "Preview";
+      otherToggle.dataset.active = "0";
+    }
+    const otherHint = other.querySelector(".proposal-preview-hint");
+    if (otherHint) otherHint.hidden = true;
+  });
+  previewApi?.clearPreviewStyle?.();
+
+  const detail = await apiGet(`/api/v1/agent/proposals/${encodeURIComponent(proposalId)}?bodies=1`);
+  const proposal = detail.proposal;
+  if (!proposal) throw new Error("Proposal not found");
+  const cssFile = (proposal.files || []).find((file) => /\.css$/i.test(file.path) && file.after);
+  const beforeAccent = cssFile ? extractCssAccent(cssFile.before) : null;
+  const afterAccent = cssFile ? extractCssAccent(cssFile.after) : null;
+  const hint = ensureProposalHint(card, { beforeAccent, afterAccent });
+  const hintText = hint.querySelector(".proposal-hint-text");
+
+  let live = false;
+  if (cssFile && previewApi?.canPreviewStyle?.()) {
+    live = previewApi.previewStyle(cssFile.after);
+  }
+  if (live) {
+    if (state.view !== "preview") setView("preview");
+    hintText.textContent = "Live in Preview";
+    toast("Previewing in the app", { soft: true });
+  } else if (cssFile) {
+    hintText.textContent = previewApi?.isLive?.()
+      ? "App preview unavailable — color only"
+      : "Open the app in Preview for a live look";
+  } else {
+    hintText.textContent = "No visual preview for this file";
+  }
+  hint.hidden = false;
+  card.classList.add("is-previewing");
+  const toggle = card.querySelector("[data-proposal-preview]");
+  if (toggle) {
+    toggle.textContent = "Hide";
+    toggle.dataset.active = "1";
+  }
+}
+
+function renderProposalDiff(diffText, { maxLines = 48 } = {}) {
+  const rows = String(diffText || "").split("\n");
+  const visible = [];
+  for (const line of rows) {
+    if (!line && visible.length === 0) continue;
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+    visible.push(line);
+    if (visible.length >= maxLines) break;
+  }
+  const truncated = rows.filter((line) => !(line.startsWith("--- ") || line.startsWith("+++ "))).length > visible.length;
+  const html = visible.map((line) => {
+    let cls = "";
+    if (line.startsWith("+") && !line.startsWith("+++")) cls = "added";
+    else if (line.startsWith("-") && !line.startsWith("---")) cls = "removed";
+    else if (line.startsWith("@@")) cls = "hunk";
+    return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
+  }).join("");
+  return `${html}${truncated ? `<div class="hunk"><span></span>…</div>` : ""}`;
+}
+
+function appendProposalCard(host, proposal, { focus = false } = {}) {
+  if (!proposal?.proposalId || !host) return null;
+  const existing = host.querySelector(`[data-proposal-id="${CSS.escape(proposal.proposalId)}"]`);
+  if (existing) {
+    if (focus) existing.scrollIntoView({ block: "nearest" });
+    return existing;
+  }
+  const card = document.createElement("div");
+  card.className = "proposal-card";
+  card.dataset.proposalId = proposal.proposalId;
+  // Quiet Cursor-style: skip loud summary; Edited rows carry the story.
+
+  for (const file of proposal.files || []) {
+    const add = Number(file.additions) || 0;
+    const del = Number(file.deletions) || 0;
+    const fileBlock = document.createElement("details");
+    fileBlock.className = "proposal-edit";
+    // New / focused proposals open so the host sees the diff; otherwise start collapsed.
+    fileBlock.open = Boolean(focus) || proposal.status === "pending";
+    const head = document.createElement("summary");
+    head.className = "proposal-edit-summary";
+    const label = document.createElement("span");
+    label.className = "proposal-edit-label";
+    label.textContent = "Edited";
+    const path = document.createElement("span");
+    path.className = "proposal-edit-path";
+    path.textContent = file.path || "—";
+    const stats = document.createElement("span");
+    stats.className = "proposal-edit-stats";
+    stats.innerHTML = `<b>+${add}</b> <em>−${del}</em>`;
+    const chevron = document.createElement("i");
+    chevron.className = "proposal-edit-chevron";
+    chevron.setAttribute("data-lucide", "chevron-right");
+    chevron.setAttribute("aria-hidden", "true");
+    head.append(label, path, stats, chevron);
+    fileBlock.append(head);
+    if (file.diff) {
+      const code = document.createElement("div");
+      code.className = "code proposal-diff-code";
+      code.innerHTML = renderProposalDiff(file.diff);
+      fileBlock.append(code);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "proposal-edit-empty";
+      empty.textContent = "No textual patch for this file.";
+      fileBlock.append(empty);
+    }
+    card.append(fileBlock);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "proposal-actions";
+  if (proposal.status === "pending") {
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "button ghost";
+    previewBtn.dataset.proposalPreview = "1";
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = async () => {
+      if (previewBtn.dataset.active === "1") {
+        clearProposalLivePreview();
+        return;
+      }
+      try {
+        await showProposalPreview(proposal.proposalId, card);
+      } catch (error) {
+        toast(error.message || "Preview failed", { soft: true });
+      }
+    };
+    const accept = document.createElement("button");
+    accept.type = "button";
+    accept.className = "button";
+    accept.dataset.proposalAccept = "1";
+    accept.textContent = "Accept";
+    accept.onclick = () => decideProposal(proposal.proposalId, "accept", card);
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "button ghost";
+    reject.dataset.proposalReject = "1";
+    reject.textContent = "Reject";
+    reject.onclick = () => decideProposal(proposal.proposalId, "reject", card);
+    actions.append(previewBtn, accept, reject);
+  } else {
+    const status = document.createElement("span");
+    status.className = "proposal-status";
+    status.textContent = proposal.status === "accepted" ? "Applied" : (proposal.status || "done");
+    actions.append(status);
+  }
+  card.append(actions);
+  host.append(card);
+  icons();
+  if (focus) card.scrollIntoView({ block: "nearest" });
+  return card;
+}
+
+async function decideProposal(proposalId, decision, card) {
+  if (busy) return;
+  busy = true;
+  const accept = card?.querySelector("[data-proposal-accept]");
+  const reject = card?.querySelector("[data-proposal-reject]");
+  const previewBtn = card?.querySelector("[data-proposal-preview]");
+  if (accept) accept.disabled = true;
+  if (reject) reject.disabled = true;
+  if (previewBtn) previewBtn.disabled = true;
+  try {
+    const path = decision === "accept"
+      ? `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/accept`
+      : `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/reject`;
+    const plan = await apiPost(path, decision === "accept" ? {} : { reason: "Host rejected from cockpit" });
+    if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Proposal blocked");
+    clearProposalLivePreview();
+    if (card) {
+      card.querySelector(".proposal-preview-hint")?.remove();
+      const actions = card.querySelector(".proposal-actions");
+      if (actions) {
+        actions.replaceChildren();
+        const status = document.createElement("span");
+        status.className = "proposal-status";
+        status.textContent = decision === "accept" ? "Applied" : "Rejected";
+        actions.append(status);
+      }
+    }
+    pushActivity(decision === "accept" ? "Change applied" : "Change rejected");
+    toast(decision === "accept" ? "Applied" : "Rejected", { soft: true });
+    try {
+      const agent = await apiGet("/api/v1/agent");
+      state.agent = agent;
+      syncAgentControls();
+    } catch {
+      // Keep prior agent state.
+    }
+  } catch (error) {
+    if (accept) accept.disabled = false;
+    if (reject) reject.disabled = false;
+    if (previewBtn) previewBtn.disabled = false;
+    toast(error.message || "Could not update proposal", { soft: true });
+  } finally {
+    busy = false;
+  }
+}
+
+function renderPendingProposals(feed = q("#chat-feed")) {
+  const proposals = state.agent?.proposals || [];
+  if (!proposals.length || !state.agent?.capabilities?.fileChanges) return;
+  for (const proposal of proposals.slice(0, 6)) {
+    appendProposalCard(feed, proposal);
+  }
+}
+
 function setMode(mode, save = true) {
   state.mode = mode;
   qa("[data-mode]").forEach((button) => {
@@ -372,8 +686,7 @@ function setMode(mode, save = true) {
     q("#composer-note").textContent = "External · copy a structured task for your coding agent";
     q("#chat-input").placeholder = "Describe a task for your external agent…";
   } else if (connected) {
-    const name = state.agent?.adapter?.displayName || "Connected agent";
-    q("#composer-note").textContent = `${name} · turns stay provider-neutral`;
+    q("#composer-note").textContent = "Connected · describe a change";
     q("#chat-input").placeholder = "Ask for a change, or describe an idea…";
   } else {
     q("#composer-note").textContent = "No agent adapter connected · messages become local feedback";
@@ -386,28 +699,125 @@ function setMode(mode, save = true) {
 function renderBranches() {
   const list = q("#branches-list");
   const workspace = state.workspace;
+  const modeLabel = q("#workspace-mode-label");
   if (!workspace?.available) {
     list.innerHTML = `<p class="view-note">Not a Git workspace.</p>`;
     q("#branch-count").textContent = "0";
+    if (modeLabel) modeLabel.textContent = "No Git yet";
     return;
   }
   const branches = workspace.branches || [];
-  q("#branch-count").textContent = String(branches.length);
-  list.innerHTML = branches.map((entry) => {
+  const remotes = (workspace.remoteBranches || []).filter((entry) => {
+    const localName = String(entry.name || "").split("/").slice(1).join("/");
+    return localName && !branches.some((branch) => branch.name === localName);
+  });
+  q("#branch-count").textContent = String(branches.length + remotes.length);
+  if (modeLabel) {
+    modeLabel.textContent = (workspace.remotes || []).length
+      ? "Multi-branch · YXN"
+      : "Local · YXN";
+  }
+  const localHtml = branches.map((entry) => {
     const selected = state.reviewBranch === entry.name || (!state.reviewBranch && entry.current);
     const meta = entry.current ? "current" : (entry.shortCommit || "");
     return `
-      <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}">
+      <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}" data-kind="local" title="Review · double-click to checkout">
         <i data-lucide="git-branch" aria-hidden="true"></i>
         <span>${escapeHtml(entry.name)}</span>
         ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
       </button>
     `;
   }).join("");
+  const remoteHtml = remotes.length
+    ? `<div class="section-name" style="padding-top:10px">Remote</div>${remotes.map((entry) => {
+      const selected = state.reviewBranch === entry.name;
+      return `
+        <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}" data-kind="remote" title="Review remote · double-click to track locally">
+          <i data-lucide="cloud" aria-hidden="true"></i>
+          <span>${escapeHtml(entry.name)}</span>
+          ${entry.shortCommit ? `<small>${escapeHtml(entry.shortCommit)}</small>` : ""}
+        </button>
+      `;
+    }).join("")}`
+    : "";
+  list.innerHTML = (localHtml + remoteHtml) || `<p class="view-note">No branches yet.</p>`;
   list.querySelectorAll("[data-branch]").forEach((button) => {
     button.addEventListener("click", () => selectBranch(button.dataset.branch));
+    button.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      checkoutBranch(button.dataset.branch);
+    });
   });
   icons();
+}
+
+async function checkoutBranch(name) {
+  if (!name) return;
+  try {
+    const preview = await apiPost("/api/v1/workspace/checkout", { ref: name, apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Checkout blocked");
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Already on that branch.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/checkout", { ref: name, apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Checkout failed");
+    toast(applied.explanation || `Checked out ${name}.`);
+    pushActivity(`Checkout · ${applied.to?.branch || name}`);
+    state.reviewBranch = null;
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function createBranch() {
+  const name = window.prompt("New branch name");
+  if (!name?.trim()) return;
+  try {
+    const preview = await apiPost("/api/v1/workspace/create", { branch: name.trim(), apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Create blocked");
+    const applied = await apiPost("/api/v1/workspace/create", { branch: name.trim(), apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Create failed");
+    toast(applied.explanation || `Created ${name.trim()}.`);
+    pushActivity(`Created branch · ${name.trim()}`);
+    state.reviewBranch = null;
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function fetchRemotes() {
+  const button = q("#workspace-fetch");
+  if (button) button.disabled = true;
+  try {
+    const preview = await apiPost("/api/v1/workspace/fetch", { apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Fetch blocked");
+    const applied = await apiPost("/api/v1/workspace/fetch", { apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Fetch failed");
+    toast(applied.explanation || "Remotes refreshed.");
+    pushActivity("Fetched remotes");
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function pushCurrentBranch() {
+  const preview = await apiPost("/api/v1/workspace/push", { apply: false });
+  if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
+  if (preview.status === "noop") {
+    toast(preview.explanation || "Nothing to push.");
+    return preview;
+  }
+  const applied = await apiPost("/api/v1/workspace/push", { apply: true });
+  if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
+  toast(applied.explanation || "Pushed current branch.");
+  pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+  return applied;
 }
 
 function renderRecent() {
@@ -554,9 +964,12 @@ async function loadChanges() {
         return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
       }).join("");
       filesHtml.push(`
-        <details class="file-diff"${index === 0 ? " open" : ""}>
-          <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
-            <span>+${file.additions} −${file.deletions}</span>
+        <details class="file-diff proposal-edit"${index === 0 ? " open" : ""}>
+          <summary class="proposal-edit-summary">
+            <span class="proposal-edit-label">Edited</span>
+            <span class="proposal-edit-path">${escapeHtml(file.path)}</span>
+            <span class="proposal-edit-stats"><b>+${file.additions}</b> <em>−${file.deletions}</em></span>
+            <i class="proposal-edit-chevron" data-lucide="chevron-right" aria-hidden="true"></i>
             <button type="button" class="ghost file-adopt" data-adopt-path="${escapeHtml(file.path)}">Datei übernehmen</button>
           </summary>
           <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
@@ -575,7 +988,7 @@ async function loadChanges() {
     `;
     state.review = review;
     actions.hidden = false;
-    q("#changes-note").textContent = "Real git review · Design passt = approve+merge · Übernehmen = merge · Datei = one path.";
+    q("#changes-note").textContent = "Real git review · Design passt = host Accept · Merge vorschlagen = wait for host/leader · Übernehmen = merge · Datei = one path.";
     const next = q("#approve-next");
     if (next) next.hidden = true;
     qa("[data-adopt-path]").forEach((button) => {
@@ -598,11 +1011,148 @@ async function loadChanges() {
 }
 
 function setChangesBusy(busy) {
-  for (const id of ["#apply", "#approve-design", "#discard"]) {
+  for (const id of ["#apply", "#approve-design", "#propose-merge", "#discard", "#commit-apply", "#commit-push"]) {
     const button = q(id);
     if (button) button.disabled = busy;
   }
   qa("[data-adopt-path]").forEach((button) => { button.disabled = busy; });
+  qa("[data-merge-accept], [data-merge-reject]").forEach((button) => { button.disabled = busy; });
+}
+
+function renderCommitPanel() {
+  const panel = q("#commit-panel");
+  if (!panel) return;
+  const dirty = Boolean(state.workspace?.dirty);
+  panel.hidden = !dirty;
+  if (!dirty) return;
+  const attribution = q("#commit-attribution");
+  if (attribution) {
+    attribution.textContent = "YXN adds “Summary written by YXN.” to the commit message.";
+  }
+}
+
+function renderMergeProposals() {
+  const panel = q("#merge-proposals-panel");
+  const list = q("#merge-proposals-list");
+  const note = q("#merge-policy-note");
+  const roleSelect = q("#merge-role");
+  if (!panel || !list) return;
+  const pending = (state.mergeProposals || []).filter((item) => item.status === "pending");
+  const policy = state.mergePolicy;
+  if (note) {
+    const leader = policy?.leader?.label;
+    note.textContent = leader
+      ? `Host or leader (${leader}) must Accept. Share links never grant merge.`
+      : "Host must Accept. Set access.leader in harness.host.json to allow a leader Approver.";
+  }
+  if (roleSelect) {
+    const leaderOption = roleSelect.querySelector('option[value="leader"]');
+    if (leaderOption) leaderOption.disabled = !policy?.canLeaderAccept;
+    if (!policy?.canLeaderAccept && roleSelect.value === "leader") roleSelect.value = "host";
+  }
+  panel.hidden = pending.length === 0;
+  list.innerHTML = pending.map((proposal) => `
+    <div class="extra-row merge-proposal-card" data-merge-id="${escapeHtml(proposal.proposalId)}">
+      <strong>${escapeHtml(proposal.theirs || "branch")}</strong>
+      <small>${escapeHtml((proposal.summary || "").split("\n")[0] || "Merge")} · ${escapeHtml(proposal.attribution || "Summary written by YXN.")}</small>
+      <div class="change-actions" style="margin-top:8px">
+        <button type="button" class="button primary" data-merge-accept="${escapeHtml(proposal.proposalId)}">Accept merge</button>
+        <button type="button" class="button" data-merge-reject="${escapeHtml(proposal.proposalId)}">Reject</button>
+      </div>
+    </div>
+  `).join("");
+  qa("[data-merge-accept]").forEach((button) => {
+    button.onclick = () => decideMergeProposal(button.getAttribute("data-merge-accept"), "accept");
+  });
+  qa("[data-merge-reject]").forEach((button) => {
+    button.onclick = () => decideMergeProposal(button.getAttribute("data-merge-reject"), "reject");
+  });
+}
+
+async function decideMergeProposal(proposalId, decision) {
+  if (!proposalId) return;
+  const role = q("#merge-role")?.value === "leader" ? "leader" : "host";
+  setChangesBusy(true);
+  try {
+    const path = decision === "accept"
+      ? `/api/v1/workspace/merge-proposals/${encodeURIComponent(proposalId)}/accept`
+      : `/api/v1/workspace/merge-proposals/${encodeURIComponent(proposalId)}/reject`;
+    const plan = await apiPost(path, { role, apply: true });
+    if (plan.status === "blocked" || plan.ok === false) {
+      throw new Error(plan.blockedReasons?.join("; ") || plan.error || "Merge decision failed");
+    }
+    toast(plan.explanation || (decision === "accept" ? "Merge accepted." : "Merge rejected."));
+    pushActivity(`${decision === "accept" ? "Accepted" : "Rejected"} merge · ${proposalId}`);
+    if (decision === "accept") showApproveNext(plan);
+    await refresh();
+    setView("changes");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
+}
+
+async function proposeMerge() {
+  const theirs = state.reviewBranch;
+  if (!theirs || !state.review) return;
+  const note = q("#adopt-note")?.value?.trim() || "Merge proposed";
+  setChangesBusy(true);
+  try {
+    const plan = await apiPost("/api/v1/workspace/merge-proposals", {
+      ref: theirs,
+      summary: note,
+      apply: true,
+    });
+    if (plan.status === "blocked") {
+      throw new Error(plan.blockedReasons?.join("; ") || "Merge propose blocked");
+    }
+    if (plan.status === "noop") {
+      toast(plan.explanation || "Nothing to propose.");
+      return;
+    }
+    toast(plan.explanation || `Merge proposed · ${theirs}`);
+    pushActivity(`Merge proposed · ${theirs}`);
+    await refresh();
+    setView("changes");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
+}
+
+async function commitWorkspace({ push = false } = {}) {
+  const message = q("#commit-summary")?.value?.trim();
+  if (!message) {
+    toast("Write a short commit summary first.");
+    return;
+  }
+  setChangesBusy(true);
+  try {
+    const preview = await apiPost("/api/v1/workspace/commit", { message, apply: false });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Commit blocked");
+    }
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Nothing to commit.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/commit", { message, apply: true });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Commit failed");
+    }
+    toast(applied.explanation || "Committed. Summary written by YXN.");
+    pushActivity(`Committed · ${applied.workspace?.shortCommit || "ok"}`);
+    const summary = q("#commit-summary");
+    if (summary) summary.value = "";
+    if (push) await pushCurrentBranch();
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
 }
 
 function showApproveNext(plan) {
@@ -656,12 +1206,14 @@ async function approveDesign() {
   if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true") return;
   if (q("#approve-design")?.disabled) return;
   const note = q("#adopt-note")?.value?.trim() || "Design approved";
+  const role = q("#merge-role")?.value === "leader" ? "leader" : "host";
   setChangesBusy(true);
   try {
     const preview = await apiPost("/api/v1/workspace/approve", {
       ref: theirs,
       apply: false,
       note,
+      role,
     });
     if (preview.status === "blocked") {
       throw new Error(preview.blockedReasons?.join("; ") || "Design approve blocked");
@@ -674,6 +1226,7 @@ async function approveDesign() {
       ref: theirs,
       apply: true,
       note,
+      role,
     });
     if (applied.status === "blocked") {
       throw new Error(applied.blockedReasons?.join("; ") || "Design approve failed");
@@ -729,6 +1282,7 @@ function renderChatSeed() {
     hint.innerHTML = `<p>Send a message to create local feedback, or switch to External to copy a task for your coding agent. Preview/Compare demos are layout examples — Changes uses real git reviews.</p>`;
     feed.append(hint);
   }
+  renderPendingProposals(feed);
   icons();
 }
 
@@ -766,15 +1320,15 @@ async function sendMessage() {
   const answer = document.createElement("div");
   answer.className = "agent-response";
   const thought = document.createElement("div");
-  thought.className = "thought";
-  thought.textContent = state.mode === "external" ? "Preparing external task…" : "Saving local feedback…";
+  thought.className = "agent-timeline";
+  thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">${state.mode === "external" ? "Ran" : "Thought"}</span> <span class="tl-meta">${state.mode === "external" ? "Preparing external task…" : "briefly"}</span></div>`;
   answer.append(thought);
   feed.append(answer);
 
   try {
     let attachmentIds = [];
     if (attachments.names().length) {
-      thought.textContent = "Uploading images…";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Uploading images…</span></div>`;
       attachmentIds = await attachments.ensureUploaded();
     }
     const imageAttachments = attachments.metadata();
@@ -831,14 +1385,14 @@ async function sendMessage() {
         toast("Task selected. Copy with ⌘C / Ctrl+C.");
       };
       answer.append(copy);
-      thought.textContent = "External task ready";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">External task ready</span></div>`;
       pushActivity("Prepared external agent task");
       await attachments.clear();
     } else if (state.agent?.connected) {
       if (attachmentIds.length && state.agent.capabilities?.images === false) {
         throw new Error("Connected adapter does not support images. Remove attachments or switch adapters.");
       }
-      thought.textContent = "Sending turn to connected adapter…";
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Thought</span> <span class="tl-meta">briefly</span></div>`;
       const plan = await apiPost("/api/v1/agent/turns", {
         body: requestBody,
         apply: true,
@@ -858,25 +1412,29 @@ async function sendMessage() {
         sessionId: state.agent.session?.sessionId || undefined,
       });
       if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Agent turn blocked");
-      const p = document.createElement("p");
-      p.textContent = plan.reply?.body || plan.explanation || `Turn ${plan.turnId || ""} accepted.`;
-      answer.append(p);
-      if (plan.taskPath) {
-        const meta = document.createElement("div");
-        meta.className = "agent-event";
-        meta.textContent = `✓ Task package · ${plan.taskPath}`;
-        answer.append(meta);
+      thought.replaceChildren();
+      appendAgentTimeline(thought, plan.activity || []);
+      const hasProposals = Array.isArray(plan.proposals) && plan.proposals.length > 0;
+      for (const proposal of plan.proposals || []) {
+        appendProposalCard(answer, proposal, { focus: true });
       }
-      if (plan.thread?.threadId) {
+      if (plan.reply?.body) {
+        const p = document.createElement("p");
+        p.className = "agent-reply";
+        p.textContent = plan.reply.body;
+        answer.append(p);
+      }
+      if (!hasProposals && plan.taskPath) {
         const meta = document.createElement("div");
-        meta.className = "agent-event";
-        meta.textContent = `✓ Feedback ${plan.thread.threadId}`;
+        meta.className = "agent-timeline-line";
+        meta.innerHTML = `<span class="tl-verb">Ran</span> <span class="tl-meta">${escapeHtml(plan.taskPath)}</span>`;
         answer.append(meta);
       }
       for (const event of (plan.activity || []).slice(-4)) {
-        pushActivity(event.summary || event.type);
+        if (event.type === "proposed-file-change" || event.type === "applied-file-change" || event.type === "rejected-file-change") {
+          pushActivity(event.summary || event.type);
+        }
       }
-      thought.textContent = plan.adapter?.displayName ? `${plan.adapter.displayName} · ${plan.status}` : `Adapter · ${plan.status}`;
       await attachments.clear();
       await refreshFeedbackOnly();
       try {
@@ -908,10 +1466,11 @@ async function sendMessage() {
       } catch (error) {
         throw new Error(`${saved} of ${groups.size} page groups saved. ${error.message}`);
       }
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Saved element request</span></div>`;
       const p = document.createElement("p");
+      p.className = "agent-reply";
       p.textContent = "Element request saved as feedback with its source and target context. No code was merged and no agent has run yet.";
       answer.append(p);
-      thought.textContent = "Element request saved";
       pushActivity(`Element request · ${selection.id}`);
       await attachments.clear();
       await refreshFeedbackOnly();
@@ -931,27 +1490,23 @@ async function sendMessage() {
         commit: state.workspace?.commit || null,
         attachmentIds: attachmentIds.length ? attachmentIds : undefined,
       });
+      thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Ran</span> <span class="tl-meta">Saved feedback</span></div>`;
       const p = document.createElement("p");
+      p.className = "agent-reply";
       p.textContent = `Saved as feedback ${plan.thread?.threadId || ""}. No coding agent is connected — bundle threads into a handoff when ready.`;
       answer.append(p);
-      const actions = document.createElement("div");
-      actions.className = "agent-event";
-      actions.textContent = attachmentIds.length
-        ? `✓ Local feedback written · ${attachmentIds.length} image(s) · comments are context`
-        : "✓ Local feedback written · comments are context";
-      answer.append(actions);
       if (plan.thread?.threadId) {
         const review = document.createElement("button"); review.type = "button"; review.className = "button"; review.textContent = "Review / edit comment";
         review.onclick = () => elementDetails.openThread(plan.thread.threadId); answer.append(review);
       }
-      thought.textContent = "Feedback saved";
       pushActivity("Created feedback thread");
       await attachments.clear();
       await refreshFeedbackOnly();
     }
   } catch (error) {
-    thought.textContent = "Failed";
+    thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Blocked</span> <span class="tl-meta">${escapeHtml(error.message || "Failed")}</span></div>`;
     const p = document.createElement("p");
+    p.className = "agent-reply";
     p.textContent = error.message;
     answer.append(p);
   } finally {
@@ -1013,12 +1568,13 @@ async function refresh() {
   q("#workspace-brand").setAttribute("aria-busy", "true");
   q("#refresh").disabled = true;
   try {
-    const [workspace, runsPayload, handoffsPayload, feedback, agent] = await Promise.all([
+    const [workspace, runsPayload, handoffsPayload, feedback, agent, merges] = await Promise.all([
       apiGet("/api/v1/workspace"),
       apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
       apiGet("/api/v1/feedback"),
       apiGet("/api/v1/agent"),
+      apiGet("/api/v1/workspace/merge-proposals?status=pending").catch(() => ({ proposals: [], policy: null })),
     ]);
     if (!operation.current()) return false;
     state.workspace = workspace;
@@ -1028,6 +1584,8 @@ async function refresh() {
     state.handoffs = handoffsPayload.handoffs || [];
     state.feedback = feedback.threads || [];
     state.agent = agent;
+    state.mergeProposals = merges.proposals || [];
+    state.mergePolicy = merges.policy || null;
     q("#project-name").textContent = (workspace.root || "workspace").split(/[/\\]/).filter(Boolean).pop() || "workspace";
     q("#active-branch").textContent = workspace.branch || "(detached)";
     q("#chat-branch").textContent = workspace.branch || "—";
@@ -1046,6 +1604,8 @@ async function refresh() {
     renderRecent();
     renderCompareSources();
     renderChatSeed();
+    renderCommitPanel();
+    renderMergeProposals();
     setMode(state.mode, false);
     pushActivity("Workspace refreshed");
     icons();
@@ -1275,7 +1835,7 @@ const elementDetails = mountElementDetails(root, {
 
 const attachments = mountAttachments(root, toast);
 const home = mountHome(root, toast);
-mountPreview(root, {
+previewApi = mountPreview(root, {
   selecting: () => selecting,
   select: selectElement,
   interact: () => setTool(false),
@@ -1295,6 +1855,11 @@ q("#activity-toggle").addEventListener("click", () => {
 });
 q("#apply").addEventListener("click", () => adoptSelected());
 q("#approve-design")?.addEventListener("click", () => approveDesign());
+q("#propose-merge")?.addEventListener("click", () => proposeMerge());
+q("#commit-apply")?.addEventListener("click", () => commitWorkspace());
+q("#commit-push")?.addEventListener("click", () => commitWorkspace({ push: true }));
+q("#workspace-fetch")?.addEventListener("click", () => fetchRemotes());
+q("#workspace-create")?.addEventListener("click", () => createBranch());
 q("#approve-next-dismiss")?.addEventListener("click", () => {
   const panel = q("#approve-next");
   if (panel) panel.hidden = true;
@@ -1303,20 +1868,7 @@ q("#approve-push")?.addEventListener("click", async () => {
   const button = q("#approve-push");
   if (button) button.disabled = true;
   try {
-    const preview = await apiPost("/api/v1/workspace/push", { apply: false });
-    if (preview.status === "blocked") {
-      throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
-    }
-    if (preview.status === "noop") {
-      toast(preview.explanation || "Nothing to push.");
-      return;
-    }
-    const applied = await apiPost("/api/v1/workspace/push", { apply: true });
-    if (applied.status === "blocked") {
-      throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
-    }
-    toast(applied.explanation || "Pushed current branch.");
-    pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+    await pushCurrentBranch();
     await refresh();
   } catch (error) {
     toast(error.message);
@@ -1324,27 +1876,7 @@ q("#approve-push")?.addEventListener("click", async () => {
     if (button) button.disabled = false;
   }
 });
-q("#approve-fetch")?.addEventListener("click", async () => {
-  const button = q("#approve-fetch");
-  if (button) button.disabled = true;
-  try {
-    const preview = await apiPost("/api/v1/workspace/fetch", { apply: false });
-    if (preview.status === "blocked") {
-      throw new Error(preview.blockedReasons?.join("; ") || "Fetch blocked");
-    }
-    const applied = await apiPost("/api/v1/workspace/fetch", { apply: true });
-    if (applied.status === "blocked") {
-      throw new Error(applied.blockedReasons?.join("; ") || "Fetch failed");
-    }
-    toast(applied.explanation || "Remotes refreshed.");
-    pushActivity("Fetched remotes after design approve");
-    await refresh();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    if (button) button.disabled = false;
-  }
-});
+q("#approve-fetch")?.addEventListener("click", () => fetchRemotes());
 q("#discard").addEventListener("click", () => {
   state.reviewBranch = null;
   const next = q("#approve-next");

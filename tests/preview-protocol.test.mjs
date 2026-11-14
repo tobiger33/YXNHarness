@@ -13,15 +13,21 @@ test("preview protocol builds and parses session-bound envelopes", () => {
   const sessionId = createSessionId();
   assert.ok(sessionId.length >= 8);
   const message = createPreviewMessage(sessionId, "ready", {
-    capabilities: { selection: true },
+    capabilities: { selection: true, stylePreview: true },
   });
   assert.equal(message.protocol, PREVIEW_PROTOCOL);
   assert.equal(message.version, 1);
   const parsed = parsePreviewMessage(message, { sessionId });
   assert.equal(parsed.type, "ready");
   assert.equal(parsed.payload.capabilities.selection, true);
+  assert.equal(parsed.payload.capabilities.stylePreview, true);
   assert.equal(parsePreviewMessage(message, { sessionId: "other-session-id-xxxx" }), null);
   assert.equal(parsePreviewMessage({ ...message, protocol: "nope" }), null);
+
+  const style = createPreviewMessage(sessionId, "preview-style", { css: ":root{--accent:#085c8f;}" });
+  assert.equal(parsePreviewMessage(style, { sessionId }).type, "preview-style");
+  const cleared = createPreviewMessage(sessionId, "clear-preview-style");
+  assert.equal(parsePreviewMessage(cleared, { sessionId }).type, "clear-preview-style");
 });
 
 test("withPreviewSession injects harness and parent origin params", () => {

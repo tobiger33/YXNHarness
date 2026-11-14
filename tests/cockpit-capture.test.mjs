@@ -94,7 +94,7 @@ test("Capture stores only the project region and the image reopens", async (t) =
     await page.locator('[data-mode="connected"]').click();
     await page.locator("#chat-input").fill("Keep the screenshot dimensions with this feedback.");
     await page.locator(".send").click();
-    await page.getByText("Feedback saved", { exact: true }).waitFor();
+    await page.getByText("Saved feedback", { exact: true }).waitFor();
     assert.equal(feedback.appState.screenshotAttachments[0].image.width, image.width);
     if (captured) assert.equal(feedback.appState.screenshotAttachments[0].viewport.width, stored.capture.viewport.width);
     else assert.equal(feedback.appState.screenshotAttachments[0].viewport, null);

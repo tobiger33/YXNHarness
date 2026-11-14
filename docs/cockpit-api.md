@@ -29,8 +29,15 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/host-config` | `harness.host.json` (or missing) |
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
-| POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
-| POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"? }` — design approve (whole-branch; default note Design approved) |
+| POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — local or remote-tracking merge / file / hunk |
+| POST | `/api/v1/workspace/checkout` | `{ "ref"\|"branch", "apply"?, "force"? }` — switch local or track remote |
+| POST | `/api/v1/workspace/create` | `{ "branch", "from"?, "apply"?, "force"? }` — create + switch |
+| POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"?, "role"? }` — design approve (propose+Accept; YXN summary) |
+| POST | `/api/v1/workspace/commit` | `{ "message"\|"summary", "apply"?, "paths"? }` — commit; appends `Summary written by YXN.` |
+| GET | `/api/v1/workspace/merge-proposals` | `?status=` — pending merge proposals + host/leader policy |
+| POST | `/api/v1/workspace/merge-proposals` | `{ "ref", "summary"?, "apply"? }` — queue merge for host/leader Accept |
+| POST | `/api/v1/workspace/merge-proposals/:id/accept` | `{ "role"?: "host"\|"leader", "apply"? }` — Accept gated merge |
+| POST | `/api/v1/workspace/merge-proposals/:id/reject` | `{ "role"?, "reason"? }` — Reject gated merge |
 | POST | `/api/v1/workspace/push` | `{ "apply"?, "remote"?, "force"? }` — push current branch (`force` → `--force-with-lease`) |
 | POST | `/api/v1/workspace/fetch` | `{ "apply"?, "remote"?, "prune"? }` — on-demand `git fetch` (remote-tracking only) |
 | GET | `/api/v1/share` | List local share invites |
@@ -56,6 +63,10 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/agent/sessions` | Adapter sessions |
 | POST | `/api/v1/agent/sessions` | Start adapter session |
 | POST | `/api/v1/agent/turns` | Submit turn to connected adapter |
+| GET | `/api/v1/agent/proposals` | List file-change proposals (`?status=`) |
+| GET | `/api/v1/agent/proposals/:id` | Proposal detail + diffs |
+| POST | `/api/v1/agent/proposals/:id/accept` | Host Accept → write proposed files |
+| POST | `/api/v1/agent/proposals/:id/reject` | Host Reject |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
@@ -69,14 +80,21 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 - Right Agent: Connected/External, chat/feedback, model + reasoning, composer
 - Panel widths persist in `localStorage`; double-click a splitter to reset
 
-**Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
-`/api/v1/workspace/adopt`; **Design passt** POSTs
-`/api/v1/workspace/approve` then offers **Push** (`/workspace/push`) and
-**Remotes aktualisieren** (`/workspace/fetch`). Composer messages become local
+**Changes** loads a real 3-dot branch review (local or remote-tracking).
+Sidebar **Fetch** / **New branch**, double-click to checkout/track. **Übernehmen**
+POSTs `/api/v1/workspace/adopt`; **Merge vorschlagen** queues
+`/api/v1/workspace/merge-proposals`; **Design passt** POSTs
+`/api/v1/workspace/approve` (propose + host/leader Accept) then offers **Push**
+and **Remotes aktualisieren**. Dirty trees show **Commit** / **Commit & Push**
+with YXN summary attribution. Pending merges wait for host or leader Accept.
+Multi-person branch work stays inside this native YXN loop.
+Composer messages become local
 feedback when no agent adapter is connected; with `agent.adapter` set they POST
-`/api/v1/agent/turns`. The Agent plug control GETs `/api/v1/attach` for a
-dry-run attach preview. Preview/Compare demos are layout examples only;
-attach/probe use the real project when configured.
+`/api/v1/agent/turns`. File-change adapters (`workspace-edit`) return proposals
+the host Accepts or Rejects via `/api/v1/agent/proposals/:id/*`. The Agent plug
+control GETs `/api/v1/attach` for a dry-run attach preview. Preview/Compare
+demos are layout examples only; attach/probe use the real project when
+configured.
 
 See also [`feedback.md`](feedback.md), [`agent-adapter.md`](agent-adapter.md),
 [`workspace.md`](workspace.md), [`share.md`](share.md),
