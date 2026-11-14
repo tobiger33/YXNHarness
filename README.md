@@ -59,9 +59,12 @@ captured PNG frames are byte-identical.
 
 ## Control contract
 
-The app must opt in with `?harness=1` or `window.__HARNESS_ENABLED__ = true`
-before exposing `window.__harness`. The runner does not inspect the DOM to
-infer product state. See [`docs/control-convention.md`](docs/control-convention.md).
+The semantic contract is language-neutral (state / commands / clock). On the
+web, the app must opt in with `?harness=1` or `window.__HARNESS_ENABLED__ = true`
+before exposing `window.__harness`. Swift and other languages use the same
+shape via planned runners — see [`docs/platforms.md`](docs/platforms.md) and
+[`docs/control-convention.md`](docs/control-convention.md). The runner does not
+inspect rendered UI trees to infer product state.
 
 ## Use with an existing project
 
@@ -161,9 +164,12 @@ Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockp
 ## Attach to an existing repo
 
 Coding agents attach YXNHarness to arbitrary existing projects (no required
-app layout). Use [`docs/attach.md`](docs/attach.md) for the one-command loop,
-[`docs/attach-existing.md`](docs/attach-existing.md) for the agent playbook,
-and the stand-in fixture [`examples/foreign-booking`](examples/foreign-booking).
+app layout or language). Use [`docs/attach.md`](docs/attach.md) for the
+one-command loop, [`docs/platforms.md`](docs/platforms.md) for the runner
+matrix (web ready; Swift/macOS planned), [`docs/attach-existing.md`](docs/attach-existing.md)
+for the agent playbook, and fixtures
+[`examples/foreign-booking`](examples/foreign-booking) (web) /
+[`examples/swift-control-surface`](examples/swift-control-surface) (Swift shape).
 
 ## Principles
 

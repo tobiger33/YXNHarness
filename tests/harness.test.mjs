@@ -1285,7 +1285,9 @@ test("doctor marks plain existing web apps as agent-attachable", async () => {
   assert.deepEqual(report.project.commands.start, ["npm", "run", "dev"]);
   assert.equal(report.agentAttach.mode, "existing-project");
   assert.equal(report.agentAttach.attachable, true);
+  assert.equal(report.agentAttach.runner, "web-browser");
   assert.ok(report.agentAttach.docs.includes("docs/attach-existing.md"));
+  assert.ok(report.agentAttach.docs.includes("docs/platforms.md"));
   assert.match(report.agentAttach.note, /coding agent performs attach/i);
 
   const steps = explainNextSteps({
@@ -1299,5 +1301,24 @@ test("doctor marks plain existing web apps as agent-attachable", async () => {
   const control = steps.find((step) => step.id === "control-surface");
   assert.ok(control);
   assert.match(control.why, /AGENT TASK/);
+  assert.match(control.why, /platforms\.md|Swift|HarnessControlling/i);
   assert.ok(Array.isArray(control.agentChecklist) && control.agentChecklist.length >= 3);
+});
+
+test("doctor detects Swift projects as planned macos runner, not attachable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-swift-"));
+  try {
+    await writeFile(path.join(root, "Package.swift"), "// swift-tools-version: 5.9\n");
+    await writeFile(path.join(root, "App.swift"), "protocol HarnessControlling {}\n");
+    const report = await inspectProject(root);
+    assert.ok(report.project.languageMarkers.includes("Swift"));
+    assert.equal(report.project.platform, "macos");
+    assert.equal(report.agentAttach.runner, "macos-swift");
+    assert.equal(report.agentAttach.attachable, false);
+    assert.equal(report.agentAttach.plannedOnly, true);
+    assert.equal(report.harness.controlSurface.status, "reference-found");
+    assert.ok(report.warnings.some((warning) => /planned/i.test(warning)));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

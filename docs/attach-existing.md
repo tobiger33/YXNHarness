@@ -79,6 +79,10 @@ practice the attach loop before touching a host production repo.
 
 ## Not yet agent-automated
 
-Electron / native Mac / Expo-device launchers need future adapters. Prefer the
-web surface when one exists (e.g. Expo web). Ask the host which surface to
+Electron / native Mac (Swift) / iOS / Android / Expo-device launchers are
+**planned** runners — see [`platforms.md`](platforms.md). Prefer the web
+surface when one exists (e.g. Expo web, Flutter web). Implement the semantic
+control contract in the app language now (Swift shape:
+[`examples/swift-control-surface`](../examples/swift-control-surface)); do not
+claim browser attach for a native-only surface. Ask the host which surface to
 target when unclear.

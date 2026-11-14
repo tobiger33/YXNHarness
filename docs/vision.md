@@ -36,8 +36,10 @@ providers, inspect internal plumbing, or manually prepare app state.
   permissions, and merge policy are explicit. A share link never silently
   becomes a code-writing grant. The project host controls merge authority.
 - **All visual platforms are a long-term goal.** Web is the simplest first
-  adapter. Responsive mobile web, React Native, native mobile, desktop, and
-  animation editors need their own preview and control adapters.
+  adapter. Responsive mobile web, React Native, native mobile (Swift / Kotlin),
+  desktop, and animation editors need their own preview and control adapters.
+  The semantic control contract is language-neutral; runners are declared ready
+  or planned so attach stays honest ([`platforms.md`](platforms.md)).
 
 ## Quality bar
 
