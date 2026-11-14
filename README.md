@@ -65,7 +65,15 @@ infer product state. See [`docs/control-convention.md`](docs/control-convention.
 
 ## Use with an existing project
 
-Host decides; the trusted coding agent explains and executes:
+Host decides; the trusted coding agent explains and executes. Prefer the
+one-command loop:
+
+```sh
+npm run harness -- attach --dry-run
+npm run harness -- attach --until scaffold --apply --yes
+```
+
+Or step through the same APIs individually:
 
 ```sh
 npm run harness -- doctor --root /path/to/project
@@ -78,11 +86,11 @@ npm run harness -- scaffold --root /path/to/project --dry-run
 npm run harness -- scaffold --root /path/to/project --apply
 ```
 
+`attach` chains doctor → setup → probe → scaffold (optional run/promote).
 `setup --apply` writes only a missing `harness.config.json`. Browser install
-requires `--yes` after the host consents. `probe` prints live commands/state;
-`scaffold` turns them into a draft scenario to review before running. If the
-doctor reports a missing control surface, implement it through the target app's
-native APIs. See [`docs/project-setup.md`](docs/project-setup.md).
+requires `--yes` after the host consents. If the doctor reports a missing
+control surface, implement it through the target app's native APIs. See
+[`docs/attach.md`](docs/attach.md) and [`docs/project-setup.md`](docs/project-setup.md).
 
 ## Cockpit foundation (local)
 
@@ -153,8 +161,9 @@ Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockp
 ## Attach to an existing repo
 
 Coding agents attach YXNHarness to arbitrary existing projects (no required
-app layout). See [`docs/attach-existing.md`](docs/attach-existing.md) and the
-stand-in fixture [`examples/foreign-booking`](examples/foreign-booking).
+app layout). Use [`docs/attach.md`](docs/attach.md) for the one-command loop,
+[`docs/attach-existing.md`](docs/attach-existing.md) for the agent playbook,
+and the stand-in fixture [`examples/foreign-booking`](examples/foreign-booking).
 
 ## Principles
 

@@ -25,6 +25,8 @@ import {
   bundleFeedback,
   listFeedback,
   agentPanelState,
+  runAttach,
+  formatAttachPlan,
   setupProject,
   stopChild,
   validateConfig,
@@ -33,6 +35,7 @@ import {
   writeRunIndex,
   writeScaffoldScenario,
 } from "../scripts/harness.mjs";
+import { normalizeUntil, PHASES } from "../scripts/attach.mjs";
 import { chromiumStatus } from "../scripts/browser-setup.mjs";
 import { defaultHostConfig, validateHostConfig } from "../scripts/host-config.mjs";
 import {
@@ -238,6 +241,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     bundle: null,
     resolve: false,
     reopen: false,
+    until: null,
+    scenarioFile: null,
+    skipDoctor: false,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -370,13 +376,28 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     json: true,
     port: 8791,
   });
+  assert.deepEqual(parseArgs(["attach", "--until", "scaffold", "--apply", "--yes", "--skip-doctor"]), {
+    ...base,
+    action: "attach",
+    until: "scaffold",
+    apply: true,
+    yes: true,
+    skipDoctor: true,
+  });
+  assert.deepEqual(parseArgs(["attach", "--dry-run", "--scenario", "scenarios/smoke.yaml", "--name", "smoke"]), {
+    ...base,
+    action: "attach",
+    dryRun: true,
+    scenarioFile: "scenarios/smoke.yaml",
+    name: "smoke",
+  });
   assert.throws(() => parseArgs(["run", "--dry-run"]), /scenario YAML path/);
   assert.throws(() => parseArgs(["doctor", "--apply"]), /read-only|mutating/);
   assert.throws(() => parseArgs(["setup", "--apply", "--dry-run"]), /cannot be used together/);
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, or feedback/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, feedback, or attach/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
@@ -386,7 +407,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["compare", "--apply"]), /compare accepts|--baseline|--against|only/);
   assert.throws(() => parseArgs(["handoff", "--baseline", "x"]), /only valid with compare/);
-  assert.throws(() => parseArgs(["compare", "--strict"]), /only valid with promote/);
+  assert.throws(() => parseArgs(["compare", "--strict"]), /only valid with promote or attach/);
+  assert.throws(() => parseArgs(["doctor", "--until", "probe"]), /only valid with attach/);
+  assert.throws(() => parseArgs(["attach", "--checkout", "feature/x"]), /attach accepts/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -416,6 +439,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     const report = await inspectProject(root);
     const steps = explainNextSteps(report);
     assert.equal(steps[0].id, "config");
+    assert.ok(steps.some((step) => step.id === "attach"));
     assert.ok(steps.some((step) => step.id === "browser"));
     assert.ok(steps.some((step) => step.id === "probe"));
     assert.ok(steps.some((step) => step.id === "scaffold"));
@@ -427,6 +451,80 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "feedback"));
     assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("attach until defaults and phase list", () => {
+  assert.equal(normalizeUntil(null, { apply: false }), "probe");
+  assert.equal(normalizeUntil(null, { apply: true }), "scaffold");
+  assert.equal(normalizeUntil("run", { apply: true }), "run");
+  assert.throws(() => normalizeUntil("nope", { apply: false }), /--until must be one of/);
+  assert.deepEqual(PHASES, ["doctor", "setup", "browser", "probe", "scaffold", "run", "promote"]);
+});
+
+test("attach dry-run stops before probe when config is missing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-attach-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "attach-demo",
+      scripts: { dev: "node server.mjs" },
+    }));
+    let probed = false;
+    const plan = await runAttach(root, {
+      apply: false,
+      probeApp: async () => {
+        probed = true;
+        return { ok: true, status: "ready", harness: { version: 1, commands: [{ name: "noop" }], state: { ok: true } } };
+      },
+      runScenario: async () => {
+        throw new Error("runScenario should not run in dry-run");
+      },
+      loadJson: async () => ({ version: 1, app: { start: ["npm", "run", "dev"], url: "http://127.0.0.1:4173/" } }),
+      validateConfig: (value) => value,
+      loadScenario: async () => ({}),
+      validateScenario: (value) => value,
+    });
+    assert.equal(plan.ok, true);
+    assert.equal(plan.until, "probe");
+    assert.equal(plan.stoppedAt, "setup");
+    assert.equal(plan.mode, "dry-run");
+    assert.equal(plan.phases.probe.status, "skipped");
+    assert.equal(probed, false);
+    assert.match(formatAttachPlan(plan), /Attach: ready/);
+    await assert.rejects(() => readFile(path.join(root, "harness.config.json")));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("attach blocks when probe reports missing harness", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-attach-probe-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "attach-probe-fail",
+      scripts: { start: "node -e \"require('http').createServer((_,r)=>r.end('ok')).listen(4173)\"" },
+    }));
+    await writeFile(path.join(root, "harness.config.json"), JSON.stringify({
+      version: 1,
+      app: { start: ["node", "-e", "setInterval(()=>{},1000)"], url: "http://127.0.0.1:4173/" },
+    }));
+    const plan = await runAttach(root, {
+      until: "probe",
+      apply: true,
+      yes: true,
+      skipDoctor: true,
+      probeApp: async () => ({ ok: false, status: "blocked", error: "window.__harness missing" }),
+      runScenario: async () => ({ status: "failed" }),
+      loadJson: async (filePath) => JSON.parse(await readFile(filePath, "utf8")),
+      validateConfig: (value) => value,
+      loadScenario: async () => ({}),
+      validateScenario: (value) => value,
+    });
+    assert.equal(plan.ok, false);
+    assert.equal(plan.stoppedAt, "probe");
+    assert.match(plan.blockedReasons.join(" "), /__harness/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

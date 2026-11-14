@@ -23,6 +23,16 @@ Make visual runs possible on a repo that was never started for YXNHarness:
 
 ## Procedure
 
+Prefer the one-command loop ([`attach.md`](attach.md)):
+
+```sh
+npm run harness -- attach --root /path/to/existing-app --dry-run --json
+# Show the host the plan. Fix start URL if needed, then:
+npm run harness -- attach --root /path/to/existing-app --until scaffold --apply --yes
+```
+
+Or step through the same APIs:
+
 ```sh
 # From the YXNHarness checkout (or a path that can run the harness CLI):
 npm run harness -- doctor --root /path/to/existing-app --json
