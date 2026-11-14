@@ -1,6 +1,6 @@
 # Visual feedback → agent → review
 
-Status: UI preparation implemented; live inspector and attachment transport pending.
+Status: UI preparation, live inspector, and attachment transport implemented; connected agent adapter still pending.
 Owner split: UI/layout in Codex; backend and native target adapters in Cursor.
 Keep the accepted YXNHarness layout and native application behavior.
 
@@ -84,26 +84,22 @@ Do not enable Live Select until an actual adapter advertises and acknowledges it
 
 ## Cursor work package: attachment transport
 
-Add a project-scoped upload/read/delete API and persistent attachment IDs.
-Proposed surface (not existing endpoints):
+Implemented surface:
 
 - `POST /api/v1/attachments` → id, filename, MIME type, byte size, dimensions,
-  project identity and a same-origin read URL.
-- `GET /api/v1/attachments/:id/content` → the original image.
-- `DELETE /api/v1/attachments/:id` → remove an unreferenced draft attachment.
+  project identity and a same-origin read URL (`contentUrl`).
+- `GET /api/v1/attachments` → list stored attachment metadata.
+- `GET /api/v1/attachments/:id/content` → the original image bytes.
+- `DELETE /api/v1/attachments/:id` → remove an unreferenced draft attachment
+  (`?force=1` after host consent when feedback still references it).
 
-Validate actual image type, dimensions and size; keep the current UI limit of
-6 images / 12 MB per image unless a capability declares otherwise. Do not
-accept arbitrary filesystem paths or load caller-supplied remote URLs. Enforce
-project access on every read and write. Keep images out of logs and provider-
-specific configuration.
-
-Extend feedback and handoff schemas with attachment IDs, message ownership,
-retention and deletion semantics. Keep referenced message/handoff images after
-removal from the composer. The UI will upload Blobs, replace draft IDs with
-server IDs and show upload/error/retry states. An agent receives the actual
-image only when its adapter supports images; never silently send a filename as
-if an image had been transmitted. Model/reasoning options follow capabilities.
+Validation uses magic-byte sniffing (PNG/JPEG/WebP/GIF), the UI limit of
+6 images / 12 MB per image, and rejects mismatched declared Content-Type.
+Images live under `artifacts/attachments/<id>/` and stay out of logs.
+Feedback identity/messages accept `attachmentIds`; delete refuses referenced
+ids unless forced. Cockpit uploads Blobs, shows upload/error/retry, and clears
+draft IndexedDB after a successful send while message thumbnails keep content
+URLs. An agent receives pixels only when its adapter supports images.
 
 ## Acceptance run (required before claiming end-to-end completion)
 

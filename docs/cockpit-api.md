@@ -44,9 +44,13 @@ this package). JSON stays under `/api/v1/…`.
 | POST | `/api/v1/feedback` | Create feedback thread |
 | PATCH | `/api/v1/feedback/:id` | Edit / resolve feedback |
 | POST | `/api/v1/feedback/bundle` | Bundle threads into a handoff |
-| POST | `/api/v1/elements/adopt` | `{ elements, apply?, withHandoff?, sourceBranch?, body? }` — visual element adopt |
+| POST | `/api/v1/elements/adopt` | `{ elements, apply?, withHandoff?, sourceBranch?, body?, attachmentIds? }` — visual element adopt |
 | GET | `/api/v1/attach` | Attach dry-run (`?until=probe` …). Always preview. |
 | POST | `/api/v1/attach` | `{ until?, apply?, yes?, installBrowser?, … }` — same loop as `harness attach` |
+| GET | `/api/v1/attachments` | List stored image attachment metadata |
+| POST | `/api/v1/attachments` | Raw image body + `Content-Type` / `X-Attachment-Filename` → stored attachment |
+| GET | `/api/v1/attachments/:id/content` | Original image bytes |
+| DELETE | `/api/v1/attachments/:id` | Remove unreferenced draft (`?force=1` with host consent) |
 | GET | `/api/v1/agent` | Agent panel state (honest: not connected) |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |

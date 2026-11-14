@@ -1,4 +1,4 @@
-// Draft images stay in this browser. Uploading them requires an agent/backend adapter.
+// Draft images start in IndexedDB; upload replaces draft ids with server attachment ids.
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 const MAX_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGES = 6;
@@ -37,34 +37,53 @@ export function mountAttachments(root, notify) {
     });
   }
   function hydrate(record) {
-    const url = URL.createObjectURL(record.blob);
-    urls.add(url);
+    const url = record.contentUrl || URL.createObjectURL(record.blob);
+    if (!record.contentUrl) urls.add(url);
     return { ...record, url };
   }
   function open(item) {
     returnFocus = document.activeElement;
     title.textContent = item.name;
-    details.textContent = `${item.width} × ${item.height} · ${Math.max(1, Math.round(item.blob.size / 1024))} KB · Local attachment`;
-    viewerImage.src = item.url;
+    const sizeLabel = item.byteSize != null
+      ? Math.max(1, Math.round(item.byteSize / 1024))
+      : Math.max(1, Math.round((item.blob?.size || 0) / 1024));
+    const place = item.serverId ? "Stored attachment" : "Local draft";
+    details.textContent = `${item.width} × ${item.height} · ${sizeLabel} KB · ${place}`;
+    viewerImage.src = item.contentUrl || item.url;
     viewerImage.alt = item.name;
     if (!dialog.open) dialog.showModal();
   }
   function thumbnail(item, removable) {
     const card = document.createElement("div");
     card.className = "attachment-card";
+    if (item.uploadStatus === "uploading") card.classList.add("is-uploading");
+    if (item.uploadStatus === "error") card.classList.add("is-error");
     const preview = document.createElement("button");
     preview.type = "button";
     preview.className = "attachment-preview";
     preview.setAttribute("aria-label", `Open ${item.name}`);
     preview.title = item.name;
     const image = document.createElement("img");
-    image.src = item.url;
+    image.src = item.contentUrl || item.url;
     image.alt = "";
     const caption = document.createElement("span");
-    caption.textContent = item.name;
+    caption.textContent = item.uploadStatus === "uploading"
+      ? "Uploading…"
+      : item.uploadStatus === "error"
+        ? "Upload failed"
+        : item.name;
     preview.append(image, caption);
     preview.onclick = () => open(item);
     card.append(preview);
+    if (item.uploadStatus === "error") {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "attachment-retry";
+      retry.textContent = "Retry";
+      retry.setAttribute("aria-label", `Retry upload for ${item.name}`);
+      retry.onclick = () => { void uploadItem(item); };
+      card.append(retry);
+    }
     if (removable) {
       const remove = document.createElement("button");
       remove.type = "button";
@@ -75,7 +94,17 @@ export function mountAttachments(root, notify) {
         const index = items.findIndex((entry) => entry.id === item.id);
         if (index !== -1) items.splice(index, 1);
         render();
-        if (!item.sent) { URL.revokeObjectURL(item.url); urls.delete(item.url); }
+        if (!item.sent && item.url && !item.contentUrl) {
+          URL.revokeObjectURL(item.url);
+          urls.delete(item.url);
+        }
+        if (item.serverId && !item.sent) {
+          try {
+            await fetch(`/api/v1/attachments/${encodeURIComponent(item.serverId)}`, { method: "DELETE" });
+          } catch {
+            // Keep local remove even if remote delete fails.
+          }
+        }
         try { await store("readwrite", (s) => s.delete(item.id)); }
         catch { notify("Image removed for this session; browser storage could not be updated."); }
       };
@@ -87,9 +116,71 @@ export function mountAttachments(root, notify) {
     tray.replaceChildren(...items.map((item) => thumbnail(item, true)));
     tray.hidden = items.length === 0;
   }
+  async function uploadItem(item) {
+    if (!item.blob) {
+      item.uploadStatus = "error";
+      render();
+      return;
+    }
+    item.uploadStatus = "uploading";
+    item.uploadError = null;
+    render();
+    try {
+      const response = await fetch("/api/v1/attachments", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": item.blob.type || "application/octet-stream",
+          "X-Attachment-Filename": item.name || "attachment.png",
+        },
+        body: item.blob,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.status === "blocked" || !data.attachment?.attachmentId) {
+        throw new Error(data.blockedReasons?.join("; ") || data.error || `Upload failed (${response.status})`);
+      }
+      item.serverId = data.attachment.attachmentId;
+      item.contentUrl = data.attachment.contentUrl;
+      item.byteSize = data.attachment.byteSize;
+      item.width = data.attachment.width ?? item.width;
+      item.height = data.attachment.height ?? item.height;
+      item.uploadStatus = "ready";
+      if (item.url && urls.has(item.url)) {
+        URL.revokeObjectURL(item.url);
+        urls.delete(item.url);
+      }
+      item.url = item.contentUrl;
+      try {
+        await store("readwrite", (s) => s.put({
+          id: item.id,
+          name: item.name,
+          blob: item.blob,
+          width: item.width,
+          height: item.height,
+          serverId: item.serverId,
+          contentUrl: item.contentUrl,
+          byteSize: item.byteSize,
+          uploadStatus: "ready",
+        }));
+      } catch {
+        // Session keeps the server id even if IndexedDB is unavailable.
+      }
+      render();
+    } catch (error) {
+      item.uploadStatus = "error";
+      item.uploadError = error.message || "Upload failed";
+      render();
+      notify(item.uploadError);
+    }
+  }
   const ready = store("readonly", (s) => s.getAll()).then((records) => {
     for (const record of (records || []).slice(0, MAX_IMAGES)) {
-      if (record.blob instanceof Blob && IMAGE_TYPES.has(record.blob.type)) items.push(hydrate(record));
+      if (record.blob instanceof Blob && IMAGE_TYPES.has(record.blob.type)) {
+        const item = hydrate(record);
+        item.uploadStatus = record.serverId ? "ready" : "pending";
+        items.push(item);
+        if (!record.serverId) void uploadItem(item);
+      }
     }
     render();
   }).catch(() => notify("Saved image attachments could not be restored."));
@@ -109,7 +200,14 @@ export function mountAttachments(root, notify) {
       let bitmap;
       try {
         bitmap = await createImageBitmap(file);
-        const record = { id: crypto.randomUUID(), name: file.name || "Screenshot.png", blob: file, width: bitmap.width, height: bitmap.height };
+        const record = {
+          id: crypto.randomUUID(),
+          name: file.name || "Screenshot.png",
+          blob: file,
+          width: bitmap.width,
+          height: bitmap.height,
+          uploadStatus: "pending",
+        };
         bitmap.close();
         if (generation !== revision) return;
         const item = hydrate(record);
@@ -117,6 +215,7 @@ export function mountAttachments(root, notify) {
         render();
         try { await store("readwrite", (s) => s.put(record)); }
         catch { notify("Image attached for this session; browser storage is unavailable."); }
+        void uploadItem(item);
       } catch {
         bitmap?.close();
         notify("This image could not be opened. Try another file.");
@@ -214,10 +313,36 @@ export function mountAttachments(root, notify) {
       if (!items.length) return;
       const group = document.createElement("div");
       group.className = "message-attachments";
-      group.append(...items.map((item) => { item.sent = true; return thumbnail(item, false); }));
+      group.append(...items.map((item) => {
+        item.sent = true;
+        return thumbnail({ ...item, uploadStatus: item.serverId ? "ready" : item.uploadStatus }, false);
+      }));
       message.append(group);
     },
     names: () => items.map((item) => item.name),
+    ids: () => items.map((item) => item.serverId).filter(Boolean),
+    async ensureUploaded() {
+      await ready;
+      await ingestion;
+      const pending = items.filter((item) => item.uploadStatus !== "ready" || !item.serverId);
+      for (const item of pending) {
+        if (item.uploadStatus === "error" || item.uploadStatus === "pending") await uploadItem(item);
+      }
+      await Promise.all(items.filter((item) => item.uploadStatus === "uploading").map(() =>
+        new Promise((resolve) => {
+          const tick = () => {
+            if (!items.some((entry) => entry.uploadStatus === "uploading")) resolve();
+            else setTimeout(tick, 40);
+          };
+          tick();
+        }),
+      ));
+      const failed = items.filter((item) => !item.serverId);
+      if (failed.length) {
+        throw new Error(`Image upload failed for: ${failed.map((item) => item.name).join(", ")}`);
+      }
+      return items.map((item) => item.serverId);
+    },
     async clear() {
       revision += 1;
       await ready;

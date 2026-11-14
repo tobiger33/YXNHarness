@@ -94,6 +94,7 @@ async function planElementAdopt(root, {
   from = "last-green",
   force = false,
   note = null,
+  attachmentIds = null,
 } = {}) {
   const projectRoot = path.resolve(root);
   const selected = normalizeElements(elements);
@@ -159,6 +160,7 @@ async function planElementAdopt(root, {
       viewport,
       branch: yours?.branch || null,
       commit: yours?.commit || null,
+      attachmentIds,
       element: {
         id: element.id,
         kind: element.kind,

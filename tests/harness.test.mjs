@@ -961,6 +961,8 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "POST /api/v1/elements/adopt",
       "POST /api/v1/attach",
       "POST /api/v1/share",
+      "POST /api/v1/attachments",
+      "DELETE /api/v1/attachments/:id",
     ]);
     assert.equal(overview.workspace.available, false);
 
@@ -992,6 +994,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.ok(apiIndex.links.fetch);
     assert.ok(apiIndex.links.approve);
     assert.ok(apiIndex.links.push);
+    assert.ok(apiIndex.links.attachments);
     assert.ok(apiIndex.links.agent);
 
     const attachMissing = await fetch(`${listening.url}api/v1/attach`);
@@ -1057,6 +1060,54 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
 
     const uiEscape = await fetch(`${listening.url}cockpit/%2e%2e/package.json`);
     assert.ok([403, 404].includes(uiEscape.status), `expected blocked UI escape, got ${uiEscape.status}`);
+
+    // Minimal 1×1 PNG
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    const uploaded = await fetch(`${listening.url}api/v1/attachments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-Attachment-Filename": "dot.png",
+      },
+      body: png,
+    }).then((response) => response.json());
+    assert.equal(uploaded.status, "written");
+    assert.ok(uploaded.attachment?.attachmentId);
+    assert.equal(uploaded.attachment.mimeType, "image/png");
+    assert.equal(uploaded.attachment.byteSize, png.length);
+
+    const content = await fetch(`${listening.url}api/v1/attachments/${encodeURIComponent(uploaded.attachment.attachmentId)}/content`);
+    assert.equal(content.status, 200);
+    assert.equal(content.headers.get("content-type"), "image/png");
+    assert.deepEqual(Buffer.from(await content.arrayBuffer()), png);
+
+    const withImage = await fetch(`${listening.url}api/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "CTA with screenshot",
+        apply: true,
+        attachmentIds: [uploaded.attachment.attachmentId],
+      }),
+    }).then((response) => response.json());
+    assert.equal(withImage.status, "written");
+    assert.deepEqual(withImage.thread.identity.attachmentIds, [uploaded.attachment.attachmentId]);
+
+    const blockedDelete = await fetch(`${listening.url}api/v1/attachments/${encodeURIComponent(uploaded.attachment.attachmentId)}`, {
+      method: "DELETE",
+    }).then((response) => response.json());
+    assert.equal(blockedDelete.status, "blocked");
+    assert.equal(blockedDelete.referenced, true);
+
+    const rejected = await fetch(`${listening.url}api/v1/attachments`, {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      body: Buffer.from("not-an-image"),
+    }).then((response) => response.json());
+    assert.equal(rejected.status, "blocked");
 
     const post = await fetch(`${listening.url}api/v1/overview`, { method: "POST" });
     assert.equal(post.status, 405);

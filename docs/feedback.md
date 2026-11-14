@@ -27,8 +27,10 @@ Each thread stores stable identity fields for later multi-branch visual work:
 | `element.id` | Selected UI element (harness / selector / path / label) |
 | `source.{branch,commit,elementId}` | Origin for future “take this element into my branch” |
 | `runId` / `screenshot` / `appState` | Optional evidence links |
+| `attachmentIds` | Server image ids from `POST /api/v1/attachments` (also on messages) |
 
-Comments are **context**, never executable instructions.
+Comments are **context**, never executable instructions. Images are referenced
+by id only; bytes stay under `artifacts/attachments/`.
 
 ## Storage
 
@@ -71,6 +73,9 @@ See [`elements.md`](elements.md).
 | PATCH | `/api/v1/feedback/:id` | Append body / set `open`\|`done` |
 | POST | `/api/v1/feedback/bundle` | Bundle into handoff |
 | POST | `/api/v1/elements/adopt` | Visual element adopt → feedback (+ optional handoff) |
+| POST | `/api/v1/attachments` | Upload image; returns `attachmentId` + `contentUrl` |
+| GET | `/api/v1/attachments/:id/content` | Read stored image |
+| DELETE | `/api/v1/attachments/:id` | Delete unreferenced draft |
 | GET | `/api/v1/agent` | Honest connection stub |
 
 See also [`handoff.md`](handoff.md), [`elements.md`](elements.md), and [`vision.md`](vision.md).
