@@ -39,6 +39,7 @@ this package). JSON stays under `/api/v1/…`.
 | POST | `/api/v1/feedback` | Create feedback thread |
 | PATCH | `/api/v1/feedback/:id` | Edit / resolve feedback |
 | POST | `/api/v1/feedback/bundle` | Bundle threads into a handoff |
+| POST | `/api/v1/elements/adopt` | `{ elements, apply?, withHandoff?, sourceBranch?, body? }` — visual element adopt |
 | GET | `/api/v1/agent` | Agent panel state (honest: not connected) |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |

@@ -815,11 +815,55 @@ qa("[data-element]").forEach((el) => {
     renderPicks();
   });
 });
-q("#use-selection").addEventListener("click", () => {
-  state.picks.forEach((pick) => addContext(`${pick.element} · ${pick.source}`));
-  q("#chat-input").value = `Bring the selected elements into ${state.workspace?.branch || "my branch"}. `;
-  q("#chat-input").focus();
-  toast("Selection added to agent context. Element adopt is not wired yet — this is layout context only.");
+q("#use-selection").addEventListener("click", async () => {
+  if (!state.picks.length) return;
+  const button = q("#use-selection");
+  button.disabled = true;
+  try {
+    const note = q("#chat-input")?.value?.trim() || null;
+    const elements = state.picks.map((pick) => ({
+      id: pick.element,
+      kind: "harness",
+      label: pick.element,
+      source: { branch: pick.source || null, elementId: pick.element },
+    }));
+    const preview = await apiPost("/api/v1/elements/adopt", {
+      elements,
+      body: note,
+      route: "/",
+      viewport: q("#device")?.value || "desktop",
+      sourceBranch: elements[0]?.source?.branch || null,
+      apply: false,
+      withHandoff: false,
+    });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Element adopt blocked");
+    }
+    const applied = await apiPost("/api/v1/elements/adopt", {
+      elements,
+      body: note,
+      route: "/",
+      viewport: q("#device")?.value || "desktop",
+      sourceBranch: elements[0]?.source?.branch || null,
+      apply: true,
+      withHandoff: false,
+    });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Element adopt failed");
+    }
+    state.picks.forEach((pick) => addContext(`${pick.element} · ${pick.source}`));
+    state.picks = [];
+    renderPicks();
+    q("#chat-input").value = "";
+    toast(applied.explanation || `Adopted ${elements.length} element(s) as feedback.`);
+    pushActivity(`Element adopt · ${elements.map((item) => item.id).join(", ")}`);
+    await refreshFeedbackOnly();
+    renderChatSeed();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = !state.picks.length;
+  }
 });
 q("#inspect-target").addEventListener("click", () => {
   if (selecting) {

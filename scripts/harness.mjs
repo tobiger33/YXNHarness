@@ -63,6 +63,10 @@ import {
   runAttach,
 } from "./attach.mjs";
 import {
+  formatElementAdoptPlan,
+  planElementAdopt,
+} from "./element-adopt.mjs";
+import {
   DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
   createCockpitApi,
 } from "./cockpit-api.mjs";
@@ -100,6 +104,7 @@ const USAGE = `Usage:
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
   npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
   npm run harness -- feedback [--root path] [--list|--create|--id <threadId>|--bundle ids] [--body text] [--route path] [--viewport name] [--element id] [--run-id id] [--resolve|--reopen] [--from last-green] [--note text] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- elements --adopt [--root path] [--element id]... [--source-branch name] [--body text] [--route path] [--viewport name] [--with-handoff] [--from last-green] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- attach [--root path] [--until doctor|setup|browser|probe|scaffold|run|promote] [--name smoke] [--out path] [--scenario path] [--from last-green] [--dry-run|--apply] [--install-browser] [--yes] [--force] [--strict] [--skip-doctor] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
@@ -116,7 +121,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "attach", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "elements", "attach", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -151,6 +156,10 @@ function parseArgs(argv) {
     route: null,
     viewport: null,
     element: null,
+    elements: [],
+    elementsAdopt: false,
+    sourceBranch: null,
+    withHandoff: false,
     runId: null,
     id: null,
     bundle: null,
@@ -196,10 +205,14 @@ function parseArgs(argv) {
       options.review = review;
       index += 1;
     } else if (argument === "--adopt") {
-      const adopt = rest[index + 1];
-      if (!adopt || adopt.startsWith("--")) throw new Error("--adopt requires an existing local branch name.");
-      options.adopt = adopt;
-      index += 1;
+      if (action === "elements") {
+        options.elementsAdopt = true;
+      } else {
+        const adopt = rest[index + 1];
+        if (!adopt || adopt.startsWith("--")) throw new Error("--adopt requires an existing local branch name.");
+        options.adopt = adopt;
+        index += 1;
+      }
     } else if (argument === "--path") {
       const filePath = rest[index + 1];
       if (!filePath || filePath.startsWith("--")) throw new Error("--path requires a repository-relative file path.");
@@ -263,8 +276,20 @@ function parseArgs(argv) {
     } else if (argument === "--element") {
       const element = rest[index + 1];
       if (!element || element.startsWith("--")) throw new Error("--element requires an id.");
-      options.element = element;
+      if (action === "elements") {
+        options.elements.push(element);
+        options.element = options.elements[0];
+      } else {
+        options.element = element;
+      }
       index += 1;
+    } else if (argument === "--source-branch") {
+      const sourceBranch = rest[index + 1];
+      if (!sourceBranch || sourceBranch.startsWith("--")) throw new Error("--source-branch requires a branch name.");
+      options.sourceBranch = sourceBranch;
+      index += 1;
+    } else if (argument === "--with-handoff") {
+      options.withHandoff = true;
     } else if (argument === "--run-id") {
       const runId = rest[index + 1];
       if (!runId || runId.startsWith("--")) throw new Error("--run-id requires a run id.");
@@ -418,14 +443,14 @@ function parseArgs(argv) {
   if (options.out && !["scaffold", "handoff", "promote", "attach"].includes(action)) {
     throw new Error("--out is only valid with scaffold, handoff, promote, or attach.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback", "attach"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, feedback, or attach.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback", "elements", "attach"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, or attach.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if (options.from && !["handoff", "promote", "feedback", "attach"].includes(action)) {
-    throw new Error("--from is only valid with handoff, promote, feedback --bundle, or attach.");
+  if (options.from && !["handoff", "promote", "feedback", "elements", "attach"].includes(action)) {
+    throw new Error("--from is only valid with handoff, promote, feedback --bundle, elements, or attach.");
   }
   if (options.until && action !== "attach") {
     throw new Error("--until is only valid with attach.");
@@ -436,13 +461,41 @@ function parseArgs(argv) {
   if (options.skipDoctor && action !== "attach") {
     throw new Error("--skip-doctor is only valid with attach.");
   }
-  if (options.note && !["handoff", "workspace", "feedback"].includes(action)) {
-    throw new Error("--note is only valid with handoff, workspace --adopt, or feedback --bundle.");
+  if (options.note && !["handoff", "workspace", "feedback", "elements"].includes(action)) {
+    throw new Error("--note is only valid with handoff, workspace --adopt, feedback --bundle, or elements --adopt.");
   }
-  if ((options.list || options.createFeedback || options.body || options.route || options.viewport ||
-      options.element || options.runId || options.id || options.bundle || options.resolve || options.reopen) &&
-      action !== "feedback") {
-    throw new Error("--list/--create/--body/--route/--viewport/--element/--run-id/--id/--bundle/--resolve/--reopen are only valid with feedback.");
+  if (options.sourceBranch && action !== "elements") {
+    throw new Error("--source-branch is only valid with elements --adopt.");
+  }
+  if (options.withHandoff && action !== "elements") {
+    throw new Error("--with-handoff is only valid with elements --adopt.");
+  }
+  if (options.elementsAdopt && action !== "elements") {
+    throw new Error("--adopt without a branch name is only valid with elements.");
+  }
+  if ((options.list || options.createFeedback || options.runId || options.id || options.bundle ||
+      options.resolve || options.reopen) && action !== "feedback") {
+    throw new Error("--list/--create/--run-id/--id/--bundle/--resolve/--reopen are only valid with feedback.");
+  }
+  if ((options.body || options.route || options.viewport || options.element) &&
+      !["feedback", "elements"].includes(action)) {
+    throw new Error("--body/--route/--viewport/--element are only valid with feedback or elements.");
+  }
+  if (action === "elements") {
+    if (!options.elementsAdopt) {
+      throw new Error("elements requires --adopt.");
+    }
+    if (!options.elements.length) {
+      throw new Error("elements --adopt requires at least one --element <id>.");
+    }
+    if (options.list || options.createFeedback || options.id || options.bundle || options.resolve ||
+        options.reopen || options.runId || options.init || options.name || options.out ||
+        options.installBrowser || options.yes || options.checkout || options.create ||
+        options.review || options.adopt || options.path || options.start || options.baseline ||
+        options.against || options.strict || options.port !== null || options.until ||
+        options.scenarioFile || options.skipDoctor) {
+      throw new Error("elements --adopt accepts --root/--json/--element/--source-branch/--body/--route/--viewport/--with-handoff/--from/--note/--dry-run/--apply/--force only.");
+    }
   }
   if ((options.baseline || options.against) && action !== "compare") {
     throw new Error("--baseline and --against are only valid with compare.");
@@ -608,6 +661,12 @@ function explainNextSteps(report) {
     command: "npm run harness -- feedback --create --body \"Tighten the primary CTA spacing\" --route / --apply",
     then: "npm run harness -- feedback --bundle <threadId> --from last-green --apply",
     why: "Local visual feedback threads (branch/commit/route/viewport/element) — bundle into an agent handoff.",
+  });
+  steps.push({
+    id: "elements",
+    command: "npm run harness -- elements --adopt --element PrimaryButton --source-branch feature/demo --dry-run",
+    then: "npm run harness -- elements --adopt --element PrimaryButton --source-branch feature/demo --apply --with-handoff",
+    why: "Visual element adopt: record element-scoped feedback (yours vs source) and optionally bundle a handoff.",
   });
   steps.push({
     id: "serve",
@@ -1536,6 +1595,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("compare diffs last-green vs last-run (or explicit run ids) — state + screenshot evidence.");
     console.log("promote copies after-state from a green run into scenario expects (--dry-run, then --apply).");
     console.log("feedback creates local visual threads and bundles them into handoffs for your coding agent.");
+    console.log("elements --adopt records visual element picks as element-scoped feedback (optional --with-handoff).");
     console.log("attach chains doctor→setup→probe→scaffold→run→promote (--dry-run by default; --until sets the stop phase).");
     console.log(`serve starts the cockpit UI + API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
@@ -1761,6 +1821,23 @@ async function main(argv = process.argv.slice(2)) {
     if (!plan.ok) process.exitCode = 1;
     return plan;
   }
+  if (options.action === "elements") {
+    const plan = await planElementAdopt(root, {
+      elements: options.elements,
+      body: options.body,
+      route: options.route,
+      viewport: options.viewport,
+      sourceBranch: options.sourceBranch,
+      apply: options.apply,
+      withHandoff: options.withHandoff,
+      from: options.from || "last-green",
+      force: options.force,
+      note: options.note,
+    });
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatElementAdoptPlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   if (options.action === "attach") {
     const plan = await runAttach(root, {
       until: options.until,
@@ -1954,6 +2031,8 @@ export {
   bundleFeedback,
   agentPanelState,
   runAttach,
+  planElementAdopt,
+  formatElementAdoptPlan,
   probeApp,
   runScenario,
   setupProject,
