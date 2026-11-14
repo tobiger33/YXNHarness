@@ -101,7 +101,7 @@ function workspaceEditAdapterDeclaration() {
   return validateDeclaration({
     version: 1,
     adapterId: "workspace-edit",
-    displayName: "Workspace edit adapter",
+    displayName: "Agent",
     connected: true,
     capabilities: {
       models: true,
@@ -114,10 +114,9 @@ function workspaceEditAdapterDeclaration() {
       images: true,
     },
     models: [
-      { id: "workspace-edit", label: "Workspace edit (host-approved)" },
+      { id: "workspace-edit", label: "Default" },
     ],
     modes: ["connected"],
-    note: "Proposes reversible visual file edits. Nothing is written until the host accepts the proposal.",
   });
 }
 
@@ -138,20 +137,24 @@ async function buildDemoVisualProposal(root, { body = "", element = null } = {})
   }
   const before = await readFile(stylePath, "utf8");
   let after = before;
-  let summary = "Adjust Harbor Desk primary accent for a clearer CTA.";
+  let summary = "Clearer primary accent on the Confirm CTA.";
+  let reply = "I shifted the primary accent toward a cooler blue so the Confirm CTA stands out more. Preview it, then Accept to apply.";
   if (before.includes(ACCENT_PROPOSED) && !before.includes(ACCENT_ORIGINAL)) {
     after = before.replace(ACCENT_PROPOSED, ACCENT_ORIGINAL);
-    summary = "Revert Harbor Desk primary accent to the original teal.";
+    summary = "Restore the original teal accent.";
+    reply = "I restored the original teal accent. Preview it, then Accept to apply.";
   } else if (before.includes(ACCENT_ORIGINAL)) {
     after = before.replace(ACCENT_ORIGINAL, ACCENT_PROPOSED);
   } else {
     // Fallback: nudge button padding so the edit stays reversible and visible.
     if (before.includes("padding: 10px 16px;")) {
       after = before.replace("padding: 10px 16px;", "padding: 12px 18px;");
-      summary = "Increase Harbor Desk primary button padding slightly.";
+      summary = "Slightly roomier primary button padding.";
+      reply = "I gave the primary button a bit more padding. Preview it, then Accept to apply.";
     } else if (before.includes("padding: 12px 18px;")) {
       after = before.replace("padding: 12px 18px;", "padding: 10px 16px;");
-      summary = "Restore Harbor Desk primary button padding.";
+      summary = "Restore the original button padding.";
+      reply = "I restored the original button padding. Preview it, then Accept to apply.";
     } else {
       return {
         status: "blocked",
@@ -167,12 +170,11 @@ async function buildDemoVisualProposal(root, { body = "", element = null } = {})
       blockedReasons: ["Proposed visual edit produced no file difference."],
     };
   }
-  const hint = [body, element?.label, element?.id].filter(Boolean).join(" ");
-  if (hint) summary = `${summary} Context: ${String(hint).slice(0, 160)}`;
   return {
     status: "ready",
     ok: true,
     summary,
+    reply,
     files: [{ path: BOOKING_STYLE.split(path.sep).join("/"), before, after }],
   };
 }
@@ -380,7 +382,7 @@ async function runWorkspaceEditTurn(root, context = {}) {
     proposalId: proposed.proposal.proposalId,
     files: proposed.proposal.files.map((file) => file.path),
   });
-  await push("awaiting-approval", "Host must Accept or Reject before any file is written.");
+  await push("awaiting-approval", "Waiting for host Accept or Reject.");
 
   return {
     ...packaged,
@@ -389,13 +391,8 @@ async function runWorkspaceEditTurn(root, context = {}) {
     proposals: [proposed.proposal],
     proposalPath: proposed.proposalPath,
     reply: {
-      role: "adapter",
-      body: [
-        "Workspace edit adapter proposed a reversible visual change.",
-        proposed.proposal.summary,
-        `Proposal ${proposed.proposal.proposalId} is pending host approval.`,
-        "No project source was modified yet.",
-      ].join(" "),
+      role: "assistant",
+      body: demo.reply || proposed.proposal.summary,
     },
     explanation: "File changes require explicit host Accept; merge/push stay host-controlled.",
   };
@@ -751,8 +748,8 @@ async function rejectAgentProposal(root, proposalId, { reason = null } = {}) {
   });
 }
 
-async function getAgentProposal(root, proposalId) {
-  return publicProposal(await readProposal(root, proposalId));
+async function getAgentProposal(root, proposalId, { includeBodies = false } = {}) {
+  return publicProposal(await readProposal(root, proposalId), { includeBodies });
 }
 
 export {

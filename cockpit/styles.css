@@ -267,6 +267,22 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench.is-capturing-project #demo-preview .demo-candidate { outline: none; }
 #yxn-workbench .attachment-resolution { display: block; width: 100%; padding: 0 6px 4px; color: var(--faint); font-size: 10px; }
 
+/* Soft status: overlay so Accept feedback does not reflow the workbench. */
+#yxn-workbench > .notice.notice-soft {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 40;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
 /* Host-approved agent file proposals */
 #yxn-workbench .proposal-card {
   margin-top: 10px;
@@ -276,10 +292,10 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   background: var(--panel, var(--bg));
 }
 #yxn-workbench .proposal-summary { margin: 0 0 6px; font-size: 13px; }
-#yxn-workbench .proposal-path { font-size: 11px; color: var(--muted); margin: 6px 0 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#yxn-workbench .proposal-path { font-size: 11px; color: var(--muted); margin: 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 #yxn-workbench .proposal-diff {
   margin: 0;
-  max-height: 180px;
+  max-height: 140px;
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
@@ -289,9 +305,27 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   white-space: pre-wrap;
   word-break: break-word;
 }
-#yxn-workbench .proposal-actions { display: flex; gap: 8px; margin-top: 10px; }
+#yxn-workbench .proposal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  min-height: 28px;
+  align-items: center;
+}
 #yxn-workbench .proposal-actions .button.ghost {
   background: transparent;
   border: 1px solid var(--line);
   color: var(--muted);
 }
+#yxn-workbench .proposal-status {
+  font-size: 12px;
+  color: var(--muted);
+}
+#yxn-workbench .proposal-visual-preview {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f7f5f0;
+}
+#yxn-workbench .proposal-sample { display: block; }

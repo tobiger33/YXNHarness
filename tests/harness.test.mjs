@@ -1215,6 +1215,7 @@ test("workspace-edit adapter proposes reversible visual change and host accept w
     const panel = await agentPanelState(root);
     assert.equal(panel.connected, true);
     assert.equal(panel.adapter.adapterId, "workspace-edit");
+    assert.equal(panel.adapter.displayName, "Agent");
     assert.equal(panel.capabilities.fileChanges, true);
 
     const turn = await submitAgentTurn(root, {
@@ -1225,6 +1226,8 @@ test("workspace-edit adapter proposes reversible visual change and host accept w
     assert.equal(turn.status, "awaiting-approval");
     assert.equal(turn.ok, true);
     assert.equal(turn.proposals?.length, 1);
+    assert.match(turn.reply?.body || "", /accent|CTA|Preview|Accept/i);
+    assert.doesNotMatch(turn.reply?.body || "", /workspace edit adapter/i);
     const proposalId = turn.proposals[0].proposalId;
     assert.ok(proposalId.startsWith("prop-"));
     assert.match(turn.proposals[0].files[0].diff, /--accent/);
@@ -1238,6 +1241,10 @@ test("workspace-edit adapter proposes reversible visual change and host accept w
     const listening = await api.listen();
     const httpPanel = await fetch(`${listening.url}api/v1/agent`).then((response) => response.json());
     assert.equal(httpPanel.proposals.length, 1);
+
+    const withBodies = await fetch(`${listening.url}api/v1/agent/proposals/${proposalId}?bodies=1`)
+      .then((response) => response.json());
+    assert.ok(withBodies.proposal.files[0].after.includes("#085c8f"));
 
     const accepted = await fetch(`${listening.url}api/v1/agent/proposals/${proposalId}/accept`, {
       method: "POST",

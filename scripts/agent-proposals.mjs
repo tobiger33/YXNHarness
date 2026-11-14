@@ -107,10 +107,21 @@ async function writeProposal(root, {
   };
 }
 
-function publicProposal(proposal) {
+function publicProposal(proposal, { includeBodies = false } = {}) {
   if (!proposal) return null;
   const { _bodies, ...rest } = proposal;
-  return rest;
+  if (!includeBodies) return rest;
+  return {
+    ...rest,
+    files: (proposal.files || []).map((file) => {
+      const body = (_bodies || []).find((entry) => entry.path === file.path);
+      return {
+        ...file,
+        before: body?.before ?? null,
+        after: body?.after ?? null,
+      };
+    }),
+  };
 }
 
 async function readProposal(root, proposalId) {

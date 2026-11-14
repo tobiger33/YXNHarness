@@ -926,7 +926,10 @@ function createCockpitApi({
       const proposalMatch = pathname.match(/^\/api\/v1\/agent\/proposals\/([^/]+)$/);
       if (proposalMatch) {
         try {
-          const proposal = await getAgentProposal(projectRoot, decodeURIComponent(proposalMatch[1]));
+          const includeBodies = searchParams.get("bodies") === "1" || searchParams.get("preview") === "1";
+          const proposal = await getAgentProposal(projectRoot, decodeURIComponent(proposalMatch[1]), {
+            includeBodies,
+          });
           sendJson(response, 200, { version: 1, proposal });
         } catch (error) {
           if (error.statusCode === 400 || error.statusCode === 404) {

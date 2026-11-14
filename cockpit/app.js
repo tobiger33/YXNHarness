@@ -125,14 +125,16 @@ function persistUi() {
   }));
 }
 
-function toast(text) {
+function toast(text, { soft = false } = {}) {
   const notice = q("#notice");
   notice.textContent = text;
   notice.hidden = false;
+  notice.classList.toggle("notice-soft", soft);
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.hidden = true;
-  }, 4200);
+    notice.classList.remove("notice-soft");
+  }, soft ? 2200 : 4200);
 }
 
 function icons() {
@@ -360,6 +362,106 @@ function syncAgentControls() {
   reasoningSelect.hidden = connected && caps.reasoningEffort === false;
 }
 
+function extractCssAccent(cssText) {
+  const match = String(cssText || "").match(/--accent\s*:\s*([^;]+)/i);
+  return match ? match[1].trim() : null;
+}
+
+function clearProposalLivePreview() {
+  const frame = q("#live-preview");
+  try {
+    const doc = frame?.contentDocument;
+    doc?.getElementById("yxn-proposal-preview")?.remove();
+  } catch {
+    // Cross-origin preview cannot be patched; mock preview still works.
+  }
+  q("#proposal-live-hint")?.remove();
+}
+
+async function showProposalPreview(proposalId, card) {
+  const detail = await apiGet(`/api/v1/agent/proposals/${encodeURIComponent(proposalId)}?bodies=1`);
+  const proposal = detail.proposal;
+  if (!proposal) throw new Error("Proposal not found");
+  let preview = card.querySelector(".proposal-visual-preview");
+  if (!preview) {
+    preview = document.createElement("div");
+    preview.className = "proposal-visual-preview";
+    preview.setAttribute("aria-live", "polite");
+    const actions = card.querySelector(".proposal-actions");
+    card.insertBefore(preview, actions || null);
+  }
+  preview.replaceChildren();
+  const files = proposal.files || [];
+  for (const file of files) {
+    const after = file.after || "";
+    const before = file.before || "";
+    if (/\.css$/i.test(file.path) && after) {
+      const beforeAccent = extractCssAccent(before);
+      const afterAccent = extractCssAccent(after);
+      const sample = document.createElement("div");
+      sample.className = "proposal-sample";
+      // Shadow root keeps proposed CSS from leaking into the workbench.
+      const shadow = sample.attachShadow({ mode: "open" });
+      shadow.innerHTML = `
+        <style>
+          :host { display: block; }
+          .shell {
+            padding: 14px;
+            display: grid;
+            gap: 10px;
+            justify-items: start;
+            background: #f7f5f0;
+            color: #1c2430;
+            font: 13px/1.4 "Avenir Next", "Segoe UI", sans-serif;
+          }
+          .brand { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6b7c; }
+          .cta {
+            border: 0; border-radius: 999px; padding: 10px 16px; color: #fff;
+            background: ${afterAccent ? escapeHtml(afterAccent) : "var(--accent, #085c8f)"};
+            font: inherit; font-size: 13px;
+          }
+          .swatches { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #5d6b7c; }
+          .swatch { width: 14px; height: 14px; border-radius: 999px; border: 1px solid rgba(0,0,0,.12); display: inline-block; }
+        </style>
+        <div class="shell">
+          <span class="brand">Harbor Desk</span>
+          <button type="button" class="cta" tabindex="-1">Confirm booking</button>
+          ${beforeAccent && afterAccent ? `<div class="swatches"><span class="swatch" style="background:${escapeHtml(beforeAccent)}"></span><span aria-hidden="true">→</span><span class="swatch" style="background:${escapeHtml(afterAccent)}"></span></div>` : ""}
+        </div>
+      `;
+      preview.append(sample);
+      // Best-effort live iframe inject when same-origin.
+      const frame = q("#live-preview");
+      if (frame && !frame.hidden) {
+        try {
+          const doc = frame.contentDocument;
+          if (doc) {
+            let style = doc.getElementById("yxn-proposal-preview");
+            if (!style) {
+              style = doc.createElement("style");
+              style.id = "yxn-proposal-preview";
+              doc.head.append(style);
+            }
+            style.textContent = after;
+          }
+        } catch {
+          // Cross-origin — card preview is enough.
+        }
+      }
+    } else if (file.diff) {
+      const diff = document.createElement("pre");
+      diff.className = "proposal-diff";
+      diff.textContent = file.diff.length > 2400 ? `${file.diff.slice(0, 2400)}\n…` : file.diff;
+      preview.append(diff);
+    }
+  }
+  const toggle = card.querySelector("[data-proposal-preview]");
+  if (toggle) {
+    toggle.textContent = "Hide preview";
+    toggle.dataset.active = "1";
+  }
+}
+
 function appendProposalCard(host, proposal, { focus = false } = {}) {
   if (!proposal?.proposalId || !host) return null;
   const existing = host.querySelector(`[data-proposal-id="${CSS.escape(proposal.proposalId)}"]`);
@@ -372,40 +474,56 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   card.dataset.proposalId = proposal.proposalId;
   const title = document.createElement("p");
   title.className = "proposal-summary";
-  title.textContent = proposal.summary || "Proposed file change";
+  title.textContent = proposal.summary || "Proposed change";
   card.append(title);
-  const meta = document.createElement("div");
-  meta.className = "agent-event";
-  meta.textContent = `Proposal ${proposal.proposalId} · ${proposal.status || "pending"}`;
-  card.append(meta);
   for (const file of proposal.files || []) {
     const pathLine = document.createElement("div");
     pathLine.className = "proposal-path";
     pathLine.textContent = file.path;
     card.append(pathLine);
-    if (file.diff) {
-      const diff = document.createElement("pre");
-      diff.className = "proposal-diff";
-      diff.textContent = file.diff.length > 4000 ? `${file.diff.slice(0, 4000)}\n…` : file.diff;
-      card.append(diff);
-    }
   }
+  const actions = document.createElement("div");
+  actions.className = "proposal-actions";
   if (proposal.status === "pending") {
-    const actions = document.createElement("div");
-    actions.className = "proposal-actions";
+    const previewBtn = document.createElement("button");
+    previewBtn.type = "button";
+    previewBtn.className = "button ghost";
+    previewBtn.dataset.proposalPreview = "1";
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = async () => {
+      if (previewBtn.dataset.active === "1") {
+        card.querySelector(".proposal-visual-preview")?.remove();
+        clearProposalLivePreview();
+        previewBtn.textContent = "Preview";
+        previewBtn.dataset.active = "0";
+        return;
+      }
+      try {
+        await showProposalPreview(proposal.proposalId, card);
+      } catch (error) {
+        toast(error.message || "Preview failed", { soft: true });
+      }
+    };
     const accept = document.createElement("button");
     accept.type = "button";
     accept.className = "button";
+    accept.dataset.proposalAccept = "1";
     accept.textContent = "Accept";
     accept.onclick = () => decideProposal(proposal.proposalId, "accept", card);
     const reject = document.createElement("button");
     reject.type = "button";
     reject.className = "button ghost";
+    reject.dataset.proposalReject = "1";
     reject.textContent = "Reject";
     reject.onclick = () => decideProposal(proposal.proposalId, "reject", card);
-    actions.append(accept, reject);
-    card.append(actions);
+    actions.append(previewBtn, accept, reject);
+  } else {
+    const status = document.createElement("span");
+    status.className = "proposal-status";
+    status.textContent = proposal.status === "accepted" ? "Applied" : (proposal.status || "done");
+    actions.append(status);
   }
+  card.append(actions);
   host.append(card);
   if (focus) card.scrollIntoView({ block: "nearest" });
   return card;
@@ -414,31 +532,43 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
 async function decideProposal(proposalId, decision, card) {
   if (busy) return;
   busy = true;
+  const accept = card?.querySelector("[data-proposal-accept]");
+  const reject = card?.querySelector("[data-proposal-reject]");
+  const previewBtn = card?.querySelector("[data-proposal-preview]");
+  if (accept) accept.disabled = true;
+  if (reject) reject.disabled = true;
+  if (previewBtn) previewBtn.disabled = true;
   try {
     const path = decision === "accept"
       ? `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/accept`
       : `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/reject`;
     const plan = await apiPost(path, decision === "accept" ? {} : { reason: "Host rejected from cockpit" });
     if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Proposal blocked");
+    clearProposalLivePreview();
     if (card) {
       const actions = card.querySelector(".proposal-actions");
-      if (actions) actions.remove();
-      const meta = card.querySelector(".agent-event");
-      if (meta) meta.textContent = `Proposal ${proposalId} · ${plan.status}`;
+      if (actions) {
+        actions.replaceChildren();
+        const status = document.createElement("span");
+        status.className = "proposal-status";
+        status.textContent = decision === "accept" ? "Applied" : "Rejected";
+        actions.append(status);
+      }
     }
-    pushActivity(decision === "accept"
-      ? `Accepted proposal ${proposalId}`
-      : `Rejected proposal ${proposalId}`);
-    toast(decision === "accept" ? "Proposal accepted · files written" : "Proposal rejected");
+    pushActivity(decision === "accept" ? "Change applied" : "Change rejected");
+    toast(decision === "accept" ? "Applied" : "Rejected", { soft: true });
     try {
       const agent = await apiGet("/api/v1/agent");
       state.agent = agent;
-      setMode(state.mode, false);
+      syncAgentControls();
     } catch {
       // Keep prior agent state.
     }
   } catch (error) {
-    toast(error.message || "Proposal decision failed");
+    if (accept) accept.disabled = false;
+    if (reject) reject.disabled = false;
+    if (previewBtn) previewBtn.disabled = false;
+    toast(error.message || "Could not update proposal", { soft: true });
   } finally {
     busy = false;
   }
@@ -464,8 +594,7 @@ function setMode(mode, save = true) {
     q("#composer-note").textContent = "External · copy a structured task for your coding agent";
     q("#chat-input").placeholder = "Describe a task for your external agent…";
   } else if (connected) {
-    const name = state.agent?.adapter?.displayName || "Connected agent";
-    q("#composer-note").textContent = `${name} · turns stay provider-neutral`;
+    q("#composer-note").textContent = "Connected · describe a change";
     q("#chat-input").placeholder = "Ask for a change, or describe an idea…";
   } else {
     q("#composer-note").textContent = "No agent adapter connected · messages become local feedback";
@@ -931,7 +1060,7 @@ async function sendMessage() {
       if (attachmentIds.length && state.agent.capabilities?.images === false) {
         throw new Error("Connected adapter does not support images. Remove attachments or switch adapters.");
       }
-      thought.textContent = "Sending turn to connected adapter…";
+      thought.textContent = "Working…";
       const plan = await apiPost("/api/v1/agent/turns", {
         body: requestBody,
         apply: true,
@@ -952,15 +1081,17 @@ async function sendMessage() {
       });
       if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Agent turn blocked");
       const p = document.createElement("p");
-      p.textContent = plan.reply?.body || plan.explanation || `Turn ${plan.turnId || ""} accepted.`;
+      p.textContent = plan.reply?.body || plan.explanation || "Done.";
       answer.append(p);
-      if (plan.taskPath) {
+      const hasProposals = Array.isArray(plan.proposals) && plan.proposals.length > 0;
+      // Keep package/feedback breadcrumbs only when there is no file proposal to review.
+      if (!hasProposals && plan.taskPath) {
         const meta = document.createElement("div");
         meta.className = "agent-event";
         meta.textContent = `✓ Task package · ${plan.taskPath}`;
         answer.append(meta);
       }
-      if (plan.thread?.threadId) {
+      if (!hasProposals && plan.thread?.threadId) {
         const meta = document.createElement("div");
         meta.className = "agent-event";
         meta.textContent = `✓ Feedback ${plan.thread.threadId}`;
@@ -970,9 +1101,11 @@ async function sendMessage() {
         appendProposalCard(answer, proposal, { focus: true });
       }
       for (const event of (plan.activity || []).slice(-4)) {
-        pushActivity(event.summary || event.type);
+        if (event.type === "proposed-file-change" || event.type === "applied-file-change" || event.type === "rejected-file-change") {
+          pushActivity(event.summary || event.type);
+        }
       }
-      thought.textContent = plan.adapter?.displayName ? `${plan.adapter.displayName} · ${plan.status}` : `Adapter · ${plan.status}`;
+      thought.textContent = hasProposals ? "Ready for review" : "Done";
       await attachments.clear();
       await refreshFeedbackOnly();
       try {

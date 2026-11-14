@@ -17,7 +17,7 @@ In `harness.host.json`:
 |-------|---------|
 | omit / `null` | Disconnected (default). Composer writes local feedback only. |
 | `"local"` | Built-in task packager. No remote model, no source edits. |
-| `"workspace-edit"` | Built-in demo editor. Proposes reversible visual file changes; host Accept required before write. |
+| `"workspace-edit"` | Built-in visual editor. Speaks like a normal agent reply, proposes reversible file changes, and requires host Accept (with Preview) before write. |
 | `"./path/to/adapter.mjs"` | Project module exporting `createAdapter()`. |
 
 Custom modules must stay inside the project root.
