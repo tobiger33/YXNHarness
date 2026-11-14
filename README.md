@@ -186,6 +186,16 @@ Open `http://127.0.0.1:8787/` for the UI. `GET/POST /api/v1/attach` is the
 one-command attach loop over HTTP (same as `harness attach`). See
 [`docs/cockpit-api.md`](docs/cockpit-api.md) and [`docs/attach.md`](docs/attach.md).
 
+Optional connected agent adapter (provider-neutral; default stays disconnected):
+
+```json
+{ "agent": { "adapter": "local" } }
+```
+
+Set that in `harness.host.json` to package composer turns under
+`artifacts/agent/` without calling a remote model. Custom project modules work
+too — see [`docs/agent-adapter.md`](docs/agent-adapter.md).
+
 The UI/backend handoff and acceptance flow for element selection, comments,
 adaptation requests and screenshot transport is in
 [`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
