@@ -129,7 +129,7 @@ function collectWorkspace(root) {
     behind,
     branches,
     readOnly: true,
-    note: "Local branches: --checkout|--create|--review|--adopt. Push/fetch stay out of scope.",
+    note: "Local branches: --checkout|--create|--review|--adopt [--path|--hunks]. Push/fetch stay out of scope.",
   };
 }
 
@@ -320,23 +320,366 @@ function buildAdoptMergeMessage({ yours, theirs, comment = null } = {}) {
   return `${subject}\n\n${comment}`;
 }
 
+/** Normalize --path / paths[] into unique safe relative paths. */
+function normalizeAdoptPaths(paths) {
+  if (paths == null || paths === "") return [];
+  const raw = Array.isArray(paths) ? paths : String(paths).split(",");
+  const out = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    const value = typeof entry === "string" ? entry.trim() : "";
+    if (!value) continue;
+    if (!isSafeRelPath(value)) {
+      const error = new Error(`Invalid adopt path "${value}".`);
+      error.code = "INVALID_ADOPT_PATH";
+      throw error;
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+/** Normalize --hunks into sorted unique 1-based indices. */
+function normalizeAdoptHunks(hunks) {
+  if (hunks == null || hunks === "") return null;
+  const raw = Array.isArray(hunks)
+    ? hunks
+    : String(hunks).split(/[,\s]+/).filter(Boolean);
+  if (!raw.length) return null;
+  const indices = [];
+  const seen = new Set();
+  for (const entry of raw) {
+    const value = Number(entry);
+    if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+      const error = new Error(`Invalid hunk index "${entry}" (use 1-based integers).`);
+      error.code = "INVALID_ADOPT_HUNKS";
+      throw error;
+    }
+    if (seen.has(value)) continue;
+    seen.add(value);
+    indices.push(value);
+  }
+  return indices.sort((a, b) => a - b);
+}
+
 /**
- * Adopt *theirs* into the current branch (git merge). Host-controlled; no push.
- * Optional comment is recorded on the merge commit (forces --no-ff when present).
+ * Split a unified diff into file header + hunks (1-based indices for selection).
  */
-function planWorkspaceAdopt(root, { theirs, apply = false, force = false, comment = null } = {}) {
+function parseUnifiedDiffHunks(patchText) {
+  const lines = String(patchText || "").replace(/\r\n/g, "\n").split("\n");
+  const header = [];
+  const hunks = [];
+  let current = null;
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      if (current) hunks.push(current);
+      const match = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/.exec(line);
+      current = {
+        index: hunks.length + 1,
+        header: line,
+        lines: [line],
+        oldStart: match ? Number(match[1]) : null,
+        oldCount: match ? Number(match[2] ?? 1) : null,
+        newStart: match ? Number(match[3]) : null,
+        newCount: match ? Number(match[4] ?? 1) : null,
+      };
+      continue;
+    }
+    if (!current) {
+      header.push(line);
+      continue;
+    }
+    current.lines.push(line);
+  }
+  if (current) hunks.push(current);
+  return { header, hunks };
+}
+
+function buildPartialPatch(patchText, hunkIndices) {
+  const parsed = parseUnifiedDiffHunks(patchText);
+  if (!parsed.hunks.length) {
+    const error = new Error("Patch has no hunks to select.");
+    error.code = "INVALID_ADOPT_HUNKS";
+    throw error;
+  }
+  const wanted = new Set(hunkIndices);
+  const missing = hunkIndices.filter((index) => !parsed.hunks.some((hunk) => hunk.index === index));
+  if (missing.length) {
+    const error = new Error(
+      `Unknown hunk index(es): ${missing.join(", ")} (file has ${parsed.hunks.length} hunks).`,
+    );
+    error.code = "INVALID_ADOPT_HUNKS";
+    throw error;
+  }
+  const selected = parsed.hunks.filter((hunk) => wanted.has(hunk.index));
+  const body = selected.flatMap((hunk) => hunk.lines);
+  const text = [...parsed.header.filter((line, index, all) => !(index === all.length - 1 && line === "")), ...body]
+    .join("\n")
+    .replace(/\n*$/, "\n");
+  return {
+    text,
+    selected: selected.map((hunk) => ({
+      index: hunk.index,
+      header: hunk.header,
+      oldStart: hunk.oldStart,
+      oldCount: hunk.oldCount,
+      newStart: hunk.newStart,
+      newCount: hunk.newCount,
+    })),
+    available: parsed.hunks.length,
+  };
+}
+
+function describeFileAdoptAction(file) {
+  const status = file?.status || "M";
+  if (status === "D") return "delete";
+  if (status === "A") return "add";
+  if (status === "R") return "rename";
+  if (status === "C") return "copy";
+  return "update";
+}
+
+/**
+ * Adopt selected files (and optional hunks) from *theirs* into the working tree + index.
+ * Does not create a merge commit — host/agent reviews then commits.
+ */
+function planPartialAdopt(projectRoot, {
+  before,
+  target,
+  review,
+  apply,
+  force,
+  comment,
+  paths,
+  hunks,
+  base,
+}) {
+  const byPath = new Map((review.files || []).map((file) => [file.path, file]));
+  const missing = paths.filter((filePath) => !byPath.has(filePath));
+  if (missing.length) {
+    return {
+      ...base,
+      mode: hunks ? "hunks" : "files",
+      paths,
+      hunks,
+      status: "blocked",
+      blockedReasons: [
+        `Path(s) not in this review: ${missing.join(", ")}. Run workspace --review ${target.name} first.`,
+      ],
+      workspace: before,
+    };
+  }
+
+  if (hunks) {
+    if (paths.length !== 1) {
+      return {
+        ...base,
+        mode: "hunks",
+        paths,
+        hunks,
+        status: "blocked",
+        blockedReasons: ["--hunks requires exactly one --path."],
+        workspace: before,
+      };
+    }
+    const file = byPath.get(paths[0]);
+    if (file.status !== "M") {
+      return {
+        ...base,
+        mode: "hunks",
+        paths,
+        hunks,
+        status: "blocked",
+        blockedReasons: [
+          `Hunk adopt supports modified files only (status ${file.status}). Adopt the whole file with --path instead.`,
+        ],
+        workspace: before,
+      };
+    }
+  }
+
+  if (before.dirty && !force) {
+    return {
+      ...base,
+      mode: hunks ? "hunks" : "files",
+      paths,
+      hunks,
+      status: "blocked",
+      blockedReasons: [
+        `Working tree is dirty (${before.changedFiles} changed files). Commit/stash first, or pass --force after host consent.`,
+      ],
+      workspace: before,
+    };
+  }
+
+  const selections = paths.map((filePath) => {
+    const file = byPath.get(filePath);
+    return {
+      path: filePath,
+      status: file.status,
+      from: file.from || null,
+      action: describeFileAdoptAction(file),
+      additions: file.additions || 0,
+      deletions: file.deletions || 0,
+    };
+  });
+
+  let hunkPlan = null;
+  if (hunks) {
+    const fileReview = buildWorkspaceReview(projectRoot, { theirs: target.name, path: paths[0] });
+    if (fileReview.status !== "ready" || !fileReview.patch?.text) {
+      return {
+        ...base,
+        mode: "hunks",
+        paths,
+        hunks,
+        selections,
+        status: "blocked",
+        blockedReasons: fileReview.blockedReasons?.length
+          ? fileReview.blockedReasons
+          : [`Could not load patch for ${paths[0]}.`],
+        workspace: before,
+      };
+    }
+    try {
+      hunkPlan = buildPartialPatch(fileReview.patch.text, hunks);
+    } catch (error) {
+      return {
+        ...base,
+        mode: "hunks",
+        paths,
+        hunks,
+        selections,
+        status: "blocked",
+        blockedReasons: [error.message],
+        workspace: before,
+      };
+    }
+  }
+
+  const mode = hunks ? "hunks" : "files";
+  const explanation = hunks
+    ? `Ready to adopt hunk(s) ${hunks.join(",")} of ${paths[0]} from ${target.name} into ${before.branch} (index only; no merge commit).`
+    : `Ready to adopt ${selections.length} file(s) from ${target.name} into ${before.branch} (index only; no merge commit).`;
+
+  if (!apply) {
+    return {
+      ...base,
+      mode,
+      paths,
+      hunks,
+      selections,
+      hunksSelected: hunkPlan?.selected || null,
+      hunksAvailable: hunkPlan?.available ?? null,
+      comment,
+      status: "ready",
+      explanation,
+      workspace: before,
+    };
+  }
+
+  try {
+    if (hunks) {
+      // --index updates both working tree and index so the adopted hunks are visible immediately.
+      const applyResult = spawnSync("git", ["apply", "--index", "-"], {
+        cwd: projectRoot,
+        encoding: "utf8",
+        timeout: 8000,
+        input: hunkPlan.text,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: false,
+      });
+      if (applyResult.error || applyResult.status !== 0) {
+        const detail = (applyResult.stderr || applyResult.stdout || "").trim();
+        throw new Error(`git apply --index failed${detail ? `: ${detail}` : ""}`);
+      }
+    } else {
+      for (const item of selections) {
+        if (item.action === "delete") {
+          const exists = runGit(projectRoot, ["ls-files", "--", item.path]);
+          if (exists) {
+            runGit(projectRoot, ["rm", "-f", "--", item.path], { allowFailure: false });
+          }
+          continue;
+        }
+        runGit(projectRoot, ["checkout", target.name, "--", item.path], { allowFailure: false });
+        if (item.action === "rename" && item.from && item.from !== item.path) {
+          const oldTracked = runGit(projectRoot, ["ls-files", "--", item.from]);
+          if (oldTracked) {
+            runGit(projectRoot, ["rm", "-f", "--", item.from], { allowFailure: true });
+          }
+        }
+      }
+    }
+  } catch (error) {
+    return {
+      ...base,
+      mode,
+      paths,
+      hunks,
+      selections,
+      hunksSelected: hunkPlan?.selected || null,
+      status: "blocked",
+      blockedReasons: [
+        error.message,
+        "Partial adopt left the index as git reported; inspect with git status and fix manually if needed.",
+      ],
+      workspace: collectWorkspace(projectRoot),
+    };
+  }
+
+  const after = collectWorkspace(projectRoot);
+  return {
+    ...base,
+    mode,
+    paths,
+    hunks,
+    selections,
+    hunksSelected: hunkPlan?.selected || null,
+    hunksAvailable: hunkPlan?.available ?? null,
+    comment,
+    status: "applied",
+    explanation: hunks
+      ? `Adopted hunk(s) ${hunks.join(",")} of ${paths[0]} from ${target.name} into the index on ${after.branch}. Commit when ready.`
+      : `Adopted ${selections.length} file(s) from ${target.name} into the index on ${after.branch}. Commit when ready.`,
+    workspace: after,
+  };
+}
+
+/**
+ * Adopt *theirs* into the current branch.
+ * - No paths: full `git merge` (optional merge-note commit).
+ * - With --path: checkout/rm selected files into the index (no merge commit).
+ * - With --path + --hunks: apply selected unified-diff hunks into the index.
+ * Host-controlled; no push.
+ */
+function planWorkspaceAdopt(root, {
+  theirs,
+  apply = false,
+  force = false,
+  comment = null,
+  paths = null,
+  hunks = null,
+} = {}) {
   const projectRoot = path.resolve(root);
   const before = collectWorkspace(projectRoot);
   const targetName = typeof theirs === "string" ? theirs.trim() : "";
   let adoptComment = null;
+  let selectedPaths = [];
+  let selectedHunks = null;
   try {
     adoptComment = normalizeAdoptComment(comment);
+    selectedPaths = normalizeAdoptPaths(paths);
+    selectedHunks = normalizeAdoptHunks(hunks);
   } catch (error) {
     return {
       version: 1,
       action: "adopt",
       apply: Boolean(apply),
       force: Boolean(force),
+      mode: "branch",
       root: projectRoot,
       yours: before.available
         ? {
@@ -349,8 +692,38 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false, commen
         : null,
       theirs: null,
       review: null,
+      paths: [],
+      hunks: null,
       comment: null,
       blockedReasons: [error.message],
+      status: "blocked",
+      workspace: before,
+    };
+  }
+
+  if (selectedHunks && selectedPaths.length !== 1) {
+    return {
+      version: 1,
+      action: "adopt",
+      apply: Boolean(apply),
+      force: Boolean(force),
+      mode: "hunks",
+      root: projectRoot,
+      yours: before.available
+        ? {
+            branch: before.branch,
+            commit: before.commit,
+            shortCommit: before.shortCommit,
+            dirty: before.dirty,
+            changedFiles: before.changedFiles,
+          }
+        : null,
+      theirs: null,
+      review: null,
+      paths: selectedPaths,
+      hunks: selectedHunks,
+      comment: adoptComment,
+      blockedReasons: ["--hunks requires exactly one --path."],
       status: "blocked",
       workspace: before,
     };
@@ -361,6 +734,7 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false, commen
     action: "adopt",
     apply: Boolean(apply),
     force: Boolean(force),
+    mode: selectedHunks ? "hunks" : selectedPaths.length ? "files" : "branch",
     root: projectRoot,
     yours: before.available
       ? {
@@ -373,6 +747,8 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false, commen
       : null,
     theirs: null,
     review: null,
+    paths: selectedPaths,
+    hunks: selectedHunks,
     comment: adoptComment,
     blockedReasons: [],
   };
@@ -423,6 +799,20 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false, commen
     summary: review.summary,
     files: review.files?.slice(0, 50) || [],
   };
+
+  if (selectedPaths.length || selectedHunks) {
+    return planPartialAdopt(projectRoot, {
+      before,
+      target,
+      review,
+      apply,
+      force,
+      comment: adoptComment,
+      paths: selectedPaths,
+      hunks: selectedHunks,
+      base,
+    });
+  }
 
   if (before.dirty && !force) {
     return {
@@ -487,6 +877,7 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false, commen
 function formatAdoptPlan(plan) {
   const lines = [
     `Adopt: ${plan.status}`,
+    `Mode: ${plan.mode || "branch"}`,
     `Yours: ${plan.yours?.branch || "—"} @ ${plan.yours?.shortCommit || "—"}`,
     `Theirs: ${plan.theirs?.branch || "—"} @ ${plan.theirs?.shortCommit || "—"}`,
   ];
@@ -495,11 +886,24 @@ function formatAdoptPlan(plan) {
       `Diff: ${plan.review.summary.filesChanged} files · +${plan.review.summary.additions}/-${plan.review.summary.deletions}`,
     );
   }
+  if (plan.paths?.length) lines.push(`Paths: ${plan.paths.join(", ")}`);
+  if (plan.hunks?.length) lines.push(`Hunks: ${plan.hunks.join(",")}`);
+  if (plan.selections?.length) {
+    for (const item of plan.selections.slice(0, 20)) {
+      lines.push(`  ${item.action} ${item.path}${item.from ? ` (from ${item.from})` : ""}`);
+    }
+  }
   if (plan.comment) lines.push(`Note: ${plan.comment}`);
   if (plan.explanation) lines.push(plan.explanation);
   for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
   if (plan.status === "ready") {
-    lines.push("Apply with: npm run harness -- workspace --adopt <branch> --apply [--note \"…\"]");
+    if (plan.mode === "hunks") {
+      lines.push("Apply with: npm run harness -- workspace --adopt <branch> --path <file> --hunks 1,3 --apply");
+    } else if (plan.mode === "files") {
+      lines.push("Apply with: npm run harness -- workspace --adopt <branch> --path <file> --apply");
+    } else {
+      lines.push("Apply with: npm run harness -- workspace --adopt <branch> --apply [--note \"…\"]");
+    }
   }
   if (plan.workspace?.available && plan.status === "applied") {
     lines.push(formatWorkspace(plan.workspace));
@@ -879,6 +1283,7 @@ function formatWorkspace(workspace) {
 
 export {
   buildAdoptMergeMessage,
+  buildPartialPatch,
   buildWorkspaceReview,
   collectGit,
   collectWorkspace,
@@ -890,6 +1295,9 @@ export {
   isSafeBranchName,
   listLocalBranches,
   normalizeAdoptComment,
+  normalizeAdoptHunks,
+  normalizeAdoptPaths,
+  parseUnifiedDiffHunks,
   planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
