@@ -1914,30 +1914,41 @@ async function main(argv = process.argv.slice(2)) {
       root,
       port: options.port || COCKPIT_DEFAULT_PORT,
       host: "127.0.0.1",
+      attachRunner: (attachOptions) => runAttach(root, {
+        ...attachOptions,
+        probeApp,
+        runScenario,
+        loadJson,
+        validateConfig,
+        loadScenario,
+        validateScenario,
+      }),
     });
     const listening = await api.listen();
     const info = {
       ok: true,
       ...listening,
-      readOnly: true,
+      readOnly: false,
       loopbackOnly: true,
       endpoints: {
         ui: listening.url,
         overview: `${listening.url}api/v1/overview`,
         hostConfig: `${listening.url}api/v1/host-config`,
         workspace: `${listening.url}api/v1/workspace`,
+        attach: `${listening.url}api/v1/attach`,
         runs: `${listening.url}api/v1/runs`,
         handoffs: `${listening.url}api/v1/handoffs`,
         artifacts: `${listening.url}api/v1/artifacts/`,
       },
-      explanation: "Cockpit UI + read API on loopback only. Open / for the shell; /api/v1 for JSON. Stop with Ctrl+C.",
+      explanation: "Cockpit UI + loopback API. Open / for the shell; GET/POST /api/v1/attach for the one-command loop. Stop with Ctrl+C.",
     };
     if (options.json) {
       console.log(JSON.stringify(info, null, 2));
     } else {
       console.log(`Cockpit UI listening at ${listening.url}`);
       console.log(`API overview: ${info.endpoints.overview}`);
-      console.log("Read-only · loopback only · Ctrl+C to stop");
+      console.log(`Attach: ${info.endpoints.attach}`);
+      console.log("Loopback only · local writes enabled · Ctrl+C to stop");
     }
     const shutdown = async () => {
       try {

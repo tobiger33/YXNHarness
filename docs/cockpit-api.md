@@ -40,6 +40,8 @@ this package). JSON stays under `/api/v1/…`.
 | PATCH | `/api/v1/feedback/:id` | Edit / resolve feedback |
 | POST | `/api/v1/feedback/bundle` | Bundle threads into a handoff |
 | POST | `/api/v1/elements/adopt` | `{ elements, apply?, withHandoff?, sourceBranch?, body? }` — visual element adopt |
+| GET | `/api/v1/attach` | Attach dry-run (`?until=probe` …). Always preview. |
+| POST | `/api/v1/attach` | `{ until?, apply?, yes?, installBrowser?, … }` — same loop as `harness attach` |
 | GET | `/api/v1/agent` | Agent panel state (honest: not connected) |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
@@ -56,7 +58,9 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 
 **Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
 `/api/v1/workspace/adopt`. Composer messages become local feedback when no
-agent adapter is connected. Preview/Compare demos are layout examples only.
+agent adapter is connected. The Agent plug control GETs `/api/v1/attach` for a
+dry-run attach preview. Preview/Compare demos are layout examples only;
+attach/probe use the real project when configured.
 
 See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
 [`cockpit-foundation.md`](cockpit-foundation.md), and [`handoff.md`](handoff.md).

@@ -171,7 +171,9 @@ Serve the local workbench cockpit (Preview / Compare / Changes + Agent panel):
 npm run harness -- serve
 ```
 
-Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockpit-api.md).
+Open `http://127.0.0.1:8787/` for the UI. `GET/POST /api/v1/attach` is the
+one-command attach loop over HTTP (same as `harness attach`). See
+[`docs/cockpit-api.md`](docs/cockpit-api.md) and [`docs/attach.md`](docs/attach.md).
 
 The UI/backend handoff and acceptance flow for element selection, comments,
 adaptation requests and screenshot transport is in

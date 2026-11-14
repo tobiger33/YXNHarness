@@ -1142,6 +1142,42 @@ qa("[data-nav]").forEach((item) => {
   });
 });
 q("#back-workbench").addEventListener("click", () => setView(state.view));
+q("#attach-preview")?.addEventListener("click", async () => {
+  const button = q("#attach-preview");
+  if (button) button.disabled = true;
+  try {
+    const plan = await apiGet("/api/v1/attach?until=probe");
+    const feed = q("#chat-feed");
+    const card = document.createElement("div");
+    card.className = "agent-response";
+    const title = document.createElement("div");
+    title.className = "thought";
+    title.textContent = `Attach ${plan.status || "preview"} · until ${plan.until || "probe"}`;
+    card.append(title);
+    const body = document.createElement("p");
+    body.textContent = plan.explanation
+      || plan.blockedReasons?.join("; ")
+      || (plan.next?.[0] || "Attach dry-run complete.");
+    card.append(body);
+    if (plan.next?.length) {
+      const next = document.createElement("div");
+      next.className = "agent-event";
+      next.textContent = plan.next[0];
+      card.append(next);
+    }
+    feed.append(card);
+    feed.scrollTop = feed.scrollHeight;
+    pushActivity(`Attach preview · ${plan.status || "ready"}`);
+    toast(plan.ok === false
+      ? (plan.blockedReasons?.[0] || "Attach blocked")
+      : `Attach dry-run: ${plan.stoppedAt || plan.until || "probe"}`);
+    icons();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
 q("#new-chat").addEventListener("click", () => {
   state.contexts = [];
   clearElementSelection();
