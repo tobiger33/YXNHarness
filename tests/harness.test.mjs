@@ -32,6 +32,7 @@ import {
   collectGit,
   collectWorkspace,
   planWorkspaceCheckout,
+  planWorkspaceCreate,
 } from "../scripts/workspace.mjs";
 
 test("scenario validation accepts the supported data model", () => {
@@ -209,6 +210,8 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     note: null,
     port: null,
     checkout: null,
+    create: null,
+    start: null,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -271,6 +274,13 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     checkout: "feature/demo",
     apply: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--create", "feature/new", "--start", "main", "--apply"]), {
+    ...base,
+    action: "workspace",
+    create: "feature/new",
+    start: "main",
+    apply: true,
+  });
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -293,7 +303,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, or workspace/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
-  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout or --create/);
+  assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /either --checkout or --create/);
+  assert.throws(() => parseArgs(["workspace", "--start", "main"]), /only valid with workspace --create/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
@@ -470,6 +482,30 @@ test("workspace collects read-only git branch inventory", async () => {
     const forced = planWorkspaceCheckout(root, { branch: "main", apply: true, force: true });
     assert.equal(forced.status, "applied");
     assert.equal(collectWorkspace(root).branch, "main");
+
+    await rm(path.join(root, "dirty.txt"), { force: true });
+    assert.equal(collectWorkspace(root).dirty, false);
+
+    const createPreview = planWorkspaceCreate(root, { branch: "feature/new", apply: false });
+    assert.equal(createPreview.status, "ready");
+    assert.equal(createPreview.to.branch, "feature/new");
+    assert.equal(collectWorkspace(root).branch, "main");
+
+    const duplicate = planWorkspaceCreate(root, { branch: "feature/demo", apply: true });
+    assert.equal(duplicate.status, "blocked");
+
+    const created = planWorkspaceCreate(root, { branch: "feature/new", apply: true });
+    assert.equal(created.status, "applied");
+    assert.equal(collectWorkspace(root).branch, "feature/new");
+
+    const fromMain = planWorkspaceCreate(root, {
+      branch: "feature/from-main",
+      from: "main",
+      apply: true,
+    });
+    assert.equal(fromMain.status, "applied");
+    assert.equal(fromMain.startPoint.ref, "main");
+    assert.equal(collectWorkspace(root).branch, "feature/from-main");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

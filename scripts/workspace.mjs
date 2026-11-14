@@ -129,7 +129,7 @@ function collectWorkspace(root) {
     behind,
     branches,
     readOnly: true,
-    note: "Local branch inventory. Switch with: harness workspace --checkout <branch> --dry-run| --apply. Create/push stay out of scope.",
+    note: "Local branches: workspace --checkout|--create <branch> --dry-run|--apply. Push/fetch stay out of scope.",
   };
 }
 
@@ -284,6 +284,194 @@ function formatCheckoutPlan(plan) {
   return lines.join("\n");
 }
 
+/**
+ * Host-controlled local branch create + switch.
+ * Starts from HEAD, or from an existing local branch via `from`.
+ * Never fetches/pushes or sets upstream.
+ */
+function planWorkspaceCreate(root, { branch, from = null, apply = false, force = false } = {}) {
+  const projectRoot = path.resolve(root);
+  const before = collectWorkspace(projectRoot);
+  const targetName = typeof branch === "string" ? branch.trim() : "";
+  const fromName = typeof from === "string" && from.trim() ? from.trim() : null;
+
+  const base = {
+    version: 1,
+    action: "create",
+    apply: Boolean(apply),
+    force: Boolean(force),
+    root: projectRoot,
+    from: before.available
+      ? {
+          branch: before.branch,
+          commit: before.commit,
+          shortCommit: before.shortCommit,
+          dirty: before.dirty,
+          changedFiles: before.changedFiles,
+        }
+      : null,
+    startPoint: null,
+    to: null,
+    blockedReasons: [],
+  };
+
+  if (!before.available) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: ["Not a Git repository."],
+      workspace: before,
+    };
+  }
+
+  if (!targetName) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: ["--create requires a new local branch name."],
+      workspace: before,
+    };
+  }
+
+  if (!isSafeBranchName(targetName)) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [`Invalid branch name "${targetName}".`],
+      workspace: before,
+    };
+  }
+
+  if (resolveLocalBranch(projectRoot, targetName)) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [
+        `Local branch "${targetName}" already exists. Use --checkout to switch, or pick another name.`,
+      ],
+      workspace: before,
+      availableBranches: before.branches.map((entry) => entry.name),
+    };
+  }
+
+  let startPoint = {
+    branch: before.branch,
+    commit: before.commit,
+    shortCommit: before.shortCommit,
+    ref: "HEAD",
+  };
+
+  if (fromName) {
+    if (!isSafeBranchName(fromName)) {
+      return {
+        ...base,
+        status: "blocked",
+        blockedReasons: [`Invalid --from branch name "${fromName}".`],
+        workspace: before,
+      };
+    }
+    const source = resolveLocalBranch(projectRoot, fromName);
+    if (!source) {
+      return {
+        ...base,
+        status: "blocked",
+        blockedReasons: [
+          `Local start branch "${fromName}" not found. --from only accepts existing local branches.`,
+        ],
+        workspace: before,
+        availableBranches: before.branches.map((entry) => entry.name),
+      };
+    }
+    startPoint = {
+      branch: source.name,
+      commit: source.commit,
+      shortCommit: source.shortCommit,
+      ref: source.name,
+    };
+  }
+
+  if (!startPoint.commit) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: ["Repository has no commit to branch from yet."],
+      workspace: before,
+    };
+  }
+
+  base.startPoint = startPoint;
+  base.to = {
+    branch: targetName,
+    commit: startPoint.commit,
+    shortCommit: startPoint.shortCommit,
+  };
+
+  if (before.dirty && !force) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [
+        `Working tree is dirty (${before.changedFiles} changed files). Commit/stash first, or pass --force after host consent.`,
+      ],
+      workspace: before,
+    };
+  }
+
+  if (!apply) {
+    return {
+      ...base,
+      status: "ready",
+      explanation: `Ready to create ${targetName} from ${startPoint.ref}` +
+        (force && before.dirty ? " with --force (dirty tree)" : "") +
+        " and switch onto it.",
+      workspace: before,
+    };
+  }
+
+  try {
+    if (startPoint.ref === "HEAD") {
+      runGit(projectRoot, ["switch", "-c", targetName], { allowFailure: false });
+    } else {
+      runGit(projectRoot, ["switch", "-c", targetName, "--", startPoint.ref], { allowFailure: false });
+    }
+  } catch (error) {
+    return {
+      ...base,
+      status: "blocked",
+      blockedReasons: [error.message],
+      workspace: collectWorkspace(projectRoot),
+    };
+  }
+
+  const after = collectWorkspace(projectRoot);
+  return {
+    ...base,
+    status: "applied",
+    explanation: `Created and switched to ${after.branch || targetName} @ ${after.shortCommit || after.commit}.`,
+    workspace: after,
+  };
+}
+
+function formatCreatePlan(plan) {
+  const lines = [
+    `Create branch: ${plan.status}`,
+    `Start: ${plan.startPoint?.ref || "(none)"} @ ${plan.startPoint?.shortCommit || plan.startPoint?.commit || "—"}`,
+    `New: ${plan.to?.branch || "(none)"}`,
+  ];
+  if (plan.from?.dirty) {
+    lines.push(`Dirty: yes (${plan.from.changedFiles} files)${plan.force ? " · force requested" : ""}`);
+  }
+  if (plan.explanation) lines.push(plan.explanation);
+  for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  if (plan.status === "ready") {
+    lines.push("Apply with: npm run harness -- workspace --create <branch> --apply");
+  }
+  if (plan.workspace?.available && plan.status === "applied") {
+    lines.push(formatWorkspace(plan.workspace));
+  }
+  return lines.join("\n");
+}
+
 function formatWorkspace(workspace) {
   if (!workspace?.available) {
     return [
@@ -319,10 +507,12 @@ export {
   collectGit,
   collectWorkspace,
   formatCheckoutPlan,
+  formatCreatePlan,
   formatWorkspace,
   isSafeBranchName,
   listLocalBranches,
   planWorkspaceCheckout,
+  planWorkspaceCreate,
   resolveLocalBranch,
   runGit,
 };
