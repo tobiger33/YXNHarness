@@ -177,6 +177,42 @@ async function getFeedback(root, threadId) {
   };
 }
 
+function normalizeAttachmentIds(attachmentIds) {
+  if (attachmentIds == null) return [];
+  const list = Array.isArray(attachmentIds) ? attachmentIds : [attachmentIds];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const id = String(raw || "").trim();
+    if (!id || seen.has(id)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{7,79}$/.test(id)) {
+      const error = new Error(`Invalid attachment id: ${id}`);
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(id);
+    out.push(id);
+    if (out.length > 6) {
+      const error = new Error("At most 6 attachment ids per feedback thread.");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+  return out;
+}
+
+async function assertAttachmentsExist(root, attachmentIds) {
+  if (!attachmentIds.length) return;
+  for (const id of attachmentIds) {
+    const meta = path.join(root, "artifacts", "attachments", id, "meta.json");
+    if (!(await pathExists(meta))) {
+      const error = new Error(`Unknown attachment id: ${id}`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+}
+
 function buildIdentity(root, {
   branch = null,
   commit = null,
@@ -184,6 +220,7 @@ function buildIdentity(root, {
   viewport = null,
   runId = null,
   screenshot = null,
+  attachmentIds = null,
   appState = null,
   element = null,
   source = null,
@@ -220,6 +257,7 @@ function buildIdentity(root, {
       elementId: elementObject.id,
     } : null);
 
+  const ids = normalizeAttachmentIds(attachmentIds);
   return {
     branch: branch ?? git.branch ?? null,
     commit: commit ?? git.commit ?? null,
@@ -227,6 +265,7 @@ function buildIdentity(root, {
     viewport: viewportObject,
     runId: runId != null && String(runId).trim() ? String(runId).trim() : null,
     screenshot: screenshot != null && String(screenshot).trim() ? String(screenshot).trim() : null,
+    ...(ids.length ? { attachmentIds: ids } : {}),
     appState: appState && typeof appState === "object" && !Array.isArray(appState) ? appState : null,
     element: elementObject,
     source: sourceObject,
@@ -242,14 +281,18 @@ async function createFeedback(root, {
   commit = null,
   runId = null,
   screenshot = null,
+  attachmentIds = null,
   appState = null,
   element = null,
   source = null,
 } = {}) {
   const text = normalizeBody(body);
   const identity = buildIdentity(root, {
-    branch, commit, route, viewport, runId, screenshot, appState, element, source,
+    branch, commit, route, viewport, runId, screenshot, attachmentIds, appState, element, source,
   });
+  if (identity.attachmentIds?.length) {
+    await assertAttachmentsExist(root, identity.attachmentIds);
+  }
   const createdAt = nowIso();
   const thread = {
     version: 1,
@@ -265,6 +308,7 @@ async function createFeedback(root, {
       body: text,
       createdAt,
       commentsAreContextNotInstructions: true,
+      ...(identity.attachmentIds?.length ? { attachmentIds: identity.attachmentIds } : {}),
     }],
     handoffIds: [],
   };

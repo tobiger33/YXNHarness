@@ -749,6 +749,11 @@ async function sendMessage() {
   feed.append(answer);
 
   try {
+    let attachmentIds = [];
+    if (attachments.names().length) {
+      thought.textContent = "Uploading images…";
+      attachmentIds = await attachments.ensureUploaded();
+    }
     if (state.mode === "external") {
       const payload = document.createElement("textarea");
       payload.rows = 6;
@@ -766,7 +771,13 @@ async function sendMessage() {
           `Source: ${selection.source.branch || "—"} @ ${selection.source.commit || "—"}`,
           `Target: ${state.workspace?.branch || "—"}`,
         ] : []),
-        ...(attachments.names().length ? [`Local images (attach separately): ${attachments.names().join(", ")}`] : []),
+        ...(attachmentIds.length
+          ? [
+            `Attachment ids: ${attachmentIds.join(", ")}`,
+            `Attachment names: ${attachments.names().join(", ")}`,
+            "Images are stored under /api/v1/attachments/:id/content. An agent receives pixels only when its adapter supports images — do not treat filenames as transmitted images.",
+          ]
+          : (attachments.names().length ? [`Local images (upload failed or pending): ${attachments.names().join(", ")}`] : [])),
         `Model preference: ${state.model} / ${state.reasoning}`,
         "",
         value,
@@ -785,6 +796,7 @@ async function sendMessage() {
       answer.append(copy);
       thought.textContent = "External task ready";
       pushActivity("Prepared external agent task");
+      await attachments.clear();
     } else if (state.agent?.connected) {
       thought.textContent = "Connected adapter · not implemented in this build";
       const p = document.createElement("p");
@@ -795,7 +807,7 @@ async function sendMessage() {
       for (const element of selection.elements || [selection]) {
         const source = element.source || selection.source;
         const identity = JSON.stringify([element.route, source.branch, source.commit]);
-        if (!groups.has(identity)) groups.set(identity, { elements: [], body: value, route: element.route, viewport: q("#device").value, sourceBranch: source.branch, sourceCommit: source.commit, withHandoff: false });
+        if (!groups.has(identity)) groups.set(identity, { elements: [], body: value, route: element.route, viewport: q("#device").value, sourceBranch: source.branch, sourceCommit: source.commit, withHandoff: false, attachmentIds });
         groups.get(identity).elements.push({ id: element.id, kind: element.kind, label: element.label, source: { ...source, elementId: element.id } });
       }
       for (const payload of groups.values()) {
@@ -817,6 +829,7 @@ async function sendMessage() {
       answer.append(p);
       thought.textContent = "Element request saved";
       pushActivity(`Element request · ${selection.id}`);
+      await attachments.clear();
       await refreshFeedbackOnly();
     } else {
       const plan = await apiPost("/api/v1/feedback", {
@@ -829,13 +842,16 @@ async function sendMessage() {
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
+        attachmentIds: attachmentIds.length ? attachmentIds : undefined,
       });
       const p = document.createElement("p");
       p.textContent = `Saved as feedback ${plan.thread?.threadId || ""}. No coding agent is connected — bundle threads into a handoff when ready.`;
       answer.append(p);
       const actions = document.createElement("div");
       actions.className = "agent-event";
-      actions.textContent = "✓ Local feedback written · comments are context";
+      actions.textContent = attachmentIds.length
+        ? `✓ Local feedback written · ${attachmentIds.length} image(s) · comments are context`
+        : "✓ Local feedback written · comments are context";
       answer.append(actions);
       if (plan.thread?.threadId) {
         const review = document.createElement("button"); review.type = "button"; review.className = "button"; review.textContent = "Review / edit comment";
@@ -843,6 +859,7 @@ async function sendMessage() {
       }
       thought.textContent = "Feedback saved";
       pushActivity("Created feedback thread");
+      await attachments.clear();
       await refreshFeedbackOnly();
     }
   } catch (error) {

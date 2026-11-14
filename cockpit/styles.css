@@ -97,6 +97,9 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .attachment-preview img { display: block; width: 100%; height: 58px; object-fit: cover; background: var(--canvas); }
 #yxn-workbench .attachment-preview span { width: 100%; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--muted); }
 #yxn-workbench .attachment-remove { position: absolute; top: -4px; right: -4px; display: grid; place-items: center; width: 21px; height: 21px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--raised); color: var(--text); }
+#yxn-workbench .attachment-card.is-uploading .attachment-preview { opacity: 0.72; }
+#yxn-workbench .attachment-card.is-error .attachment-preview { border-color: var(--text); }
+#yxn-workbench .attachment-retry { position: absolute; left: 4px; bottom: 22px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--raised); color: var(--text); font-size: 10px; }
 #yxn-workbench .attachment-viewer { width: min(1000px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; }
 #yxn-workbench .attachment-viewer::backdrop { background: #0009; }
 #yxn-workbench .attachment-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
@@ -107,7 +110,7 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .attachment-image-area { display: flex; align-items: center; justify-content: center; padding: 12px; background: var(--canvas); }
 #yxn-workbench .attachment-image-area img { display: block; max-width: 100%; max-height: calc(100dvh - 140px); object-fit: contain; }
 @media(pointer:coarse) { #yxn-workbench .attachment-remove { width: 30px; height: 30px; min-height: 30px; } }
-#yxn-workbench .attachment-tray::after { content: "Local images · click to preview"; display: block; width: 100%; font-size: 10px; color: var(--faint); }
+#yxn-workbench .attachment-tray::after { content: "Images upload to this project · click to preview"; display: block; width: 100%; font-size: 10px; color: var(--faint); }
 
 /* Home and workbench share the same brand, typography and neutral surfaces. */
 #yxn-workbench a.brand { color: inherit; text-decoration: none; border-radius: 4px; }

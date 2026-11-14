@@ -57,10 +57,11 @@ Images added to a message can also be reopened from that message. Draft images
 persist as Blobs in IndexedDB; removing them or starting a new chat clears the
 corresponding draft storage. They are not placed in localStorage.
 
-This is local UI storage, not an agent upload API. External task text lists the
-image names with an instruction to attach them separately. A backend adapter
-must persist attachment IDs with feedback/messages and include the actual image
-files in agent handoffs before images can reach a connected agent.
+Draft Blobs stay in IndexedDB until upload succeeds. The cockpit posts each
+image to `POST /api/v1/attachments`, replaces draft ids with server attachment
+ids, and stores those ids on feedback threads/messages. External task text lists
+attachment ids and names; an agent receives pixels only when its adapter
+supports images — never treat a filename as a transmitted image.
 
 ## Repository home
 

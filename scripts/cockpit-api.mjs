@@ -25,6 +25,12 @@ import {
   listFeedback,
   updateFeedback,
 } from "./feedback.mjs";
+import {
+  createAttachment,
+  deleteAttachment,
+  getAttachment,
+  listAttachments,
+} from "./attachments.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -156,6 +162,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/elements/adopt",
         "POST /api/v1/attach",
         "POST /api/v1/share",
+        "POST /api/v1/attachments",
+        "DELETE /api/v1/attachments/:id",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -181,6 +189,10 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/attach",
         "GET /api/v1/share",
         "POST /api/v1/share",
+        "GET /api/v1/attachments",
+        "POST /api/v1/attachments",
+        "GET /api/v1/attachments/:id/content",
+        "DELETE /api/v1/attachments/:id",
         "GET /api/v1/agent",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
@@ -340,6 +352,8 @@ function apiIndexPayload(projectRoot) {
       "POST /api/v1/elements/adopt",
       "POST /api/v1/attach",
       "POST /api/v1/share",
+      "POST /api/v1/attachments",
+      "DELETE /api/v1/attachments/:id",
     ],
     root: projectRoot,
     links: {
@@ -360,11 +374,12 @@ function apiIndexPayload(projectRoot) {
       elementsAdopt: "/api/v1/elements/adopt",
       attach: "/api/v1/attach",
       share: "/api/v1/share",
+      attachments: "/api/v1/attachments",
       agent: "/api/v1/agent",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments. No remote agent required.",
   };
 }
 
@@ -419,6 +434,21 @@ async function readJsonBody(request) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+async function readBinaryBody(request, { maxBytes = 12 * 1024 * 1024 } = {}) {
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > maxBytes) {
+      const error = new Error(`Body exceeds ${maxBytes} bytes.`);
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }
 
 function createCockpitApi({
@@ -522,7 +552,29 @@ function createCockpitApi({
           appState: body.appState ?? null,
           element: body.element ?? null,
           source: body.source ?? null,
+          attachmentIds: body.attachmentIds || body.attachments || null,
         });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/attachments" && method === "POST") {
+        const declaredType = (request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+        const filename = request.headers["x-attachment-filename"] || request.headers["x-filename"] || null;
+        const buffer = await readBinaryBody(request);
+        const plan = await createAttachment(projectRoot, {
+          buffer,
+          filename,
+          declaredType: declaredType || null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 201, plan);
+        return;
+      }
+
+      const attachmentDeleteMatch = pathname.match(/^\/api\/v1\/attachments\/([^/]+)$/);
+      if (attachmentDeleteMatch && method === "DELETE") {
+        const force = searchParams.get("force") === "1" || searchParams.get("force") === "true";
+        const plan = await deleteAttachment(projectRoot, decodeURIComponent(attachmentDeleteMatch[1]), { force });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;
       }
@@ -541,6 +593,7 @@ function createCockpitApi({
           from: body.from || "last-green",
           force: body.force === true,
           note: body.note ?? body.comment ?? null,
+          attachmentIds: body.attachmentIds || body.attachments || null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;
@@ -607,7 +660,7 @@ function createCockpitApi({
       }
 
       if (method !== "GET" && method !== "HEAD") {
-        response.writeHead(405, { Allow: "GET, HEAD, POST, PATCH" }).end("Method not allowed");
+        response.writeHead(405, { Allow: "GET, HEAD, POST, PATCH, DELETE" }).end("Method not allowed");
         return;
       }
 
@@ -659,6 +712,29 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/share") {
         sendJson(response, 200, await listShares(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/attachments") {
+        sendJson(response, 200, await listAttachments(projectRoot));
+        return;
+      }
+
+      const attachmentContentMatch = pathname.match(/^\/api\/v1\/attachments\/([^/]+)\/content$/);
+      if (attachmentContentMatch) {
+        try {
+          const { meta, body } = await getAttachment(projectRoot, decodeURIComponent(attachmentContentMatch[1]));
+          response.writeHead(200, {
+            "Content-Type": meta.mimeType || "application/octet-stream",
+            "Content-Length": body.length,
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": `inline; filename="${String(meta.filename || "attachment").replace(/"/g, "")}"`,
+          });
+          response.end(method === "HEAD" ? undefined : body);
+        } catch (error) {
+          sendJson(response, error.statusCode || 500, { error: error.message });
+        }
         return;
       }
 
