@@ -11,33 +11,39 @@ software projects. The long-term goal is to support UI and animation work
 across web, mobile, and desktop stacks, with agents working through native
 project APIs instead of patching rendered interfaces.
 
-## Demo the product loop (Harbor Desk)
+**Product split:** the coding agent does setup and proposals; the host only
+reviews and **Accepts** (or Rejects). Users should not wire terminals, ports,
+or adapter config by hand when an agent is available.
 
-If someone hands you this repo and says “make it work” / “Mach das”, **start
-here** — not with the scenario runner below. This is the visual feedback →
-propose → Preview → Accept → Commit path that YXNHarness is built for.
+## Agent cold start (“Mach das”)
 
-Requirements: Node.js 20+ and npm.
+If the host gives you this GitHub repo and says “make it work”, **you (the
+coding agent)** bring the loop up. Do **not** ask the host to run setup
+commands, and do **not** start with the scenario runner below.
+
+Requirements: Node.js 20+ and npm. This repo’s `harness.host.json` already
+opts into `workspace-edit`.
 
 ```sh
 npm ci
-# Terminal A — cockpit (this repo already opts into workspace-edit)
+# You start both processes (background / separate shells — host does not):
 npm run harness -- serve
-# Terminal B — Harbor Desk fixture
 node examples/foreign-booking/server.mjs
 ```
 
-1. Open the printed cockpit URL (default `http://127.0.0.1:8787/#/workspace`).
-2. **Open app** — the field prefills `http://127.0.0.1:4173/` from
-   `harness.config.json`. Confirm and wait for “Live inspector ready”.
-3. **Interact** through Search → Review → Confirm → New search (no auto-select).
-4. **Select** an element → **Kommentieren** → type a short instruction → send.
-5. Review the quiet timeline + **Edited** diff → **Preview** → **Accept**.
-6. **Changes** → **Commit** (summary trailer: `Summary written by YXN.`).
+Then **you** open the cockpit (`http://127.0.0.1:8787/#/workspace`), **Open
+app** (prefilled `http://127.0.0.1:4173/`), wait for “Live inspector ready”,
+drive Select → send a short instruction, and leave a proposal ready.
 
-Evidence: Accept rewrites `examples/foreign-booking/styles.css` (reversible
-accent). Automated check:
+**Host-only steps:** Preview / **Accept** or Reject, then Commit/merge when
+they want the change kept. Never Accept or merge without host consent.
+
+Prove setup without a human click path:
 `node --test tests/cockpit-harbor-loop.test.mjs`.
+
+For an arbitrary existing app (not this fixture), use
+[`docs/attach-existing.md`](docs/attach-existing.md) — same split: agent
+attaches, host Accepts.
 
 Details: [`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md),
 [`docs/agent-adapter.md`](docs/agent-adapter.md), [`AGENTS.md`](AGENTS.md).

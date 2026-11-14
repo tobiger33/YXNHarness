@@ -4,6 +4,11 @@ Status: Harbor Desk playthrough ready on this repo — live inspector Select (Ko
 Owner split: UI/layout in Codex; backend and native target adapters in Cursor.
 Keep the accepted YXNHarness layout and native application behavior.
 
+**Who does what:** the coding agent installs, starts cockpit + app, attaches,
+and leaves proposals. The host only Previews/Accepts/Rejects (and merge
+Accept). Do not treat the acceptance checklist below as a host chore list —
+agents execute it; hosts decide.
+
 ## First application
 
 Use `examples/foreign-booking` as the reproducible integration fixture before

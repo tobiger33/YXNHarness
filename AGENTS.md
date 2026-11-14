@@ -4,23 +4,36 @@ YXNHarness is an agent-neutral toolkit for building and validating visual
 changes in existing software projects. The user chooses the coding agent; this
 repo provides project-native control and evidence, not a model-specific agent.
 
-## Cold start (“Mach das” / prove the product)
+## Cold start (“Mach das”) — agent owns setup
 
-When the host gives you this repository and asks you to make it work, demo it,
-or prove the loop — **do not** start with `scenarios/minimal.yaml`.
+YXNHarness is built so the **host does almost nothing**. You (the coding agent)
+own install, start, attach, and proposals. The host only **Accepts** (or
+Rejects) writes/merges and consents to destructive flags (`--yes`, `--force`).
+
+When the host gives you this repository and says make it work / demo / prove
+it — **do not** start with `scenarios/minimal.yaml`, and **do not** hand them
+a multi-step terminal checklist.
 
 1. `npm ci`
-2. Terminal A: `npm run harness -- serve`
-3. Terminal B: `node examples/foreign-booking/server.mjs`
-4. Open the cockpit → **Open app** (`http://127.0.0.1:4173/`) → wait for live inspector
-5. Interact once, then **Select** → **Kommentieren** → send → **Preview** → **Accept** → **Commit**
+2. Start cockpit: `npm run harness -- serve` (keep it running)
+3. Start Harbor Desk: `node examples/foreign-booking/server.mjs` (keep it running)
+4. Open the cockpit yourself → **Open app** (`http://127.0.0.1:4173/`) → wait for live inspector
+5. Drive Select → Kommentieren → send so a proposal appears
+6. Tell the host: “Preview is ready — Accept when you want the file write”
+7. Only after host Accept: Commit/push/merge-propose as they ask (merge Accept stays host/leader)
 
-That is the product path. Full checklist:
+Automated proof you can run without asking the host to click:
+`node --test tests/cockpit-harbor-loop.test.mjs`.
+
+For a **different** existing project: follow
+[attach-existing](docs/attach-existing.md) (`attach --dry-run` → show plan →
+`attach --apply --yes` after consent). Same split: you attach, they Accept.
+
+Full product checklist:
 [`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
-Browser evidence: `node --test tests/cockpit-harbor-loop.test.mjs`.
 
-Only after that demo (or when the host asks for scenario verification) run the
-Playwright scenario runner under “Running and reviewing scenarios”.
+Only when the host asks for scenario verification, use “Running and reviewing
+scenarios” below.
 
 ## Non-negotiable rules
 
