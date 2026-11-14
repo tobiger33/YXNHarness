@@ -240,6 +240,8 @@ for the agent playbook, and fixtures
 
 - The user's chosen coding agent remains in control; the harness is the
   portable cockpit and verification layer.
+- Agents do setup and proposals; hosts Accept. Do not make the host run the
+  install/start/attach path when an agent is available.
 - Build target changes natively through the target project's actions,
   configuration, events, and hooks.
 - Local solo work does not require an account or hosted service.
