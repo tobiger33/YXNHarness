@@ -44,18 +44,18 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
 
-## Review & Übernehmen
+## Workbench layout
 
-The shell follows a Codex/Cursor-style review layout:
+The shell follows the accepted workbench layout (Preview / Compare / Changes):
 
-- Top: mode tabs (Review / Runs / Handoffs)
-- Left context: branches, summary, files changed, adopt composer
-- Center stage: unified diff (or run/handoff detail)
-- Right **Agent** panel: context chips, feedback threads, activity slot, composer
+- Left workspace: nav, branches, recent activity (resizable / collapsible)
+- Center stage: Preview, Compare, Changes tabs
+- Right Agent: Connected/External, chat/feedback, model + reasoning, composer
+- Panel widths persist in `localStorage`; double-click a splitter to reset
 
-Selecting a branch loads the PR-style file list. **Übernehmen** POSTs to
-`/api/v1/workspace/adopt`. Feedback create/resolve/bundle write via
-`/api/v1/feedback*`. The Agent panel stays honest when no adapter is connected.
+**Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
+`/api/v1/workspace/adopt`. Composer messages become local feedback when no
+agent adapter is connected. Preview/Compare demos are layout examples only.
 
 See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
 [`cockpit-foundation.md`](cockpit-foundation.md), and [`handoff.md`](handoff.md).

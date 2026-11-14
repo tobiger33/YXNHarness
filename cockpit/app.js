@@ -1,59 +1,57 @@
-const els = {
-  refreshBtn: document.getElementById("refresh-btn"),
-  branchCurrent: document.getElementById("branch-current"),
-  branchesList: document.getElementById("branches-list"),
-  reviewContext: document.getElementById("review-context"),
-  reviewHeading: document.getElementById("review-heading"),
-  reviewMeta: document.getElementById("review-meta"),
-  reviewSummaryText: document.getElementById("review-summary-text"),
-  reviewStats: document.getElementById("review-stats"),
-  filesCount: document.getElementById("files-count"),
-  filesList: document.getElementById("files-list"),
-  composer: document.getElementById("composer"),
-  adoptComment: document.getElementById("adopt-comment"),
-  adoptCancel: document.getElementById("adopt-cancel"),
-  adoptConfirm: document.getElementById("adopt-confirm"),
-  diffTitle: document.getElementById("diff-title"),
-  diffBody: document.getElementById("diff-body"),
-  runsSummary: document.getElementById("runs-summary"),
-  runsList: document.getElementById("runs-list"),
-  runDetail: document.getElementById("run-detail"),
-  handoffsList: document.getElementById("handoffs-list"),
-  handoffDetail: document.getElementById("handoff-detail"),
-  viewReview: document.getElementById("view-review"),
-  viewRuns: document.getElementById("view-runs"),
-  viewHandoffs: document.getElementById("view-handoffs"),
-  agentStatus: document.getElementById("agent-status"),
-  contextChips: document.getElementById("context-chips"),
-  feedbackCount: document.getElementById("feedback-count"),
-  feedbackList: document.getElementById("feedback-list"),
-  threadDetail: document.getElementById("thread-detail"),
-  threadTitle: document.getElementById("thread-title"),
-  threadMessages: document.getElementById("thread-messages"),
-  threadDone: document.getElementById("thread-done"),
-  threadSelect: document.getElementById("thread-select"),
-  agentActivity: document.getElementById("agent-activity"),
-  selectedChips: document.getElementById("selected-chips"),
-  feedbackBody: document.getElementById("feedback-body"),
-  feedbackSend: document.getElementById("feedback-send"),
-  bundleBtn: document.getElementById("bundle-btn"),
-};
+const root = document.getElementById("yxn-workbench");
+const q = (s) => root.querySelector(s);
+const qa = (s) => [...root.querySelectorAll(s)];
+
+const LAYOUT_KEY = "yxnharness.cockpit.layout.v1";
+const UI_KEY = "yxnharness.cockpit.ui.v1";
 
 const state = {
-  mode: "review",
+  view: "preview",
+  branch: null,
+  reviewBranch: null,
+  mode: "connected",
+  contexts: [],
+  picks: [],
+  model: "Codex",
+  reasoning: "High",
   workspace: null,
-  review: null,
-  reviewFile: null,
-  selectedBranch: null,
-  selectedRun: null,
-  selectedHandoff: null,
-  adopting: false,
+  runs: [],
+  handoffs: [],
   feedback: [],
-  selectedThreadId: null,
-  selectedThread: null,
-  bundleIds: new Set(),
   agent: null,
+  review: null,
+  activity: [],
 };
+
+let panels = {
+  leftWidth: 175,
+  rightWidth: 315,
+  leftCollapsed: false,
+  rightCollapsed: false,
+};
+
+let selecting = true;
+let busy = false;
+let noticeTimer = null;
+
+try {
+  const savedLayout = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
+  if (savedLayout && typeof savedLayout === "object") panels = { ...panels, ...savedLayout };
+  const savedUi = JSON.parse(localStorage.getItem(UI_KEY) || "null");
+  if (savedUi && typeof savedUi === "object") {
+    state.view = savedUi.view || state.view;
+    state.mode = savedUi.mode || state.mode;
+    state.contexts = Array.isArray(savedUi.contexts) ? savedUi.contexts : state.contexts;
+    state.model = savedUi.model || state.model;
+    state.reasoning = savedUi.reasoning || state.reasoning;
+    state.reviewBranch = savedUi.reviewBranch || null;
+  }
+} catch {
+  // ignore corrupt localStorage
+}
+
+const workspaceEl = q(".workspace");
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -63,45 +61,28 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function formatTime(iso, compact = false) {
+function shortId(id) {
+  const value = String(id || "");
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 10)}…${value.slice(-6)}`;
+}
+
+function formatTime(iso) {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return String(iso);
-  if (compact) {
-    return new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
-  }
   return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(date);
-}
-
-function statusClass(status) {
-  if (status === "passed") return "status-passed";
-  if (status === "failed") return "status-failed";
-  return "";
-}
-
-function shortId(id) {
-  const value = String(id || "");
-  if (value.length <= 28) return value;
-  return `${value.slice(0, 12)}…${value.slice(-8)}`;
 }
 
 async function apiGet(pathname) {
   const response = await fetch(pathname, { headers: { Accept: "application/json" } });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data.blockedReasons?.join("; ") || data.error || `${response.status} ${pathname}`;
-    const error = new Error(message);
-    error.payload = data;
-    throw error;
-  }
+  if (!response.ok) throw new Error(data.error || data.blockedReasons?.join("; ") || `${response.status}`);
   return data;
 }
 
@@ -112,635 +93,721 @@ async function apiPost(pathname, body) {
     body: JSON.stringify(body),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data.blockedReasons?.join("; ") || data.error || `${response.status} ${pathname}`;
-    const error = new Error(message);
-    error.payload = data;
-    throw error;
-  }
+  if (!response.ok) throw new Error(data.error || data.blockedReasons?.join("; ") || `${response.status}`);
   return data;
 }
 
-async function apiPatch(pathname, body) {
-  const response = await fetch(pathname, {
-    method: "PATCH",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = data.blockedReasons?.join("; ") || data.error || `${response.status} ${pathname}`;
-    const error = new Error(message);
-    error.payload = data;
-    throw error;
-  }
-  return data;
+function persistLayout() {
+  localStorage.setItem(LAYOUT_KEY, JSON.stringify(panels));
 }
 
-function emptyState(title, copy) {
-  return `
-    <div class="empty-state">
-      <p class="empty-title">${escapeHtml(title)}</p>
-      <p class="empty-copy">${escapeHtml(copy)}</p>
-    </div>
-  `;
+function persistUi() {
+  localStorage.setItem(UI_KEY, JSON.stringify({
+    view: state.view,
+    mode: state.mode,
+    contexts: state.contexts,
+    model: state.model,
+    reasoning: state.reasoning,
+    reviewBranch: state.reviewBranch,
+  }));
 }
 
-function setMode(mode) {
-  state.mode = mode;
-  for (const tab of document.querySelectorAll(".mode-tab")) {
-    tab.classList.toggle("active", tab.dataset.mode === mode);
-  }
-  els.viewReview.hidden = mode !== "review";
-  els.viewRuns.hidden = mode !== "runs";
-  els.viewHandoffs.hidden = mode !== "handoffs";
-  renderContextChips();
+function toast(text) {
+  const notice = q("#notice");
+  notice.textContent = text;
+  notice.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    notice.hidden = true;
+  }, 4200);
 }
 
-function chip(label, value) {
-  if (value == null || value === "") return "";
-  return `<span class="chip"><strong>${escapeHtml(label)}</strong> ${escapeHtml(value)}</span>`;
+function icons() {
+  globalThis.lucide?.createIcons?.({ attrs: { width: 15, height: 15 } });
 }
 
-function renderContextChips() {
-  const workspace = state.workspace || {};
-  const chips = [
-    chip("branch", workspace.branch),
-    chip("commit", workspace.shortCommit || (workspace.commit || "").slice(0, 7)),
-  ];
-  if (state.mode === "review" && state.selectedBranch) {
-    chips.push(chip("review", state.selectedBranch));
-  }
-  if (state.mode === "runs" && state.selectedRun) {
-    chips.push(chip("run", shortId(state.selectedRun)));
-  }
-  if (state.mode === "handoffs" && state.selectedHandoff) {
-    chips.push(chip("handoff", shortId(state.selectedHandoff)));
-  }
-  if (state.selectedThread?.identity?.route) {
-    chips.push(chip("route", state.selectedThread.identity.route));
-  }
-  if (state.selectedThread?.identity?.element?.id) {
-    chips.push(chip("element", state.selectedThread.identity.element.id));
-  }
-  els.contextChips.innerHTML = chips.filter(Boolean).join("") || `<span class="chip">local solo</span>`;
-}
-
-function renderSelectedChips() {
-  const ids = [...state.bundleIds];
-  if (!ids.length) {
-    els.selectedChips.hidden = true;
-    els.selectedChips.innerHTML = "";
-    els.bundleBtn.disabled = true;
-    return;
-  }
-  els.selectedChips.hidden = false;
-  els.selectedChips.innerHTML = ids.map((id) => (
-    `<span class="chip chip-selected">${escapeHtml(shortId(id))}</span>`
-  )).join("");
-  els.bundleBtn.disabled = false;
-  els.bundleBtn.textContent = `Bundle ${ids.length}`;
-}
-
-function renderAgentPanel() {
-  const agent = state.agent || {};
-  els.agentStatus.textContent = agent.connected
-    ? (agent.adapter?.displayName || "Connected")
-    : "Local · not connected";
-  if (!agent.connected) {
-    els.agentActivity.innerHTML = `<p class="activity-empty">${escapeHtml(agent.message || "No coding agent connected. Bundle feedback into a handoff for your agent.")}</p>`;
-  } else if (!(agent.activity || []).length) {
-    els.agentActivity.innerHTML = `<p class="activity-empty">Connected — waiting for agent events.</p>`;
-  } else {
-    els.agentActivity.innerHTML = (agent.activity || []).map((item) => (
-      `<p>${escapeHtml(item)}</p>`
-    )).join("");
-  }
-}
-
-function renderFeedbackList() {
-  const threads = state.feedback || [];
-  const open = threads.filter((thread) => thread.status === "open").length;
-  els.feedbackCount.textContent = threads.length ? `${open} open · ${threads.length}` : "none";
-  if (!threads.length) {
-    els.feedbackList.innerHTML = `<p class="empty-inline">No feedback yet. Add a note below.</p>`;
-    return;
-  }
-  els.feedbackList.innerHTML = threads.map((thread) => {
-    const active = state.selectedThreadId === thread.threadId ? " active" : "";
-    const selected = state.bundleIds.has(thread.threadId) ? " selected-for-bundle" : "";
-    const commit = (thread.commit || "").slice(0, 7) || "—";
-    return `
-      <button type="button" class="thread-item${active}${selected}" data-kind="thread" data-id="${escapeHtml(thread.threadId)}" role="listitem">
-        <div class="thread-top">
-          <span class="thread-scope">${escapeHtml(thread.scope || "general")}</span>
-          <span class="thread-status ${escapeHtml(thread.status || "")}">${escapeHtml(thread.status || "")}</span>
-        </div>
-        <p class="thread-preview">${escapeHtml(thread.preview || "")}</p>
-        <p class="thread-meta">${escapeHtml(thread.branch || "—")} @ ${escapeHtml(commit)}${thread.route ? ` · ${escapeHtml(thread.route)}` : ""}</p>
-      </button>
-    `;
-  }).join("");
-}
-
-function paintThread(thread) {
-  if (!thread) {
-    els.threadDetail.hidden = true;
-    return;
-  }
-  els.threadDetail.hidden = false;
-  els.threadTitle.textContent = shortId(thread.threadId);
-  els.threadDone.textContent = thread.status === "done" ? "Reopen" : "Done";
-  els.threadSelect.textContent = state.bundleIds.has(thread.threadId) ? "Deselect" : "Select";
-  els.threadMessages.innerHTML = (thread.messages || []).map((message) => `
-    <article class="msg">
-      <p class="msg-role">${escapeHtml(message.role)} · ${escapeHtml(formatTime(message.createdAt, true))}</p>
-      <p class="msg-body">${escapeHtml(message.body)}</p>
-    </article>
-  `).join("");
-  renderContextChips();
-}
-
-async function showThread(threadId) {
-  state.selectedThreadId = threadId;
-  renderFeedbackList();
-  try {
-    const payload = await apiGet(`/api/v1/feedback/${encodeURIComponent(threadId)}`);
-    state.selectedThread = payload.thread;
-    paintThread(payload.thread);
-  } catch (error) {
-    els.threadDetail.hidden = false;
-    els.threadMessages.innerHTML = `<p class="empty-inline">${escapeHtml(error.message)}</p>`;
-  }
-}
-
-function toggleBundle(threadId) {
-  if (state.bundleIds.has(threadId)) state.bundleIds.delete(threadId);
-  else state.bundleIds.add(threadId);
-  renderSelectedChips();
-  renderFeedbackList();
-  if (state.selectedThread?.threadId === threadId) paintThread(state.selectedThread);
-}
-
-async function createFeedbackFromComposer() {
-  const body = els.feedbackBody.value.trim();
-  if (!body || els.feedbackSend.disabled) return;
-  els.feedbackSend.disabled = true;
-  els.feedbackSend.textContent = "Saving…";
-  try {
-    const payload = {
-      body,
-      apply: true,
-      route: null,
-      runId: state.mode === "runs" ? state.selectedRun : null,
+function panelLimits(side) {
+  const width = workspaceEl.clientWidth;
+  if (side === "left") {
+    return {
+      min: 150,
+      max: Math.max(150, Math.min(320, width - 300 - (window.innerWidth > 850 && !panels.rightCollapsed ? panels.rightWidth + 10 : 5))),
     };
-    const plan = await apiPost("/api/v1/feedback", payload);
-    if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Create blocked");
-    els.feedbackBody.value = "";
-    await refreshFeedback();
-    if (plan.thread?.threadId) await showThread(plan.thread.threadId);
-  } catch (error) {
-    els.agentActivity.innerHTML = `<p class="activity-empty">${escapeHtml(error.message)}</p>`;
-  } finally {
-    els.feedbackSend.disabled = false;
-    els.feedbackSend.textContent = "Add feedback";
   }
+  return {
+    min: 260,
+    max: Math.max(260, Math.min(480, width - 300 - (!panels.leftCollapsed ? panels.leftWidth + 10 : 5))),
+  };
 }
 
-async function markThreadDone() {
-  const thread = state.selectedThread;
-  if (!thread) return;
-  const nextStatus = thread.status === "done" ? "open" : "done";
-  await apiPatch(`/api/v1/feedback/${encodeURIComponent(thread.threadId)}`, {
-    status: nextStatus,
-    apply: true,
-  });
-  await refreshFeedback();
-  await showThread(thread.threadId);
-}
-
-async function bundleSelected() {
-  const ids = [...state.bundleIds];
-  if (!ids.length) return;
-  els.bundleBtn.disabled = true;
-  els.bundleBtn.textContent = "Bundling…";
-  try {
-    const plan = await apiPost("/api/v1/feedback/bundle", {
-      threadIds: ids,
-      from: "last-green",
-      apply: true,
+function renderPanels() {
+  const desktop = window.innerWidth > 850;
+  const mobile = window.innerWidth <= 540;
+  let left = clamp(Number(panels.leftWidth) || 175, 150, 320);
+  let right = clamp(Number(panels.rightWidth) || 315, 260, 480);
+  if (!mobile) {
+    const available = workspaceEl.clientWidth - 300 - (desktop ? 10 : 5);
+    if (desktop && !panels.rightCollapsed) left = Math.min(left, Math.max(150, available - right));
+    else left = Math.min(left, Math.max(150, available));
+    if (desktop) right = Math.min(right, Math.max(260, available - (panels.leftCollapsed ? 0 : left)));
+  }
+  workspaceEl.style.setProperty("--left-width", `${left}px`);
+  workspaceEl.style.setProperty("--right-width", `${right}px`);
+  workspaceEl.classList.toggle("left-collapsed", panels.leftCollapsed);
+  workspaceEl.classList.toggle("right-collapsed", panels.rightCollapsed);
+  q(".sidebar").hidden = panels.leftCollapsed;
+  q(".agent").hidden = panels.rightCollapsed;
+  ["left", "right"].forEach((side) => {
+    const collapsed = panels[`${side}Collapsed`];
+    const name = side === "left" ? "Workspace" : "Agent";
+    const splitter = q(`.splitter-${side}`);
+    splitter.hidden = collapsed;
+    const limits = panelLimits(side);
+    const value = Math.round(side === "left" ? left : right);
+    splitter.setAttribute("aria-valuenow", value);
+    splitter.setAttribute("aria-valuemin", limits.min);
+    splitter.setAttribute("aria-valuemax", limits.max);
+    splitter.setAttribute("aria-valuetext", `${value} pixels`);
+    qa(`[data-toggle-panel="${side}"]`).forEach((button) => {
+      button.setAttribute("aria-expanded", String(!collapsed));
+      button.setAttribute("aria-label", name + (collapsed ? " einblenden" : " einklappen"));
+      button.setAttribute("data-tooltip", name + (collapsed ? " einblenden" : " einklappen"));
     });
-    if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Bundle blocked");
-    state.bundleIds.clear();
-    renderSelectedChips();
-    await refresh({ keepSelection: true });
-    setMode("handoffs");
-    if (plan.handoff?.manifest?.handoffId) {
-      await showHandoff(plan.handoff.manifest.handoffId);
-    }
-    els.agentActivity.innerHTML = `<p class="activity-empty">Bundled into ${escapeHtml(plan.handoffOut || "handoff")}. Give that package to your coding agent.</p>`;
-  } catch (error) {
-    els.agentActivity.innerHTML = `<p class="activity-empty">${escapeHtml(error.message)}</p>`;
-  } finally {
-    renderSelectedChips();
-  }
+  });
 }
 
-async function refreshFeedback() {
-  const [feedback, agent] = await Promise.all([
-    apiGet("/api/v1/feedback"),
-    apiGet("/api/v1/agent"),
-  ]);
-  state.feedback = feedback.threads || [];
-  state.agent = agent;
-  renderAgentPanel();
-  renderFeedbackList();
-  renderContextChips();
-  renderSelectedChips();
-  if (state.selectedThreadId) {
-    const stillThere = state.feedback.some((thread) => thread.threadId === state.selectedThreadId);
-    if (stillThere) await showThread(state.selectedThreadId);
-    else {
-      state.selectedThreadId = null;
-      state.selectedThread = null;
-      els.threadDetail.hidden = true;
-    }
-  }
+function togglePanel(side) {
+  panels[`${side}Collapsed`] = !panels[`${side}Collapsed`];
+  renderPanels();
+  persistLayout();
+  if (panels[`${side}Collapsed`]) q(`.layout-controls [data-toggle-panel="${side}"]`)?.focus();
 }
 
-function renderBranches(workspace) {
+qa("[data-toggle-panel]").forEach((button) => {
+  button.addEventListener("click", () => togglePanel(button.dataset.togglePanel));
+});
+
+qa(".panel-splitter").forEach((handle) => {
+  const side = handle.dataset.resizePanel;
+  const key = `${side}Width`;
+  let drag = null;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    drag = { start: event.clientX, width: Number(handle.getAttribute("aria-valuenow")) };
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add("dragging");
+    root.classList.add("resizing");
+  });
+  handle.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const limits = panelLimits(side);
+    panels[key] = Math.round(clamp(
+      drag.width + (event.clientX - drag.start) * (side === "left" ? 1 : -1),
+      limits.min,
+      limits.max,
+    ));
+    renderPanels();
+  });
+  const finish = () => {
+    if (!drag) return;
+    drag = null;
+    handle.classList.remove("dragging");
+    root.classList.remove("resizing");
+    persistLayout();
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("lostpointercapture", finish);
+  handle.addEventListener("dblclick", () => {
+    panels[key] = side === "left" ? 175 : 315;
+    renderPanels();
+    persistLayout();
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End", "Enter"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Enter") return togglePanel(side);
+    const limits = panelLimits(side);
+    const current = Number(handle.getAttribute("aria-valuenow"));
+    const step = (event.shiftKey ? 30 : 10) * (side === "left" ? 1 : -1);
+    panels[key] = event.key === "Home"
+      ? limits.min
+      : event.key === "End"
+        ? limits.max
+        : clamp(current + (event.key === "ArrowRight" ? step : -step), limits.min, limits.max);
+    renderPanels();
+    persistLayout();
+  });
+});
+
+new ResizeObserver(renderPanels).observe(workspaceEl);
+renderPanels();
+
+function pushActivity(text) {
+  const stamp = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(new Date());
+  state.activity.unshift({ text, stamp });
+  state.activity = state.activity.slice(0, 12);
+  renderActivity();
+}
+
+function renderActivity() {
+  q("#activity-count").textContent = String(state.activity.length);
+  q("#activity-panel").innerHTML = state.activity.length
+    ? state.activity.map((item) => `<div>✓ ${escapeHtml(item.text)} <span>${escapeHtml(item.stamp)}</span></div>`).join("")
+    : `<div>No activity yet <span>—</span></div>`;
+}
+
+function setView(view, save = true) {
+  if (!["preview", "compare", "changes"].includes(view)) return;
+  state.view = view;
+  qa("[role=tabpanel]").forEach((panel) => {
+    panel.hidden = panel.id !== `screen-${view}`;
+  });
+  q("#extra-screen").hidden = true;
+  qa(".tab").forEach((tab) => {
+    const on = tab.dataset.view === view;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", String(on));
+  });
+  qa("[data-nav]").forEach((item) => item.classList.toggle("active", item.dataset.nav === "workbench"));
+  if (view === "changes") loadChanges().catch((error) => toast(error.message));
+  if (save) persistUi();
+  icons();
+}
+
+function renderChips() {
+  const chips = q("#context-chips");
+  chips.replaceChildren();
+  state.contexts.forEach((label) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const icon = document.createElement("i");
+    icon.dataset.lucide = label.includes("Screenshot") ? "image" : "crosshair";
+    icon.setAttribute("aria-hidden", "true");
+    const text = document.createElement("span");
+    text.textContent = label;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("aria-label", `${label} entfernen`);
+    button.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
+    button.onclick = () => {
+      state.contexts = state.contexts.filter((entry) => entry !== label);
+      renderChips();
+      persistUi();
+    };
+    chip.append(icon, text, button);
+    chips.append(chip);
+  });
+  icons();
+}
+
+function addContext(label) {
+  if (!state.contexts.includes(label)) state.contexts.push(label);
+  renderChips();
+  persistUi();
+}
+
+function setMode(mode, save = true) {
+  state.mode = mode;
+  qa("[data-mode]").forEach((button) => {
+    const on = button.dataset.mode === mode;
+    button.classList.toggle("active", on);
+    button.setAttribute("aria-pressed", String(on));
+  });
+  const connected = Boolean(state.agent?.connected);
+  if (mode === "external") {
+    q("#composer-note").textContent = "External · copy a structured task for your coding agent";
+    q("#chat-input").placeholder = "Describe a task for your external agent…";
+  } else if (connected) {
+    q("#composer-note").textContent = "Connected agent ready";
+    q("#chat-input").placeholder = "Ask for a change, or describe an idea…";
+  } else {
+    q("#composer-note").textContent = "No agent adapter connected · messages become local feedback";
+    q("#chat-input").placeholder = "Leave visual feedback… Comments are context, not instructions.";
+  }
+  q("#model").disabled = !connected;
+  q("#reasoning").disabled = !connected;
+  if (save) persistUi();
+}
+
+function renderBranches() {
+  const list = q("#branches-list");
+  const workspace = state.workspace;
   if (!workspace?.available) {
-    els.branchCurrent.textContent = "no git";
-    els.branchesList.innerHTML = `<p class="empty-inline">Not a Git workspace.</p>`;
-    renderContextChips();
+    list.innerHTML = `<p class="view-note">Not a Git workspace.</p>`;
+    q("#branch-count").textContent = "0";
     return;
   }
-  const current = workspace.branch || "(detached)";
-  const short = workspace.shortCommit || "";
-  els.branchCurrent.textContent = `on ${current}${short ? ` @ ${short}` : ""}${workspace.dirty ? " · dirty" : ""}`;
-  renderContextChips();
-
-  const others = (workspace.branches || []).filter((entry) => !entry.current);
-  if (!others.length) {
-    els.branchesList.innerHTML = `<p class="empty-inline">No other local branches.</p>`;
-    return;
-  }
-
-  els.branchesList.innerHTML = others.map((entry) => {
-    const active = state.selectedBranch === entry.name ? " active" : "";
+  const branches = workspace.branches || [];
+  q("#branch-count").textContent = String(branches.length);
+  list.innerHTML = branches.map((entry) => {
+    const selected = state.reviewBranch === entry.name || (!state.reviewBranch && entry.current);
+    const meta = entry.current ? "current" : (entry.shortCommit || "");
     return `
-      <button type="button" class="branch-item${active}" data-kind="branch" data-id="${escapeHtml(entry.name)}" role="listitem">
-        <span class="branch-name">${escapeHtml(entry.name)}</span>
-        <span class="branch-meta">${escapeHtml(entry.shortCommit || "")}</span>
+      <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}">
+        <i data-lucide="git-branch" aria-hidden="true"></i>
+        <span>${escapeHtml(entry.name)}</span>
+        ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
       </button>
     `;
   }).join("");
+  list.querySelectorAll("[data-branch]").forEach((button) => {
+    button.addEventListener("click", () => selectBranch(button.dataset.branch));
+  });
+  icons();
 }
 
-function renderDiffLines(text) {
-  if (!text) {
-    return `<div class="empty-state"><p class="empty-copy">No textual patch for this file.</p></div>`;
+function renderRecent() {
+  const host = q("#recent-activity");
+  const rows = [];
+  for (const run of (state.runs || []).slice(0, 2)) {
+    rows.push(`
+      <div class="recent"><i data-lucide="circle-check" aria-hidden="true"></i>
+        <div>${escapeHtml(run.scenario?.name || run.scenario || shortId(run.runId))}
+          <small>${escapeHtml(run.status || "—")} · ${escapeHtml(formatTime(run.finishedAt || run.startedAt))}</small>
+        </div>
+      </div>
+    `);
   }
-  const lines = text.split("\n");
-  return `<pre class="diff-code" aria-label="Unified diff">${lines.map((line) => {
-    let kind = "";
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff ") || line.startsWith("index ")) {
-      kind = "meta";
-    } else if (line.startsWith("@@")) {
-      kind = "hunk";
-    } else if (line.startsWith("+")) {
-      kind = "add";
-    } else if (line.startsWith("-")) {
-      kind = "del";
-    }
-    return `<span class="diff-line ${kind}">${escapeHtml(line) || " "}</span>`;
-  }).join("")}</pre>`;
+  for (const handoff of (state.handoffs || []).slice(0, 1)) {
+    rows.push(`
+      <div class="recent"><i data-lucide="package" aria-hidden="true"></i>
+        <div>${escapeHtml(shortId(handoff.handoffId))}
+          <small>handoff · ${escapeHtml(formatTime(handoff.createdAt))}</small>
+        </div>
+      </div>
+    `);
+  }
+  host.innerHTML = rows.join("") || `<div class="recent"><i data-lucide="circle" aria-hidden="true"></i><div>No recent runs<small>Run a scenario to populate</small></div></div>`;
+  icons();
 }
 
-function paintReview(review, selectedPath, message = null) {
-  const yours = review.yours?.branch || "—";
-  const theirs = review.theirs?.branch || "—";
+function renderCompareSources() {
+  const names = (state.workspace?.branches || []).map((entry) => entry.name);
+  const fallback = names.length ? names : ["main"];
+  for (const id of ["#source-a", "#source-b"]) {
+    const select = q(id);
+    const current = select.value;
+    select.innerHTML = fallback.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+    if (fallback.includes(current)) select.value = current;
+    else if (id === "#source-b" && fallback.length > 1) select.selectedIndex = 1;
+  }
+}
+
+function selectBranch(name) {
+  state.reviewBranch = name;
+  const current = state.workspace?.branch || "—";
+  q("#active-branch").textContent = current;
+  q("#chat-branch").textContent = current;
+  q("#target-branch").textContent = current;
+  q("#route").textContent = `branch://${name}`;
+  renderBranches();
+  persistUi();
+  if (state.view === "changes") loadChanges().catch((error) => toast(error.message));
+  else setView("changes");
+}
+
+async function loadChanges() {
+  const body = q("#changes-body");
+  const actions = q("#change-actions");
+  const theirs = state.reviewBranch;
+  const yours = state.workspace?.branch;
+  if (!theirs || theirs === yours) {
+    body.innerHTML = `<p class="view-note">Select another local branch to review its changes against <b>${escapeHtml(yours || "your branch")}</b>.</p>`;
+    actions.hidden = true;
+    q("#changes-count").textContent = "0";
+    q("#changes-subtitle").textContent = "3-dot review against your current branch.";
+    icons();
+    return;
+  }
+  body.innerHTML = `<p class="view-note">Loading review for ${escapeHtml(theirs)}…</p>`;
+  const review = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(theirs)}`);
+  state.review = review;
   const summary = review.summary || { filesChanged: 0, additions: 0, deletions: 0 };
-
-  els.reviewContext.hidden = false;
-  els.composer.hidden = false;
-  els.reviewHeading.textContent = theirs;
-  els.reviewMeta.textContent = `${yours} ← ${theirs}`;
-  els.reviewSummaryText.textContent = review.explanation || "Review changes on their branch since the merge-base.";
-  els.reviewStats.innerHTML = `<span class="stat-add">+${summary.additions}</span> <span class="stat-del">-${summary.deletions}</span>`;
-  els.filesCount.textContent = String(summary.filesChanged ?? 0);
-
+  q("#changes-count").textContent = String(summary.filesChanged || 0);
+  q("#changes-subtitle").textContent = `${yours} ← ${theirs}`;
   if (!review.files?.length) {
-    els.filesList.innerHTML = `<p class="empty-inline">No unique file changes.</p>`;
-    els.diffTitle.textContent = "";
-    els.diffBody.innerHTML = `
-      ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
-      ${emptyState("Nothing to adopt", review.explanation || "That branch has no unique changes.")}
-    `;
-    els.adoptConfirm.disabled = review.status === "blocked";
+    body.innerHTML = `<p class="view-note">${escapeHtml(review.explanation || "No unique file changes.")}</p>`;
+    actions.hidden = true;
+    icons();
     return;
   }
-
-  const path = selectedPath || review.files[0].path;
-  els.filesList.innerHTML = review.files.map((file) => {
-    const active = file.path === path ? " active" : "";
-    return `
-      <button type="button" class="file-item${active}" data-kind="file" data-id="${escapeHtml(file.path)}" role="listitem" title="${escapeHtml(file.path)}">
-        <span class="file-path">${escapeHtml(file.path)}</span>
-        <span class="file-stats"><span class="stat-add">+${file.additions}</span> <span class="stat-del">-${file.deletions}</span></span>
-      </button>
-    `;
-  }).join("");
-
-  els.diffTitle.textContent = path;
-  const patchText = review.patch?.path === path ? review.patch.text : null;
-  els.diffBody.innerHTML = `
-    ${message ? `<div class="toast ${message.ok ? "toast-ok" : "toast-error"}">${escapeHtml(message.text)}</div>` : ""}
-    <div class="diff-frame">
-      <div class="diff-frame-head">${escapeHtml(path)}</div>
-      ${patchText == null
-    ? `<div class="empty-state"><p class="empty-copy">Loading patch…</p></div>`
-    : renderDiffLines(patchText)}
-    </div>
-  `;
-  els.adoptConfirm.disabled = state.adopting || review.status === "blocked";
-  els.adoptConfirm.textContent = state.adopting ? "Übernehmen…" : "Übernehmen";
-}
-
-async function showReview(branchName, { path = null, message = null } = {}) {
-  setMode("review");
-  state.selectedBranch = branchName;
-  state.reviewFile = path;
-  renderBranches(state.workspace);
-  els.diffBody.innerHTML = emptyState("Loading", "Fetching branch review…");
-  els.reviewContext.hidden = false;
-  els.composer.hidden = false;
-  els.reviewHeading.textContent = branchName;
-  els.reviewMeta.textContent = "Loading…";
-  els.reviewSummaryText.textContent = "";
-  els.reviewStats.textContent = "";
-  els.filesList.innerHTML = "";
-
-  try {
-    const list = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(branchName)}`);
-    state.review = list;
-    const filePath = path || list.files?.[0]?.path || null;
-    state.reviewFile = filePath;
-    if (filePath) {
-      const withPatch = await apiGet(
-        `/api/v1/workspace/review?ref=${encodeURIComponent(branchName)}&path=${encodeURIComponent(filePath)}`,
+  const filesHtml = [];
+  for (const [index, file] of review.files.slice(0, 12).entries()) {
+    let patch = "";
+    try {
+      const detailed = await apiGet(
+        `/api/v1/workspace/review?ref=${encodeURIComponent(theirs)}&path=${encodeURIComponent(file.path)}`,
       );
-      state.review = withPatch;
-      paintReview(withPatch, filePath, message);
-    } else {
-      paintReview(list, null, message);
+      patch = detailed.patch?.text || "";
+    } catch {
+      patch = "";
     }
-  } catch (error) {
-    els.diffBody.innerHTML = emptyState("Review failed", error.message);
+    const lines = (patch || "").split("\n").slice(0, 80).map((line) => {
+      let cls = "";
+      if (line.startsWith("+") && !line.startsWith("+++")) cls = "added";
+      else if (line.startsWith("-") && !line.startsWith("---")) cls = "removed";
+      return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
+    }).join("");
+    filesHtml.push(`
+      <details class="file-diff"${index === 0 ? " open" : ""}>
+        <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
+          <span>+${file.additions} −${file.deletions}</span>
+        </summary>
+        <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
+      </details>
+    `);
   }
+  body.innerHTML = `
+    <div class="diff-summary">
+      <span>${summary.filesChanged} files changed</span>
+      <span class="diff-numbers">+${summary.additions} <em>−${summary.deletions}</em></span>
+    </div>
+    ${filesHtml.join("")}
+    <label class="view-note" style="display:block;margin-top:12px">Optional note
+      <textarea id="adopt-note" rows="2" placeholder="Optional merge note…" style="display:block;width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--bg)"></textarea>
+    </label>
+  `;
+  actions.hidden = false;
+  q("#changes-note").textContent = "Real git review · Übernehmen merges into your current branch.";
+  icons();
 }
 
-async function adoptCurrent({ force = false } = {}) {
-  if (!state.selectedBranch || state.adopting) return;
-  const ref = state.selectedBranch;
-  const comment = els.adoptComment.value.trim() || null;
-  state.adopting = true;
-  els.adoptConfirm.disabled = true;
-  els.adoptConfirm.textContent = "Übernehmen…";
+async function adoptSelected() {
+  const theirs = state.reviewBranch;
+  if (!theirs) return;
+  const note = q("#adopt-note")?.value?.trim() || null;
+  q("#apply").disabled = true;
   try {
-    const preview = await apiPost("/api/v1/workspace/adopt", { ref, apply: false, force, comment });
-    if (preview.status === "blocked") {
-      throw new Error(preview.blockedReasons?.join("; ") || "Adopt blocked");
-    }
+    const preview = await apiPost("/api/v1/workspace/adopt", { ref: theirs, apply: false, comment: note });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Blocked");
     if (preview.status === "noop") {
-      await showReview(ref, { path: state.reviewFile, message: { ok: true, text: preview.explanation || "Already on that branch." } });
+      toast(preview.explanation || "Already on that branch.");
       return;
     }
-    const applied = await apiPost("/api/v1/workspace/adopt", { ref, apply: true, force, comment });
-    if (applied.status === "blocked") {
-      throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
-    }
-    els.adoptComment.value = "";
-    await refresh({ keepSelection: false });
-    els.reviewContext.hidden = true;
-    els.composer.hidden = true;
-    els.diffTitle.textContent = "";
-    const noteLine = applied.comment
-      ? `Note on merge commit: “${applied.comment}”`
-      : "Taken as-is.";
-    els.diffBody.innerHTML = emptyState(
-      "Übernommen",
-      `${applied.explanation || `Merged ${ref} into your branch.`} ${noteLine}`,
-    );
+    const applied = await apiPost("/api/v1/workspace/adopt", { ref: theirs, apply: true, comment: note });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
+    toast(applied.explanation || `Merged ${theirs}.`);
+    pushActivity(`Adopted ${theirs}`);
+    state.reviewBranch = null;
+    await refresh();
+    setView("preview");
   } catch (error) {
-    const dirty = /dirty/i.test(error.message);
-    await showReview(ref, {
-      path: state.reviewFile,
-      message: {
-        ok: false,
-        text: dirty
-          ? `${error.message} Use Force after host consent.`
-          : error.message,
-      },
-    });
-    if (dirty) {
-      els.adoptConfirm.dataset.force = "1";
-      els.adoptConfirm.textContent = "Force Übernehmen";
-      els.adoptCancel.hidden = false;
-    }
+    toast(error.message);
   } finally {
-    state.adopting = false;
-    if (!els.adoptConfirm.dataset.force) {
-      els.adoptConfirm.disabled = false;
-      els.adoptConfirm.textContent = "Übernehmen";
-    } else {
-      els.adoptConfirm.disabled = false;
-    }
+    q("#apply").disabled = false;
   }
 }
 
-function detailCards(entries) {
-  return `<div class="detail-grid">${entries.map(([title, body]) => `
-    <div class="detail-card">
-      <h3>${escapeHtml(title)}</h3>
-      <p>${body}</p>
-    </div>
-  `).join("")}</div>`;
+function renderPicks() {
+  qa("[data-element]").forEach((el) => {
+    el.setAttribute("aria-pressed", String(state.picks.some((pick) => pick.element === el.dataset.element)));
+  });
+  q("#selection-count").textContent = `${state.picks.length} element${state.picks.length === 1 ? "" : "s"} selected`;
+  q("#use-selection").disabled = !state.picks.length;
 }
 
-function renderRunRows(runs) {
-  if (!runs.length) {
-    els.runsList.innerHTML = `<p class="empty-inline">No runs yet.</p>`;
-    return;
+function renderChatSeed() {
+  const feed = q("#chat-feed");
+  const branch = state.workspace?.branch || "—";
+  feed.innerHTML = `
+    <div class="task-context"><i data-lucide="git-branch" aria-hidden="true"></i><span id="chat-branch">${escapeHtml(branch)}</span></div>
+    <h2 class="task-title">Feedback &amp; agent</h2>
+    <span class="task-subtitle" id="task-subtitle">${escapeHtml(state.agent?.connected ? "Connected" : "Local · no agent adapter connected")}</span>
+  `;
+  const open = (state.feedback || []).filter((thread) => thread.status === "open").slice(0, 6);
+  for (const thread of open) {
+    const user = document.createElement("div");
+    user.className = "user-message";
+    user.textContent = thread.preview || thread.threadId;
+    feed.append(user);
+    const meta = document.createElement("div");
+    meta.className = "agent-event";
+    meta.innerHTML = `<i data-lucide="message-square" aria-hidden="true"></i>${escapeHtml(thread.scope)} · ${escapeHtml(thread.status)} · ${escapeHtml(shortId(thread.threadId))}`;
+    feed.append(meta);
   }
-  els.runsList.innerHTML = runs.map((run) => {
-    const id = run.runId || run.id;
-    const status = run.status || "unknown";
-    const label = run.scenario?.name || run.scenario || shortId(id);
-    const active = state.selectedRun === id ? " active" : "";
-    return `
-      <button type="button" class="stack-item${active}" data-kind="run" data-id="${escapeHtml(id)}" role="listitem">
-        <span class="stack-title">${escapeHtml(label)} <span class="${statusClass(status)}">${escapeHtml(status)}</span></span>
-        <span class="stack-meta">${escapeHtml(formatTime(run.finishedAt || run.startedAt || run.createdAt, true))}</span>
-      </button>
-    `;
-  }).join("");
-}
-
-function renderHandoffs(items) {
-  if (!items?.length) {
-    els.handoffsList.innerHTML = `<p class="empty-inline">No handoffs yet.</p>`;
-    return;
+  if (!open.length) {
+    const hint = document.createElement("div");
+    hint.className = "agent-response";
+    hint.innerHTML = `<p>Send a message to create local feedback, or switch to External to copy a task for your coding agent. Preview/Compare demos are layout examples — Changes uses real git reviews.</p>`;
+    feed.append(hint);
   }
-  els.handoffsList.innerHTML = items.map((item) => {
-    const id = item.handoffId;
-    const active = state.selectedHandoff === id ? " active" : "";
-    return `
-      <button type="button" class="stack-item${active}" data-kind="handoff" data-id="${escapeHtml(id)}" role="listitem">
-        <span class="stack-title">${escapeHtml(shortId(id))}</span>
-        <span class="stack-meta">${escapeHtml(formatTime(item.createdAt, true))}</span>
-      </button>
-    `;
-  }).join("");
+  icons();
 }
 
-async function showRun(runId) {
-  setMode("runs");
-  state.selectedRun = runId;
-  renderRunRows((state._runs || []));
-  els.runDetail.innerHTML = emptyState("Loading", "Fetching run evidence…");
-  const run = await apiGet(`/api/v1/runs/${encodeURIComponent(runId)}`);
-  const result = run.result || {};
-  const files = run.files || {};
-  const sheetHref = files.contactSheet
-    ? `/api/v1/artifacts/${encodeURIComponent(runId)}/${files.contactSheet}`
-    : null;
-  const cards = detailCards([
-    ["Status", escapeHtml(result.status || "—")],
-    ["Scenario", escapeHtml(result.scenario?.name || result.scenario?.path || "—")],
-    ["Duration", escapeHtml(result.durationMs != null ? `${result.durationMs} ms` : "—")],
-    ["Finished", escapeHtml(formatTime(result.finishedAt))],
-    ["Path", escapeHtml(run.path || "—")],
-  ]);
-  const sheet = sheetHref
-    ? `<div class="sheet"><img src="${sheetHref}" alt="Contact sheet for ${escapeHtml(runId)}"></div>`
-    : emptyState("No contact sheet", "This run has no visual evidence yet.");
-  els.runDetail.innerHTML = cards + sheet;
-}
+async function sendMessage() {
+  const value = q("#chat-input").value.trim();
+  if (!value || busy) return;
+  busy = true;
+  q(".send").disabled = true;
+  const feed = q("#chat-feed");
+  const user = document.createElement("div");
+  user.className = "user-message";
+  user.textContent = value;
+  feed.append(user);
+  q("#chat-input").value = "";
 
-async function showHandoff(handoffId) {
-  setMode("handoffs");
-  state.selectedHandoff = handoffId;
-  renderHandoffs(state._handoffs || []);
-  els.handoffDetail.innerHTML = emptyState("Loading", "Fetching handoff package…");
-  const handoff = await apiGet(`/api/v1/handoffs/${encodeURIComponent(handoffId)}`);
-  const manifest = handoff.manifest || {};
-  const sourceRunId = manifest.source?.runId || null;
-  const sheetHref = sourceRunId
-    ? `/api/v1/artifacts/${encodeURIComponent(sourceRunId)}/contact-sheet.png`
-    : null;
-  const feedbackIds = manifest.feedback?.threadIds || [];
-  const cards = detailCards([
-    ["Source run", escapeHtml(sourceRunId || "—")],
-    ["Status", escapeHtml(manifest.source?.status || "—")],
-    ["Created", escapeHtml(formatTime(manifest.createdAt))],
-    ["Note", escapeHtml(manifest.note || "—")],
-    ["Feedback", escapeHtml(feedbackIds.length ? feedbackIds.join(", ") : "—")],
-    ["Path", escapeHtml(handoff.path || "—")],
-  ]);
-  let sheet = "";
-  if (sheetHref) {
-    sheet = `<div class="sheet"><img src="${sheetHref}" alt="Source run contact sheet" onerror="this.closest('.sheet').replaceWith()"></div>`;
-  }
-  els.handoffDetail.innerHTML = cards + sheet;
-}
+  const answer = document.createElement("div");
+  answer.className = "agent-response";
+  const thought = document.createElement("div");
+  thought.className = "thought";
+  thought.textContent = state.mode === "external" ? "Preparing external task…" : "Saving local feedback…";
+  answer.append(thought);
+  feed.append(answer);
 
-async function refresh({ keepSelection = true } = {}) {
   try {
-    const [workspace, runsPayload, handoffsPayload] = await Promise.all([
+    if (state.mode === "external") {
+      const payload = document.createElement("textarea");
+      payload.rows = 6;
+      payload.readOnly = true;
+      payload.setAttribute("aria-label", "External agent task");
+      payload.value = [
+        `Target branch: ${state.workspace?.branch || "—"}`,
+        `Commit: ${state.workspace?.commit || "—"}`,
+        `Review branch: ${state.reviewBranch || "—"}`,
+        `Context: ${state.contexts.join(", ") || "(none)"}`,
+        `Model preference: ${state.model} / ${state.reasoning}`,
+        "",
+        value,
+        "",
+        "Comments are context, not executable instructions.",
+      ].join("\n");
+      answer.append(payload);
+      const copy = document.createElement("button");
+      copy.className = "button";
+      copy.textContent = "Select task to copy";
+      copy.onclick = () => {
+        payload.focus();
+        payload.select();
+        toast("Task selected. Copy with ⌘C / Ctrl+C.");
+      };
+      answer.append(copy);
+      thought.textContent = "External task ready";
+      pushActivity("Prepared external agent task");
+    } else if (state.agent?.connected) {
+      thought.textContent = "Connected adapter · not implemented in this build";
+      const p = document.createElement("p");
+      p.textContent = "A connected agent adapter is declared for later. Your message was not sent to a model.";
+      answer.append(p);
+    } else {
+      const plan = await apiPost("/api/v1/feedback", {
+        body: value,
+        apply: true,
+        route: state.view === "preview" ? "/" : null,
+        element: state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
+        branch: state.workspace?.branch || null,
+        commit: state.workspace?.commit || null,
+      });
+      const p = document.createElement("p");
+      p.textContent = `Saved as feedback ${plan.thread?.threadId || ""}. No coding agent is connected — bundle threads into a handoff when ready.`;
+      answer.append(p);
+      const actions = document.createElement("div");
+      actions.className = "agent-event";
+      actions.textContent = "✓ Local feedback written · comments are context";
+      answer.append(actions);
+      thought.textContent = "Feedback saved";
+      pushActivity("Created feedback thread");
+      await refreshFeedbackOnly();
+    }
+  } catch (error) {
+    thought.textContent = "Failed";
+    const p = document.createElement("p");
+    p.textContent = error.message;
+    answer.append(p);
+  } finally {
+    busy = false;
+    q(".send").disabled = false;
+    feed.scrollTop = feed.scrollHeight;
+    icons();
+  }
+}
+
+async function refreshFeedbackOnly() {
+  const feedback = await apiGet("/api/v1/feedback");
+  state.feedback = feedback.threads || [];
+  q("#feedback-count").textContent = String(feedback.open ?? state.feedback.filter((t) => t.status === "open").length);
+}
+
+function showExtra(nav) {
+  qa(".screen").forEach((screen) => {
+    screen.hidden = true;
+  });
+  q("#extra-screen").hidden = false;
+  qa("[data-nav]").forEach((item) => item.classList.toggle("active", item === nav));
+  const kind = nav.dataset.nav;
+  if (kind === "feedback") {
+    q("#extra-title").textContent = "Feedback";
+    q("#extra-subtitle").textContent = "Local visual threads tied to branch/commit/route/element.";
+    q("#extra-content").innerHTML = (state.feedback || []).map((thread) => `
+      <div class="extra-row">${escapeHtml(thread.preview || thread.threadId)}
+        <small>${escapeHtml(thread.status)} · ${escapeHtml(thread.scope)} · ${escapeHtml(thread.branch || "—")} @ ${escapeHtml((thread.commit || "").slice(0, 7) || "—")}</small>
+      </div>
+    `).join("") || `<div class="extra-row">No feedback yet<small>Use the agent composer to add some</small></div>`;
+  } else if (kind === "reviews") {
+    q("#extra-title").textContent = "Reviews";
+    q("#extra-subtitle").textContent = "Handoff packages ready for your coding agent.";
+    q("#extra-content").innerHTML = (state.handoffs || []).map((item) => `
+      <div class="extra-row">${escapeHtml(shortId(item.handoffId))}
+        <small>${escapeHtml(formatTime(item.createdAt))} · ${escapeHtml(item.path || "")}</small>
+      </div>
+    `).join("") || `<div class="extra-row">No handoffs yet<small>npm run harness -- handoff --from last-green --apply</small></div>`;
+  } else if (kind === "runs") {
+    q("#extra-title").textContent = "Runs";
+    q("#extra-subtitle").textContent = "Local harness evidence.";
+    q("#extra-content").innerHTML = (state.runs || []).map((run) => `
+      <div class="extra-row">${escapeHtml(run.scenario?.name || run.scenario || shortId(run.runId))}
+        <small>${escapeHtml(run.status || "—")} · ${escapeHtml(formatTime(run.finishedAt || run.startedAt))}</small>
+      </div>
+    `).join("") || `<div class="extra-row">No runs yet<small>npm run harness -- run scenarios/minimal.yaml</small></div>`;
+  }
+  icons();
+}
+
+async function refresh() {
+  try {
+    const [workspace, runsPayload, handoffsPayload, feedback, agent] = await Promise.all([
       apiGet("/api/v1/workspace"),
       apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
+      apiGet("/api/v1/feedback"),
+      apiGet("/api/v1/agent"),
     ]);
     state.workspace = workspace;
-    state._runs = runsPayload.runs || [];
-    state._handoffs = handoffsPayload.handoffs || [];
-    renderBranches(workspace);
-    const summary = runsPayload.summary || {};
-    const count = summary.runCount ?? state._runs.length;
-    els.runsSummary.textContent = `${count} · ${summary.passed ?? 0}✓ · ${summary.failed ?? 0}✗`;
-    renderRunRows(state._runs);
-    renderHandoffs(state._handoffs);
-    await refreshFeedback();
-
-    if (keepSelection && state.mode === "review" && state.selectedBranch) {
-      await showReview(state.selectedBranch, { path: state.reviewFile });
-    } else if (keepSelection && state.mode === "runs" && state.selectedRun) {
-      await showRun(state.selectedRun);
-    } else if (keepSelection && state.mode === "handoffs" && state.selectedHandoff) {
-      await showHandoff(state.selectedHandoff);
-    } else if (state.mode === "review" && !state.selectedBranch) {
-      els.reviewContext.hidden = true;
-      els.composer.hidden = true;
-      els.diffTitle.textContent = "";
-      els.diffBody.innerHTML = emptyState(
-        "Pick a branch",
-        "Select another local branch to review its changes against yours — then adopt with an optional note.",
-      );
-    }
+    state.runs = runsPayload.runs || [];
+    state.handoffs = handoffsPayload.handoffs || [];
+    state.feedback = feedback.threads || [];
+    state.agent = agent;
+    q("#project-name").textContent = (workspace.root || "workspace").split(/[/\\]/).filter(Boolean).pop() || "workspace";
+    q("#active-branch").textContent = workspace.branch || "(detached)";
+    q("#chat-branch").textContent = workspace.branch || "—";
+    q("#target-branch").textContent = workspace.branch || "—";
+    q("#runs-count").textContent = String(state.runs.length);
+    q("#feedback-count").textContent = String(feedback.open ?? state.feedback.filter((t) => t.status === "open").length);
+    q("#task-subtitle").textContent = agent.connected ? "Connected" : "Local · no agent adapter connected";
+    q(".subtle").textContent = agent.connected ? "Connected" : "Local";
+    renderBranches();
+    renderRecent();
+    renderCompareSources();
+    renderChatSeed();
+    setMode(state.mode, false);
+    pushActivity("Workspace refreshed");
   } catch (error) {
-    els.diffBody.innerHTML = emptyState("API offline", error.message);
+    toast(`API offline: ${error.message}`);
   }
+  icons();
 }
 
-document.querySelectorAll(".mode-tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    setMode(tab.dataset.mode);
-    if (tab.dataset.mode === "runs" && state.selectedRun) showRun(state.selectedRun);
-    if (tab.dataset.mode === "handoffs" && state.selectedHandoff) showHandoff(state.selectedHandoff);
+// Prototype-preserving interactions
+qa("[data-view]").forEach((el) => el.addEventListener("click", () => setView(el.dataset.view)));
+qa("[data-mode]").forEach((el) => el.addEventListener("click", () => setMode(el.dataset.mode)));
+qa("[data-element]").forEach((el) => {
+  el.addEventListener("click", () => {
+    const existing = state.picks.findIndex((pick) => pick.element === el.dataset.element);
+    if (existing >= 0) state.picks.splice(existing, 1);
+    else {
+      state.picks.push({
+        element: el.dataset.element,
+        source: el.dataset.element === "ContinueButton" ? q("#source-a").value : q("#source-b").value,
+      });
+    }
+    renderPicks();
   });
 });
-
-els.refreshBtn.addEventListener("click", () => refresh());
-
-els.adoptCancel.addEventListener("click", () => {
-  delete els.adoptConfirm.dataset.force;
-  els.adoptCancel.hidden = true;
-  els.adoptConfirm.textContent = "Übernehmen";
+q("#use-selection").addEventListener("click", () => {
+  state.picks.forEach((pick) => addContext(`${pick.element} · ${pick.source}`));
+  q("#chat-input").value = `Bring the selected elements into ${state.workspace?.branch || "my branch"}. `;
+  q("#chat-input").focus();
+  toast("Selection added to agent context. Element adopt is not wired yet — this is layout context only.");
 });
-
-els.adoptConfirm.addEventListener("click", () => {
-  adoptCurrent({ force: els.adoptConfirm.dataset.force === "1" });
+q("#inspect-target").addEventListener("click", () => {
+  if (selecting) {
+    addContext("PrimaryButton");
+    q("#inspect-target").classList.add("inspected");
+    q("#element-label").hidden = false;
+    toast("PrimaryButton added to context (layout example).");
+  }
 });
-
-els.adoptComment.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+function setTool(on) {
+  selecting = on;
+  q("#select-tool").classList.toggle("active", on);
+  q("#interact-tool").classList.toggle("active", !on);
+  q("#inspect-target").classList.toggle("inspected", on);
+  q("#element-label").hidden = !on;
+}
+q("#select-tool").addEventListener("click", () => setTool(true));
+q("#interact-tool").addEventListener("click", () => setTool(false));
+q("#capture").addEventListener("click", () => {
+  addContext(`Screenshot · ${state.view}`);
+  toast("Screenshot reference added to context (local chip only).");
+});
+q("#screenshot").addEventListener("click", () => {
+  addContext(`Screenshot · ${state.view}`);
+  toast("Screenshot reference added to context (local chip only).");
+});
+q("#add-context").addEventListener("click", () => addContext(state.workspace?.branch || "branch"));
+q("#device").addEventListener("change", (event) => {
+  q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";
+});
+q("#refresh").addEventListener("click", async () => {
+  await refresh();
+  toast("Workspace refreshed.");
+});
+q("#activity-toggle").addEventListener("click", () => {
+  const panel = q("#activity-panel");
+  panel.hidden = !panel.hidden;
+  q("#activity-toggle").setAttribute("aria-expanded", String(!panel.hidden));
+});
+q("#apply").addEventListener("click", () => adoptSelected());
+q("#discard").addEventListener("click", () => {
+  state.reviewBranch = null;
+  renderBranches();
+  loadChanges();
+  toast("Selection cleared.");
+});
+q("#model").addEventListener("change", (event) => {
+  state.model = event.target.value;
+  persistUi();
+});
+q("#reasoning").addEventListener("change", (event) => {
+  state.reasoning = event.target.value;
+  persistUi();
+});
+qa("[data-nav]").forEach((item) => {
+  item.addEventListener("click", () => {
+    if (item.dataset.nav === "workbench") return setView(state.view);
+    showExtra(item);
+  });
+});
+q("#back-workbench").addEventListener("click", () => setView(state.view));
+q("#new-chat").addEventListener("click", () => {
+  state.contexts = [];
+  renderChips();
+  renderChatSeed();
+  persistUi();
+  toast("Composer context cleared.");
+});
+q("#chat-input").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
-    els.adoptConfirm.click();
+    q(".send").click();
+  }
+});
+q(".send").addEventListener("click", () => sendMessage());
+
+document.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "1") {
+    event.preventDefault();
+    setView(state.view);
+    qa("[data-nav]").forEach((item) => item.classList.toggle("active", item.dataset.nav === "workbench"));
   }
 });
 
-els.feedbackSend.addEventListener("click", () => createFeedbackFromComposer());
-els.feedbackBody.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-    event.preventDefault();
-    createFeedbackFromComposer();
-  }
-});
-els.threadDone.addEventListener("click", () => markThreadDone());
-els.threadSelect.addEventListener("click", () => {
-  if (state.selectedThreadId) toggleBundle(state.selectedThreadId);
-});
-els.bundleBtn.addEventListener("click", () => bundleSelected());
-
-document.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-kind][data-id]");
-  if (!button) return;
-  if (button.dataset.kind === "branch") showReview(button.dataset.id);
-  if (button.dataset.kind === "file") showReview(state.selectedBranch, { path: button.dataset.id });
-  if (button.dataset.kind === "run") showRun(button.dataset.id);
-  if (button.dataset.kind === "handoff") showHandoff(button.dataset.id);
-  if (button.dataset.kind === "thread") showThread(button.dataset.id);
-});
-
+q("#model").value = state.model;
+q("#reasoning").value = state.reasoning;
+renderChips();
+renderPicks();
+renderActivity();
+setView(state.view, false);
+setMode(state.mode, false);
 refresh();

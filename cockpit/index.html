@@ -3,163 +3,98 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YXNHarness Cockpit</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <title>YXNHarness</title>
   <link rel="stylesheet" href="/cockpit/styles.css">
 </head>
 <body>
-  <div class="app">
-    <header class="topbar">
-      <div class="topbar-left">
-        <p class="brand">YXNHarness</p>
-        <span class="top-sep" aria-hidden="true"></span>
-        <nav class="mode-nav" aria-label="Views">
-          <button type="button" class="mode-tab active" data-mode="review">Review</button>
-          <button type="button" class="mode-tab" data-mode="runs">Runs</button>
-          <button type="button" class="mode-tab" data-mode="handoffs">Handoffs</button>
-        </nav>
+<div id="yxn-workbench" aria-label="YXNHarness Workbench">
+  <header class="topbar">
+    <div class="brand"><i data-lucide="box" aria-hidden="true"></i><b>YXN<span>Harness</span></b></div>
+    <span class="slash">/</span><span class="project" id="project-name">workspace</span><span class="slash">/</span>
+    <span class="current-branch"><i data-lucide="git-branch" aria-hidden="true"></i><span id="active-branch">…</span></span>
+    <span class="grow"></span><span class="prototype">Local cockpit</span><div class="layout-controls" aria-label="Panels"><button class="icon-button" data-toggle-panel="left" aria-label="Workspace einklappen" aria-expanded="true" aria-controls="workspace-sidebar"><i data-lucide="panel-left" aria-hidden="true"></i></button><button class="icon-button" data-toggle-panel="right" aria-label="Agent einklappen" aria-expanded="true" aria-controls="agent-sidebar"><i data-lucide="panel-right" aria-hidden="true"></i></button></div>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar" id="workspace-sidebar">
+      <div class="section-name">Workspace<button class="icon-button" data-toggle-panel="left" aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Workspace einklappen"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></div>
+      <button class="nav-item active" data-nav="workbench"><i data-lucide="panels-top-left" aria-hidden="true"></i>Workbench<span class="shortcut">⌘1</span></button>
+      <button class="nav-item" data-nav="feedback"><i data-lucide="messages-square" aria-hidden="true"></i>Feedback<span class="count" id="feedback-count">0</span></button>
+      <button class="nav-item" data-nav="reviews"><i data-lucide="git-pull-request" aria-hidden="true"></i>Reviews</button>
+      <button class="nav-item" data-nav="runs"><i data-lucide="circle-play" aria-hidden="true"></i>Runs<span class="count" id="runs-count">0</span></button>
+      <div class="section-name branch-label">Branches<span class="count" id="branch-count">0</span></div>
+      <div id="branches-list"></div>
+      <div class="section-name activity-label">Recent activity</div>
+      <div id="recent-activity"></div>
+      <footer class="side-footer"><span class="avatar" id="avatar">YX</span><div>Local workspace<small>Solo mode</small></div><i data-lucide="chevrons-up-down" aria-hidden="true"></i></footer>
+    </aside>
+    <button class="panel-splitter splitter-left" data-resize-panel="left" role="separator" aria-orientation="vertical" aria-label="Workspace Breite ändern" aria-controls="workspace-sidebar" data-tooltip="Ziehen zum Vergrößern · Doppelklick zum Zurücksetzen"></button>
+    <main class="stage">
+      <div class="stage-tabs" role="tablist" aria-label="Workbench views">
+        <button id="tab-preview" class="tab active" data-view="preview" role="tab" aria-selected="true" aria-controls="screen-preview"><i data-lucide="app-window" aria-hidden="true"></i>Preview</button>
+        <button id="tab-compare" class="tab" data-view="compare" role="tab" aria-selected="false" aria-controls="screen-compare"><i data-lucide="columns-2" aria-hidden="true"></i>Compare</button>
+        <button id="tab-changes" class="tab" data-view="changes" role="tab" aria-selected="false" aria-controls="screen-changes"><i data-lucide="git-compare-arrows" aria-hidden="true"></i>Changes<span class="count" id="changes-count">0</span></button>
+        <span class="grow"></span>
       </div>
-      <div class="topbar-right">
-        <p id="branch-current" class="top-meta">…</p>
-        <button type="button" id="refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">↻</button>
+      <div class="address"><i data-lucide="globe" aria-hidden="true"></i><span id="route">local workbench</span><span class="grow"></span><button class="icon-button" id="refresh" aria-label="Preview neu laden"><i data-lucide="rotate-cw" aria-hidden="true"></i></button></div>
+      <section class="screen preview-screen" id="screen-preview" role="tabpanel" aria-labelledby="tab-preview">
+        <div class="preview-label"><span><span class="status-dot"></span>Interactive preview</span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
+        <div class="app-preview" id="app-preview">
+          <div class="puls-header"><b><i data-lucide="asterisk" aria-hidden="true"></i>PULS</b><span>Personal banking</span></div>
+          <div class="puls-body" id="puls-body">
+            <div class="step"><span>Getting to know you</span><span>02 / 04</span></div><div class="step-track"><span></span></div>
+            <h2>Build your<br>financial future.</h2><p>A little about you. A clearer way forward.</p>
+            <fieldset><legend>What would you like to focus on?</legend>
+              <label class="goal"><i data-lucide="chart-no-axes-combined" aria-hidden="true"></i><span><b>Financial overview</b><small>See the bigger picture.</small></span><input type="radio" name="goal" checked value="overview"></label>
+              <label class="goal"><i data-lucide="move-up-right" aria-hidden="true"></i><span><b>Future planning</b><small>Make room for what's next.</small></span><input type="radio" name="goal" value="planning"></label>
+            </fieldset>
+            <button id="inspect-target" class="puls-continue inspected">Continue<i data-lucide="arrow-right" aria-hidden="true"></i></button>
+            <div class="element-label" id="element-label"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>PrimaryButton</div>
+            <div class="puls-safe"><i data-lucide="lock-keyhole" aria-hidden="true"></i>Your goals. Your pace.</div>
+          </div>
+        </div>
+        <div class="preview-toolbar"><button id="select-tool" class="tool active"><i data-lucide="scan" aria-hidden="true"></i>Select</button><button id="interact-tool" class="tool"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>Interact</button><span class="grow"></span><button id="capture" class="tool"><i data-lucide="camera" aria-hidden="true"></i>Capture</button></div>
+      </section>
+      <section class="screen compare-screen" id="screen-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
+        <div class="view-heading"><h2>Compare branches</h2><p>Select the elements you want to bring into your branch.</p></div>
+        <div class="compare-grid">
+          <div class="compare-card"><label class="source-label">Source A<select id="source-a" aria-label="Source A"><option>feature/onboarding</option><option>main</option></select></label><div class="mini-preview"><span class="mini-brand">PULS / ONBOARDING</span><h3>Your next<br>chapter starts here.</h3><div class="mini-field">Financial overview</div><button class="pick-element" data-element="ContinueButton" data-source="feature/onboarding">Continue<i data-lucide="plus" aria-hidden="true"></i></button></div></div>
+          <div class="compare-card"><label class="source-label">Source B<select id="source-b" aria-label="Source B"><option>feature/dashboard</option><option>main</option></select></label><div class="mini-preview"><span class="mini-brand">PULS / DASHBOARD</span><h3>A clearer view<br>of your future.</h3><button class="wealth-widget pick-element" data-element="WealthWidget" data-source="feature/dashboard"><small>Financial wellbeing</small><strong>84.2<span>↗</span></strong><span class="widget-bottom">Your wealth score<i data-lucide="plus" aria-hidden="true"></i></span></button></div></div>
+        </div><div class="selection-summary"><span id="selection-count">0 elements selected</span><button class="button primary" id="use-selection" disabled>Add to agent<i data-lucide="arrow-up-right" aria-hidden="true"></i></button></div>
+        <p class="view-note">Illustrative compare layout · Target: <span id="target-branch">…</span>. Element adopt is not wired yet.</p>
+      </section>
+      <section class="screen changes-screen" id="screen-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
+        <div class="view-heading"><h2>Branch changes</h2><p id="changes-subtitle">Select another branch to review its diff against yours.</p></div>
+        <div id="changes-body">
+          <p class="view-note">Pick a branch in the workspace sidebar to load a real 3-dot review.</p>
+        </div>
+        <div class="change-actions" id="change-actions" hidden>
+          <button class="button" id="discard">Cancel</button>
+          <button class="button primary" id="apply">Übernehmen<i data-lucide="check" aria-hidden="true"></i></button>
+        </div>
+        <p class="view-note" id="changes-note">Real git review when a branch is selected.</p>
+      </section>
+      <section class="screen extra-screen" id="extra-screen" hidden><div class="view-heading"><h2 id="extra-title"></h2><p id="extra-subtitle"></p></div><div id="extra-content"></div><button class="button" id="back-workbench">Back to workbench</button></section>
+      <div class="bottom-bar"><button id="activity-toggle" aria-expanded="false"><i data-lucide="terminal" aria-hidden="true"></i>Activity<span class="count" id="activity-count">0</span></button><span class="grow"></span><span class="local-indicator"><span class="status-dot"></span>Local</span></div>
+      <div class="activity-panel" id="activity-panel" hidden></div>
+    </main>
+    <button class="panel-splitter splitter-right" data-resize-panel="right" role="separator" aria-orientation="vertical" aria-label="Agent Breite ändern" aria-controls="agent-sidebar" data-tooltip="Ziehen zum Vergrößern · Doppelklick zum Zurücksetzen"></button>
+    <aside class="agent" id="agent-sidebar" aria-label="Agent Chat">
+      <header class="agent-header"><button class="icon-button" data-toggle-panel="right" aria-controls="agent-sidebar" aria-expanded="true" aria-label="Agent einklappen"><i data-lucide="panel-right-close" aria-hidden="true"></i></button><i data-lucide="sparkles" aria-hidden="true"></i><b>Agent</b><span class="grow"></span><button class="icon-button" id="new-chat" aria-label="Neuer Chat"><i data-lucide="square-pen" aria-hidden="true"></i></button></header>
+      <div class="agent-mode" role="group" aria-label="Agent mode"><button class="active" data-mode="connected" aria-pressed="true">Connected</button><button data-mode="external" aria-pressed="false">External</button><span class="grow"></span><span class="subtle">Local</span></div>
+      <div class="chat-feed" id="chat-feed" aria-live="polite">
+        <div class="task-context"><i data-lucide="git-branch" aria-hidden="true"></i><span id="chat-branch">…</span></div>
+        <h2 class="task-title">Feedback &amp; agent</h2><span class="task-subtitle" id="task-subtitle">Local · no agent adapter connected</span>
       </div>
-    </header>
-
-    <div class="workspace">
-      <div class="workspace-main">
-        <div id="view-review" class="view view-review">
-          <aside class="context" aria-label="Review context">
-            <section class="context-block">
-              <h2 class="context-label">Branches</h2>
-              <div id="branches-list" class="branch-list" role="list"></div>
-            </section>
-
-            <section class="context-block context-grow" id="review-context" hidden>
-              <div class="summary-card">
-                <h2 id="review-heading" class="summary-title">Review</h2>
-                <p id="review-meta" class="summary-meta"></p>
-                <p id="review-summary-text" class="summary-body"></p>
-                <p id="review-stats" class="summary-stats"></p>
-              </div>
-
-              <div class="files-card">
-                <div class="files-head">
-                  <h3>Files</h3>
-                  <span id="files-count" class="muted"></span>
-                </div>
-                <div id="files-list" class="files-list" role="list"></div>
-              </div>
-            </section>
-
-            <section id="composer" class="composer" hidden>
-              <textarea
-                id="adopt-comment"
-                class="composer-input"
-                rows="2"
-                maxlength="2000"
-                placeholder="Optional note — or leave empty to take as-is…"
-              ></textarea>
-              <div class="composer-bar">
-                <button type="button" class="btn btn-ghost" id="adopt-cancel" hidden>Cancel</button>
-                <button type="button" class="btn btn-primary" id="adopt-confirm">Übernehmen</button>
-              </div>
-            </section>
-          </aside>
-
-          <main class="stage" aria-labelledby="diff-title">
-            <div class="stage-tabs">
-              <span class="stage-tab active">Diff</span>
-              <span id="diff-title" class="stage-file muted"></span>
-            </div>
-            <div id="diff-body" class="diff-body">
-              <div class="empty-state">
-                <p class="empty-title">Pick a branch</p>
-                <p class="empty-copy">Select another local branch to review its changes against yours — then adopt with an optional note.</p>
-              </div>
-            </div>
-          </main>
-        </div>
-
-        <div id="view-runs" class="view view-stack" hidden>
-          <aside class="stack-rail">
-            <div class="stack-head">
-              <h2>Runs</h2>
-              <p id="runs-summary" class="muted">…</p>
-            </div>
-            <div id="runs-list" class="stack-list" role="list"></div>
-          </aside>
-          <main id="run-detail" class="stack-detail"></main>
-        </div>
-
-        <div id="view-handoffs" class="view view-stack" hidden>
-          <aside class="stack-rail">
-            <div class="stack-head">
-              <h2>Handoffs</h2>
-            </div>
-            <div id="handoffs-list" class="stack-list" role="list"></div>
-          </aside>
-          <main id="handoff-detail" class="stack-detail"></main>
-        </div>
+      <div class="composer-area">
+        <div class="context-controls"><button id="add-context"><i data-lucide="plus" aria-hidden="true"></i>Add context</button><button id="screenshot"><i data-lucide="image" aria-hidden="true"></i>Screenshot</button></div>
+        <div class="composer" id="composer" role="group" aria-label="Agent composer"><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
+        <div class="composer-footnote"><span id="composer-note">No agent adapter connected</span><span>↵ to send</span></div>
       </div>
-
-      <aside class="agent-panel" aria-label="Agent and feedback">
-        <header class="agent-head">
-          <div>
-            <h2 class="agent-title">Agent</h2>
-            <p id="agent-status" class="agent-status">Local · not connected</p>
-          </div>
-        </header>
-
-        <div id="context-chips" class="chip-row" aria-label="Context"></div>
-
-        <section class="agent-section agent-threads">
-          <div class="agent-section-head">
-            <h3>Feedback</h3>
-            <span id="feedback-count" class="muted"></span>
-          </div>
-          <div id="feedback-list" class="thread-list" role="list"></div>
-        </section>
-
-        <section id="thread-detail" class="agent-section agent-detail" hidden>
-          <div class="agent-section-head">
-            <h3 id="thread-title">Thread</h3>
-            <div class="thread-actions">
-              <button type="button" class="btn btn-ghost btn-tiny" id="thread-done">Done</button>
-              <button type="button" class="btn btn-ghost btn-tiny" id="thread-select">Select</button>
-            </div>
-          </div>
-          <div id="thread-messages" class="thread-messages"></div>
-        </section>
-
-        <section class="agent-section agent-activity">
-          <div class="agent-section-head">
-            <h3>Activity</h3>
-          </div>
-          <div id="agent-activity" class="activity-list">
-            <p class="activity-empty">No agent events yet. File reads, diffs, and previews will appear here when an adapter is connected.</p>
-          </div>
-        </section>
-
-        <section class="agent-composer">
-          <div id="selected-chips" class="chip-row chip-row-selected" hidden></div>
-          <textarea
-            id="feedback-body"
-            class="composer-input agent-input"
-            rows="3"
-            maxlength="8000"
-            placeholder="Describe the visual change… Comments are context, not instructions."
-          ></textarea>
-          <div class="composer-bar">
-            <button type="button" class="btn btn-ghost" id="bundle-btn" disabled>Bundle handoff</button>
-            <button type="button" class="btn btn-primary" id="feedback-send">Add feedback</button>
-          </div>
-        </section>
-      </aside>
-    </div>
+    </aside>
   </div>
-
-  <script type="module" src="/cockpit/app.js"></script>
+  <div class="notice" id="notice" role="status" hidden></div>
+</div>
+<script src="https://unpkg.com/lucide@1.17.0/dist/umd/lucide.min.js"></script>
+<script type="module" src="/cockpit/app.js"></script>
 </body>
 </html>
