@@ -283,45 +283,102 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   pointer-events: none;
 }
 
-/* Host-approved agent file proposals — quiet, not a second hero. */
+/* Host-approved agent file proposals — Cursor-style Edited rows. */
 #yxn-workbench .proposal-card {
   margin-top: 8px;
   padding: 8px 0 0;
   border-top: 1px solid var(--line);
   background: transparent;
 }
-#yxn-workbench .proposal-summary { margin: 0 0 6px; font-size: 12px; color: var(--text); }
-#yxn-workbench .proposal-file { margin: 0 0 8px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--bg); }
-#yxn-workbench .proposal-file-head {
+#yxn-workbench .proposal-summary { margin: 0 0 8px; font-size: 12px; color: var(--text); }
+#yxn-workbench .proposal-edit {
+  margin: 0 0 4px;
+  border: 0;
+  background: transparent;
+}
+#yxn-workbench .proposal-edit-summary {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line);
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  padding: 5px 4px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  user-select: none;
 }
-#yxn-workbench .proposal-path {
-  font-size: 10px;
+#yxn-workbench .proposal-edit-summary::-webkit-details-marker { display: none; }
+#yxn-workbench .proposal-edit-summary::marker { content: ""; }
+#yxn-workbench .proposal-edit-summary:hover { background: var(--hover); }
+#yxn-workbench .proposal-edit-label { font-weight: 500; color: var(--text); flex-shrink: 0; }
+#yxn-workbench .proposal-edit-path {
   color: var(--muted);
-  margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-#yxn-workbench .proposal-diff-stats {
-  margin-left: auto;
-  font-size: 10px;
-  white-space: nowrap;
+#yxn-workbench .proposal-edit-stats {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
 }
-#yxn-workbench .proposal-diff-stats b { color: var(--green); font-weight: 600; }
-#yxn-workbench .proposal-diff-stats em { color: var(--muted); font-style: normal; margin-left: 4px; }
-#yxn-workbench .proposal-diff-rollup { margin: 0 0 6px; text-align: right; }
+#yxn-workbench .proposal-edit-stats b { color: var(--green); font-weight: 600; }
+#yxn-workbench .proposal-edit-stats em { color: light-dark(#b45a4e, #d08a7e); font-style: normal; font-weight: 600; }
+#yxn-workbench .file-diff.proposal-edit {
+  border: 0;
+  margin-bottom: 6px;
+  background: transparent;
+  overflow: visible;
+}
+#yxn-workbench .file-diff .proposal-edit-summary .file-adopt {
+  margin-left: 4px;
+  opacity: 0;
+  flex-shrink: 0;
+}
+#yxn-workbench .file-diff .proposal-edit-summary:hover .file-adopt,
+#yxn-workbench .file-diff .proposal-edit-summary:focus-within .file-adopt {
+  opacity: 1;
+}
+#yxn-workbench .file-diff .proposal-edit-chevron { margin-left: 0; }
+#yxn-workbench .file-diff .proposal-edit-stats { margin-left: auto; }
+#yxn-workbench .proposal-edit-chevron {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--faint);
+  opacity: 0;
+  transition: opacity .12s ease, transform .12s ease;
+  flex-shrink: 0;
+}
+#yxn-workbench .proposal-edit-summary:hover .proposal-edit-chevron,
+#yxn-workbench .proposal-edit-summary:focus-visible .proposal-edit-chevron,
+#yxn-workbench .proposal-edit[open] .proposal-edit-chevron {
+  opacity: 1;
+}
+#yxn-workbench .proposal-edit[open] .proposal-edit-chevron {
+  transform: rotate(90deg);
+}
+#yxn-workbench .proposal-edit-empty {
+  margin: 0;
+  padding: 6px 8px 10px;
+  font-size: 11px;
+  color: var(--faint);
+}
 #yxn-workbench .proposal-diff-code {
-  max-height: 160px;
+  max-height: 220px;
   overflow: auto;
   border-top: 0;
+  margin: 0 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
 }
 #yxn-workbench .proposal-diff-code > div.hunk { color: var(--faint); background: transparent; }
 #yxn-workbench .proposal-diff-code > div.added { background: var(--add); }

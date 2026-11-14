@@ -484,38 +484,42 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   title.textContent = proposal.summary || "Proposed change";
   card.append(title);
 
-  let totalAdd = 0;
-  let totalDel = 0;
   for (const file of proposal.files || []) {
-    totalAdd += Number(file.additions) || 0;
-    totalDel += Number(file.deletions) || 0;
-    const fileBlock = document.createElement("div");
-    fileBlock.className = "proposal-file";
-    const head = document.createElement("div");
-    head.className = "proposal-file-head";
-    const path = document.createElement("span");
-    path.className = "proposal-path";
-    path.textContent = file.path || "—";
-    const stats = document.createElement("span");
-    stats.className = "proposal-diff-stats";
     const add = Number(file.additions) || 0;
     const del = Number(file.deletions) || 0;
+    const fileBlock = document.createElement("details");
+    fileBlock.className = "proposal-edit";
+    // New / focused proposals open so the host sees the diff; otherwise start collapsed.
+    fileBlock.open = Boolean(focus) || proposal.status === "pending";
+    const head = document.createElement("summary");
+    head.className = "proposal-edit-summary";
+    const label = document.createElement("span");
+    label.className = "proposal-edit-label";
+    label.textContent = "Edited";
+    const path = document.createElement("span");
+    path.className = "proposal-edit-path";
+    path.textContent = file.path || "—";
+    const stats = document.createElement("span");
+    stats.className = "proposal-edit-stats";
     stats.innerHTML = `<b>+${add}</b> <em>−${del}</em>`;
-    head.append(path, stats);
+    const chevron = document.createElement("i");
+    chevron.className = "proposal-edit-chevron";
+    chevron.setAttribute("data-lucide", "chevron-right");
+    chevron.setAttribute("aria-hidden", "true");
+    head.append(label, path, stats, chevron);
     fileBlock.append(head);
     if (file.diff) {
       const code = document.createElement("div");
       code.className = "code proposal-diff-code";
       code.innerHTML = renderProposalDiff(file.diff);
       fileBlock.append(code);
+    } else {
+      const empty = document.createElement("p");
+      empty.className = "proposal-edit-empty";
+      empty.textContent = "No textual patch for this file.";
+      fileBlock.append(empty);
     }
     card.append(fileBlock);
-  }
-  if ((proposal.files || []).length > 1) {
-    const rollup = document.createElement("div");
-    rollup.className = "proposal-diff-stats proposal-diff-rollup";
-    rollup.innerHTML = `<b>+${totalAdd}</b> <em>−${totalDel}</em>`;
-    card.append(rollup);
   }
 
   const actions = document.createElement("div");
@@ -558,6 +562,7 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   }
   card.append(actions);
   host.append(card);
+  icons();
   if (focus) card.scrollIntoView({ block: "nearest" });
   return card;
 }
@@ -906,9 +911,12 @@ async function loadChanges() {
         return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
       }).join("");
       filesHtml.push(`
-        <details class="file-diff"${index === 0 ? " open" : ""}>
-          <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
-            <span>+${file.additions} −${file.deletions}</span>
+        <details class="file-diff proposal-edit"${index === 0 ? " open" : ""}>
+          <summary class="proposal-edit-summary">
+            <span class="proposal-edit-label">Edited</span>
+            <span class="proposal-edit-path">${escapeHtml(file.path)}</span>
+            <span class="proposal-edit-stats"><b>+${file.additions}</b> <em>−${file.deletions}</em></span>
+            <i class="proposal-edit-chevron" data-lucide="chevron-right" aria-hidden="true"></i>
             <button type="button" class="ghost file-adopt" data-adopt-path="${escapeHtml(file.path)}">Datei übernehmen</button>
           </summary>
           <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
