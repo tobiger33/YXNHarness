@@ -266,3 +266,32 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench.is-capturing-project #demo-preview .demo-selected,
 #yxn-workbench.is-capturing-project #demo-preview .demo-candidate { outline: none; }
 #yxn-workbench .attachment-resolution { display: block; width: 100%; padding: 0 6px 4px; color: var(--faint); font-size: 10px; }
+
+/* Host-approved agent file proposals */
+#yxn-workbench .proposal-card {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel, var(--bg));
+}
+#yxn-workbench .proposal-summary { margin: 0 0 6px; font-size: 13px; }
+#yxn-workbench .proposal-path { font-size: 11px; color: var(--muted); margin: 6px 0 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#yxn-workbench .proposal-diff {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+#yxn-workbench .proposal-actions { display: flex; gap: 8px; margin-top: 10px; }
+#yxn-workbench .proposal-actions .button.ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}

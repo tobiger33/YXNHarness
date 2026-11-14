@@ -1,6 +1,6 @@
 # Visual feedback → agent → review
 
-Status: UI preparation, live inspector, attachment transport, and connected agent adapter (local packager + custom module contract) implemented; remote model adapters remain project-specific.
+Status: UI preparation, live inspector, attachment transport, connected agent adapter (local packager + workspace-edit proposals with host Accept + custom module contract) implemented; remote model adapters remain project-specific.
 Owner split: UI/layout in Codex; backend and native target adapters in Cursor.
 Keep the accepted YXNHarness layout and native application behavior.
 
@@ -116,8 +116,10 @@ URLs. An agent receives pixels only when its adapter supports images.
    revisions. Übernehmen: dry-run then apply; verify it creates feedback, not a merge.
 5. Upload a screenshot, open it, send, reload and reopen from the stored message.
    Removing a draft thumbnail must not break an already sent image reference.
-6. With a real agent adapter, perform one reversible visual edit, inspect file
-   activity/diff, verify the target behavior and preview, then accept explicitly.
+6. With `agent.adapter: "workspace-edit"`, send a turn, inspect the proposal
+   activity/diff in the Agent panel, verify Harbor Desk preview, then Accept
+   explicitly (or Reject). Automated coverage:
+   `node --test tests/harness.test.mjs` (workspace-edit propose/accept cases).
 7. Exercise missing adapter, disconnected app, stale selection, rejected upload,
    failed request, retry, fast route changes, keyboard access and narrow screens.
 

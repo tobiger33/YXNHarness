@@ -48,10 +48,11 @@ coding agent.
 
 ## Agent adapters
 
-Opt in with `harness.host.json` → `agent.adapter` (`"local"` or a project
-module). See [`agent-adapter.md`](agent-adapter.md) and
-`schema/agent-adapter.schema.json`. Connected agents declare capabilities;
-unsupported UI stays hidden. Activity from turns lands in the Agent panel.
+Opt in with `harness.host.json` → `agent.adapter` (`"local"`,
+`"workspace-edit"`, or a project module). See [`agent-adapter.md`](agent-adapter.md)
+and `schema/agent-adapter.schema.json`. Connected agents declare capabilities;
+unsupported UI stays hidden. Activity and pending proposals land in the Agent
+panel; file writes require explicit host Accept.
 
 ## Element adopt
 
@@ -76,7 +77,10 @@ See [`elements.md`](elements.md).
 | POST | `/api/v1/attachments` | Upload image; returns `attachmentId` + `contentUrl` |
 | GET | `/api/v1/attachments/:id/content` | Read stored image |
 | DELETE | `/api/v1/attachments/:id` | Delete unreferenced draft |
-| GET | `/api/v1/agent` | Adapter connection + capabilities |
+| GET | `/api/v1/agent` | Adapter connection + capabilities + pending proposals |
 | POST | `/api/v1/agent/turns` | Submit a connected-adapter turn |
+| GET | `/api/v1/agent/proposals` | List proposals |
+| POST | `/api/v1/agent/proposals/:id/accept` | Host Accept → write files |
+| POST | `/api/v1/agent/proposals/:id/reject` | Host Reject |
 
 See also [`handoff.md`](handoff.md), [`elements.md`](elements.md), and [`vision.md`](vision.md).

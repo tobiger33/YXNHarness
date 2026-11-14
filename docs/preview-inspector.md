@@ -45,6 +45,7 @@ Stable IDs: `CityField`, `NightsField`, `ReviewButton`, `BackButton`,
 
 ## Not done yet
 
-- Screenshot capture from the adapter
-- Attachment upload API
-- Full acceptance run against a real agent adapter
+- Screenshot capture from the adapter frame (composer upload API is available)
+
+Agent propose/accept for Harbor Desk visual edits is covered by the
+`workspace-edit` adapter; see [`agent-adapter.md`](agent-adapter.md).

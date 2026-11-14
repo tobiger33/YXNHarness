@@ -6,6 +6,14 @@ import { createRequire } from "node:module";
 import { loadHostConfig } from "./host-config.mjs";
 import { collectWorkspace } from "./workspace.mjs";
 import { createFeedback } from "./feedback.mjs";
+import {
+  acceptProposal,
+  listProposals,
+  publicProposal,
+  readProposal,
+  rejectProposal,
+  writeProposal,
+} from "./agent-proposals.mjs";
 
 const require = createRequire(import.meta.url);
 const Ajv = require("ajv");
@@ -54,6 +62,7 @@ function disconnectedState(message = "No coding agent connected. Feedback is loc
     models: [],
     modes: [],
     activity: [],
+    proposals: [],
   };
 }
 
@@ -86,6 +95,86 @@ function localAdapterDeclaration() {
     modes: ["connected"],
     note: "Packages turns into artifacts/agent/ for your coding agent. Does not call a remote model or write project source.",
   });
+}
+
+function workspaceEditAdapterDeclaration() {
+  return validateDeclaration({
+    version: 1,
+    adapterId: "workspace-edit",
+    displayName: "Workspace edit adapter",
+    connected: true,
+    capabilities: {
+      models: true,
+      reasoningEffort: true,
+      modes: true,
+      streaming: false,
+      approvals: true,
+      sessions: true,
+      fileChanges: true,
+      images: true,
+    },
+    models: [
+      { id: "workspace-edit", label: "Workspace edit (host-approved)" },
+    ],
+    modes: ["connected"],
+    note: "Proposes reversible visual file edits. Nothing is written until the host accepts the proposal.",
+  });
+}
+
+const BOOKING_STYLE = path.join("examples", "foreign-booking", "styles.css");
+const ACCENT_ORIGINAL = "  --accent: #0f6b63;";
+const ACCENT_PROPOSED = "  --accent: #085c8f;";
+
+async function buildDemoVisualProposal(root, { body = "", element = null } = {}) {
+  const stylePath = path.join(root, BOOKING_STYLE);
+  if (!(await pathExists(stylePath))) {
+    return {
+      status: "blocked",
+      ok: false,
+      blockedReasons: [
+        `Demo visual target missing (${BOOKING_STYLE}). Point the cockpit at the YXNHarness repo or provide a custom adapter.`,
+      ],
+    };
+  }
+  const before = await readFile(stylePath, "utf8");
+  let after = before;
+  let summary = "Adjust Harbor Desk primary accent for a clearer CTA.";
+  if (before.includes(ACCENT_PROPOSED) && !before.includes(ACCENT_ORIGINAL)) {
+    after = before.replace(ACCENT_PROPOSED, ACCENT_ORIGINAL);
+    summary = "Revert Harbor Desk primary accent to the original teal.";
+  } else if (before.includes(ACCENT_ORIGINAL)) {
+    after = before.replace(ACCENT_ORIGINAL, ACCENT_PROPOSED);
+  } else {
+    // Fallback: nudge button padding so the edit stays reversible and visible.
+    if (before.includes("padding: 10px 16px;")) {
+      after = before.replace("padding: 10px 16px;", "padding: 12px 18px;");
+      summary = "Increase Harbor Desk primary button padding slightly.";
+    } else if (before.includes("padding: 12px 18px;")) {
+      after = before.replace("padding: 12px 18px;", "padding: 10px 16px;");
+      summary = "Restore Harbor Desk primary button padding.";
+    } else {
+      return {
+        status: "blocked",
+        ok: false,
+        blockedReasons: ["Could not locate a reversible visual token in the Harbor Desk stylesheet."],
+      };
+    }
+  }
+  if (after === before) {
+    return {
+      status: "blocked",
+      ok: false,
+      blockedReasons: ["Proposed visual edit produced no file difference."],
+    };
+  }
+  const hint = [body, element?.label, element?.id].filter(Boolean).join(" ");
+  if (hint) summary = `${summary} Context: ${String(hint).slice(0, 160)}`;
+  return {
+    status: "ready",
+    ok: true,
+    summary,
+    files: [{ path: BOOKING_STYLE.split(path.sep).join("/"), before, after }],
+  };
 }
 
 /**
@@ -216,6 +305,7 @@ async function runLocalTurn(root, {
     thread,
     taskPath: relativePosix(root, taskPath),
     activity,
+    proposals: [],
     reply: {
       role: "adapter",
       body: [
@@ -226,6 +316,88 @@ async function runLocalTurn(root, {
       ].filter(Boolean).join(" "),
     },
     explanation: "Provider-neutral local adapter: persists a task package and activity only.",
+  };
+}
+
+async function runWorkspaceEditTurn(root, context = {}) {
+  const packaged = await runLocalTurn(root, {
+    ...context,
+    model: context.model || "workspace-edit",
+  });
+  if (!packaged.ok) return packaged;
+
+  const push = async (type, summary, detail = null) => {
+    const event = {
+      eventId: `evt-${randomUUID()}`,
+      sessionId: packaged.sessionId,
+      turnId: packaged.turnId,
+      type,
+      summary,
+      detail,
+      createdAt: nowIso(),
+    };
+    packaged.activity.push(event);
+    await appendActivity(root, event);
+    return event;
+  };
+
+  await push("reading-files", `Inspecting ${BOOKING_STYLE.split(path.sep).join("/")} for a reversible visual edit.`);
+  const demo = await buildDemoVisualProposal(root, {
+    body: context.body,
+    element: context.element,
+  });
+  if (!demo.ok) {
+    await push("blocked", demo.blockedReasons?.[0] || "Could not build visual proposal.");
+    return {
+      ...packaged,
+      status: "blocked",
+      ok: false,
+      blockedReasons: demo.blockedReasons,
+      reply: {
+        role: "adapter",
+        body: demo.blockedReasons?.join(" ") || "Visual proposal blocked.",
+      },
+    };
+  }
+
+  const proposed = await writeProposal(root, {
+    sessionId: packaged.sessionId,
+    turnId: packaged.turnId,
+    summary: demo.summary,
+    files: demo.files,
+    adapterId: "workspace-edit",
+  });
+  if (!proposed.ok) {
+    return {
+      ...packaged,
+      status: "blocked",
+      ok: false,
+      blockedReasons: proposed.blockedReasons,
+    };
+  }
+
+  await push("proposed-file-change", proposed.proposal.summary, {
+    proposalId: proposed.proposal.proposalId,
+    files: proposed.proposal.files.map((file) => file.path),
+  });
+  await push("awaiting-approval", "Host must Accept or Reject before any file is written.");
+
+  return {
+    ...packaged,
+    status: "awaiting-approval",
+    ok: true,
+    proposals: [proposed.proposal],
+    proposalPath: proposed.proposalPath,
+    reply: {
+      role: "adapter",
+      body: [
+        "Workspace edit adapter proposed a reversible visual change.",
+        proposed.proposal.summary,
+        `Proposal ${proposed.proposal.proposalId} is pending host approval.`,
+        "No project source was modified yet.",
+      ].join(" "),
+    },
+    explanation: "File changes require explicit host Accept; merge/push stay host-controlled.",
   };
 }
 
@@ -260,8 +432,11 @@ async function resolveAdapterConfig(root) {
   if (adapter === "local" || adapter === "builtin:local") {
     return { kind: "local" };
   }
+  if (adapter === "workspace-edit" || adapter === "builtin:workspace-edit") {
+    return { kind: "workspace-edit" };
+  }
   if (typeof adapter !== "string") {
-    return { kind: "blocked", reason: "harness.host.json agent.adapter must be a string, \"local\", or null." };
+    return { kind: "blocked", reason: "harness.host.json agent.adapter must be a string (\"local\", \"workspace-edit\"), a module path, or null." };
   }
   const resolved = path.resolve(root, adapter);
   const rootResolved = path.resolve(root);
@@ -315,6 +490,19 @@ async function getBoundAdapter(root) {
       },
     };
   }
+  if (config.kind === "workspace-edit") {
+    const declaration = workspaceEditAdapterDeclaration();
+    return {
+      config,
+      declaration,
+      adapter: {
+        declaration,
+        async handleTurn(context) {
+          return runWorkspaceEditTurn(root, context);
+        },
+      },
+    };
+  }
   const custom = await loadCustomModule(config.path);
   return { config, adapter: custom, declaration: custom.declaration };
 }
@@ -362,7 +550,9 @@ async function agentPanelState(root) {
         adapterId: declaration.adapterId,
         displayName: declaration.displayName,
         note: declaration.note || null,
-        source: bound.config.kind === "local" ? "builtin:local" : bound.config.relative,
+        source: bound.config.kind === "module"
+          ? bound.config.relative
+          : `builtin:${bound.config.kind}`,
       },
       session,
       message: declaration.note
@@ -371,6 +561,7 @@ async function agentPanelState(root) {
       models: declaration.models || [],
       modes: declaration.modes || [],
       activity,
+      proposals: (await listProposals(root, { status: "pending" })).proposals.slice(0, 12),
     };
   } catch (error) {
     return {
@@ -390,7 +581,7 @@ async function createAgentSession(root, { note = null } = {}) {
     return {
       status: "blocked",
       ok: false,
-      blockedReasons: ["No agent adapter configured. Set harness.host.json agent.adapter to \"local\" or a project module."],
+      blockedReasons: ["No agent adapter configured. Set harness.host.json agent.adapter to \"local\", \"workspace-edit\", or a project module."],
     };
   }
   if (!bound.declaration.capabilities.sessions) {
@@ -532,13 +723,50 @@ async function listAgentSessions(root) {
   };
 }
 
+async function activityBinder(root) {
+  return async ({ type, summary, detail = null, sessionId = null, turnId = null }) => {
+    await appendActivity(root, {
+      eventId: `evt-${randomUUID()}`,
+      sessionId,
+      turnId,
+      type,
+      summary,
+      detail,
+      createdAt: nowIso(),
+    });
+  };
+}
+
+async function acceptAgentProposal(root, proposalId, { force = false } = {}) {
+  return acceptProposal(root, proposalId, {
+    force,
+    appendActivity: await activityBinder(root),
+  });
+}
+
+async function rejectAgentProposal(root, proposalId, { reason = null } = {}) {
+  return rejectProposal(root, proposalId, {
+    reason,
+    appendActivity: await activityBinder(root),
+  });
+}
+
+async function getAgentProposal(root, proposalId) {
+  return publicProposal(await readProposal(root, proposalId));
+}
+
 export {
   AGENT_DIR,
+  acceptAgentProposal,
   agentPanelState,
   createAgentSession,
+  getAgentProposal,
   listAgentActivity,
   listAgentSessions,
+  listProposals as listAgentProposals,
   localAdapterDeclaration,
+  rejectAgentProposal,
   submitAgentTurn,
   validateDeclaration,
+  workspaceEditAdapterDeclaration,
 };

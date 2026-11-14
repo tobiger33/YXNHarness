@@ -30,5 +30,8 @@
   "moderation": {
     "requireReviewedExpects": true,
     "allowForceOverwrite": false
+  },
+  "agent": {
+    "adapter": "workspace-edit"
   }
 }

@@ -31,10 +31,14 @@ import {
   listAttachments,
 } from "./attachments.mjs";
 import {
+  acceptAgentProposal,
   agentPanelState,
   createAgentSession,
+  getAgentProposal,
   listAgentActivity,
+  listAgentProposals,
   listAgentSessions,
+  rejectAgentProposal,
   submitAgentTurn,
 } from "./agent-adapter.mjs";
 
@@ -172,6 +176,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "DELETE /api/v1/attachments/:id",
         "POST /api/v1/agent/sessions",
         "POST /api/v1/agent/turns",
+        "POST /api/v1/agent/proposals/:id/accept",
+        "POST /api/v1/agent/proposals/:id/reject",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -206,6 +212,10 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/agent/sessions",
         "POST /api/v1/agent/sessions",
         "POST /api/v1/agent/turns",
+        "GET /api/v1/agent/proposals",
+        "GET /api/v1/agent/proposals/:id",
+        "POST /api/v1/agent/proposals/:id/accept",
+        "POST /api/v1/agent/proposals/:id/reject",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
         "GET /api/v1/artifacts/*",
@@ -393,10 +403,11 @@ function apiIndexPayload(projectRoot) {
       agentActivity: "/api/v1/agent/activity",
       agentSessions: "/api/v1/agent/sessions",
       agentTurns: "/api/v1/agent/turns",
+      agentProposals: "/api/v1/agent/proposals",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments, optional agent turns. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments, optional agent turns/proposals. No remote agent required.",
   };
 }
 
@@ -691,6 +702,42 @@ function createCockpitApi({
         return;
       }
 
+      const proposalAcceptMatch = pathname.match(/^\/api\/v1\/agent\/proposals\/([^/]+)\/accept$/);
+      if (proposalAcceptMatch && method === "POST") {
+        const body = await readJsonBody(request);
+        try {
+          const plan = await acceptAgentProposal(projectRoot, decodeURIComponent(proposalAcceptMatch[1]), {
+            force: body.force === true,
+          });
+          sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        } catch (error) {
+          if (error.statusCode === 400 || error.statusCode === 404) {
+            sendJson(response, error.statusCode, { error: error.message });
+            return;
+          }
+          throw error;
+        }
+        return;
+      }
+
+      const proposalRejectMatch = pathname.match(/^\/api\/v1\/agent\/proposals\/([^/]+)\/reject$/);
+      if (proposalRejectMatch && method === "POST") {
+        const body = await readJsonBody(request);
+        try {
+          const plan = await rejectAgentProposal(projectRoot, decodeURIComponent(proposalRejectMatch[1]), {
+            reason: body.reason ?? null,
+          });
+          sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        } catch (error) {
+          if (error.statusCode === 400 || error.statusCode === 404) {
+            sendJson(response, error.statusCode, { error: error.message });
+            return;
+          }
+          throw error;
+        }
+        return;
+      }
+
       const feedbackWriteMatch = pathname.match(/^\/api\/v1\/feedback\/([^/]+)$/);
       if (feedbackWriteMatch && method === "PATCH") {
         const body = await readJsonBody(request);
@@ -867,6 +914,27 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/agent/sessions") {
         sendJson(response, 200, await listAgentSessions(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/agent/proposals") {
+        const status = searchParams.get("status") || null;
+        sendJson(response, 200, await listAgentProposals(projectRoot, { status }));
+        return;
+      }
+
+      const proposalMatch = pathname.match(/^\/api\/v1\/agent\/proposals\/([^/]+)$/);
+      if (proposalMatch) {
+        try {
+          const proposal = await getAgentProposal(projectRoot, decodeURIComponent(proposalMatch[1]));
+          sendJson(response, 200, { version: 1, proposal });
+        } catch (error) {
+          if (error.statusCode === 400 || error.statusCode === 404) {
+            sendJson(response, error.statusCode, { error: error.message });
+            return;
+          }
+          throw error;
+        }
         return;
       }
 

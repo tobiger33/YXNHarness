@@ -360,6 +360,98 @@ function syncAgentControls() {
   reasoningSelect.hidden = connected && caps.reasoningEffort === false;
 }
 
+function appendProposalCard(host, proposal, { focus = false } = {}) {
+  if (!proposal?.proposalId || !host) return null;
+  const existing = host.querySelector(`[data-proposal-id="${CSS.escape(proposal.proposalId)}"]`);
+  if (existing) {
+    if (focus) existing.scrollIntoView({ block: "nearest" });
+    return existing;
+  }
+  const card = document.createElement("div");
+  card.className = "proposal-card";
+  card.dataset.proposalId = proposal.proposalId;
+  const title = document.createElement("p");
+  title.className = "proposal-summary";
+  title.textContent = proposal.summary || "Proposed file change";
+  card.append(title);
+  const meta = document.createElement("div");
+  meta.className = "agent-event";
+  meta.textContent = `Proposal ${proposal.proposalId} · ${proposal.status || "pending"}`;
+  card.append(meta);
+  for (const file of proposal.files || []) {
+    const pathLine = document.createElement("div");
+    pathLine.className = "proposal-path";
+    pathLine.textContent = file.path;
+    card.append(pathLine);
+    if (file.diff) {
+      const diff = document.createElement("pre");
+      diff.className = "proposal-diff";
+      diff.textContent = file.diff.length > 4000 ? `${file.diff.slice(0, 4000)}\n…` : file.diff;
+      card.append(diff);
+    }
+  }
+  if (proposal.status === "pending") {
+    const actions = document.createElement("div");
+    actions.className = "proposal-actions";
+    const accept = document.createElement("button");
+    accept.type = "button";
+    accept.className = "button";
+    accept.textContent = "Accept";
+    accept.onclick = () => decideProposal(proposal.proposalId, "accept", card);
+    const reject = document.createElement("button");
+    reject.type = "button";
+    reject.className = "button ghost";
+    reject.textContent = "Reject";
+    reject.onclick = () => decideProposal(proposal.proposalId, "reject", card);
+    actions.append(accept, reject);
+    card.append(actions);
+  }
+  host.append(card);
+  if (focus) card.scrollIntoView({ block: "nearest" });
+  return card;
+}
+
+async function decideProposal(proposalId, decision, card) {
+  if (busy) return;
+  busy = true;
+  try {
+    const path = decision === "accept"
+      ? `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/accept`
+      : `/api/v1/agent/proposals/${encodeURIComponent(proposalId)}/reject`;
+    const plan = await apiPost(path, decision === "accept" ? {} : { reason: "Host rejected from cockpit" });
+    if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Proposal blocked");
+    if (card) {
+      const actions = card.querySelector(".proposal-actions");
+      if (actions) actions.remove();
+      const meta = card.querySelector(".agent-event");
+      if (meta) meta.textContent = `Proposal ${proposalId} · ${plan.status}`;
+    }
+    pushActivity(decision === "accept"
+      ? `Accepted proposal ${proposalId}`
+      : `Rejected proposal ${proposalId}`);
+    toast(decision === "accept" ? "Proposal accepted · files written" : "Proposal rejected");
+    try {
+      const agent = await apiGet("/api/v1/agent");
+      state.agent = agent;
+      setMode(state.mode, false);
+    } catch {
+      // Keep prior agent state.
+    }
+  } catch (error) {
+    toast(error.message || "Proposal decision failed");
+  } finally {
+    busy = false;
+  }
+}
+
+function renderPendingProposals(feed = q("#chat-feed")) {
+  const proposals = state.agent?.proposals || [];
+  if (!proposals.length || !state.agent?.capabilities?.fileChanges) return;
+  for (const proposal of proposals.slice(0, 6)) {
+    appendProposalCard(feed, proposal);
+  }
+}
+
 function setMode(mode, save = true) {
   state.mode = mode;
   qa("[data-mode]").forEach((button) => {
@@ -729,6 +821,7 @@ function renderChatSeed() {
     hint.innerHTML = `<p>Send a message to create local feedback, or switch to External to copy a task for your coding agent. Preview/Compare demos are layout examples — Changes uses real git reviews.</p>`;
     feed.append(hint);
   }
+  renderPendingProposals(feed);
   icons();
 }
 
@@ -872,6 +965,9 @@ async function sendMessage() {
         meta.className = "agent-event";
         meta.textContent = `✓ Feedback ${plan.thread.threadId}`;
         answer.append(meta);
+      }
+      for (const proposal of plan.proposals || []) {
+        appendProposalCard(answer, proposal, { focus: true });
       }
       for (const event of (plan.activity || []).slice(-4)) {
         pushActivity(event.summary || event.type);

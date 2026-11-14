@@ -27,6 +27,9 @@ import {
   agentPanelState,
   createAgentSession,
   submitAgentTurn,
+  acceptAgentProposal,
+  rejectAgentProposal,
+  listAgentProposals,
   runAttach,
   formatAttachPlan,
   planElementAdopt,
@@ -967,6 +970,8 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "DELETE /api/v1/attachments/:id",
       "POST /api/v1/agent/sessions",
       "POST /api/v1/agent/turns",
+      "POST /api/v1/agent/proposals/:id/accept",
+      "POST /api/v1/agent/proposals/:id/reject",
     ]);
     assert.equal(overview.workspace.available, false);
 
@@ -1185,6 +1190,155 @@ test("agent adapter stays disconnected until host opts in", async () => {
     const turn = await submitAgentTurn(root, { body: "should not run" });
     assert.equal(turn.status, "blocked");
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace-edit adapter proposes reversible visual change and host accept writes files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-agent-edit-"));
+  let api;
+  try {
+    const host = defaultHostConfig({ projectLabel: "harbor-edit" });
+    host.agent = { adapter: "workspace-edit" };
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(host, null, 2));
+    const styleRel = path.join("examples", "foreign-booking", "styles.css");
+    await mkdir(path.join(root, "examples", "foreign-booking"), { recursive: true });
+    const original = [
+      ":root {",
+      "  --accent: #0f6b63;",
+      "}",
+      ".btn { padding: 10px 16px; }",
+      "",
+    ].join("\n");
+    await writeFile(path.join(root, styleRel), original);
+
+    const panel = await agentPanelState(root);
+    assert.equal(panel.connected, true);
+    assert.equal(panel.adapter.adapterId, "workspace-edit");
+    assert.equal(panel.capabilities.fileChanges, true);
+
+    const turn = await submitAgentTurn(root, {
+      body: "Make the Harbor Desk CTA clearer",
+      route: "/review",
+      element: { id: "ConfirmBooking", label: "Confirm booking" },
+    });
+    assert.equal(turn.status, "awaiting-approval");
+    assert.equal(turn.ok, true);
+    assert.equal(turn.proposals?.length, 1);
+    const proposalId = turn.proposals[0].proposalId;
+    assert.ok(proposalId.startsWith("prop-"));
+    assert.match(turn.proposals[0].files[0].diff, /--accent/);
+    // Source unchanged until Accept.
+    assert.equal(await readFile(path.join(root, styleRel), "utf8"), original);
+
+    const listed = await listAgentProposals(root, { status: "pending" });
+    assert.equal(listed.proposals.length, 1);
+
+    api = createCockpitApi({ root, port: 0, host: "127.0.0.1" });
+    const listening = await api.listen();
+    const httpPanel = await fetch(`${listening.url}api/v1/agent`).then((response) => response.json());
+    assert.equal(httpPanel.proposals.length, 1);
+
+    const accepted = await fetch(`${listening.url}api/v1/agent/proposals/${proposalId}/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).then((response) => {
+      assert.equal(response.status, 200);
+      return response.json();
+    });
+    assert.equal(accepted.status, "accepted");
+    const after = await readFile(path.join(root, styleRel), "utf8");
+    assert.match(after, /--accent: #085c8f;/);
+    assert.doesNotMatch(after, /--accent: #0f6b63;/);
+
+    // Second turn proposes the revert.
+    const revertTurn = await submitAgentTurn(root, { body: "Revert accent" });
+    assert.equal(revertTurn.status, "awaiting-approval");
+    const rejected = await rejectAgentProposal(root, revertTurn.proposals[0].proposalId, {
+      reason: "Keep the new accent for now",
+    });
+    assert.equal(rejected.status, "rejected");
+    assert.match(await readFile(path.join(root, styleRel), "utf8"), /#085c8f/);
+  } finally {
+    if (api) await api.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Harbor Desk acceptance path: feedback + attachment + workspace-edit propose/accept", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-harbor-accept-"));
+  let api;
+  try {
+    const host = defaultHostConfig({ projectLabel: "harbor-desk" });
+    host.agent = { adapter: "workspace-edit" };
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(host, null, 2));
+    await mkdir(path.join(root, "examples", "foreign-booking"), { recursive: true });
+    await writeFile(
+      path.join(root, "examples", "foreign-booking", "styles.css"),
+      ":root {\n  --accent: #0f6b63;\n}\n.btn { padding: 10px 16px; background: var(--accent); }\n",
+    );
+
+    // 1px PNG
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+
+    api = createCockpitApi({ root, port: 0, host: "127.0.0.1" });
+    const listening = await api.listen();
+
+    const feedback = await fetch(`${listening.url}api/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Confirm booking CTA needs a clearer accent on Review.",
+        route: "/review",
+        element: { id: "ConfirmBooking", kind: "button", label: "Confirm booking" },
+        apply: true,
+      }),
+    }).then((response) => response.json());
+    assert.ok(feedback.thread?.threadId);
+
+    const uploaded = await fetch(`${listening.url}api/v1/attachments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "image/png",
+        "X-Attachment-Filename": "review-cta.png",
+      },
+      body: png,
+    }).then((response) => {
+      assert.equal(response.status, 201);
+      return response.json();
+    });
+    assert.ok(uploaded.attachment?.attachmentId);
+
+    const turn = await fetch(`${listening.url}api/v1/agent/turns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Adjust Harbor Desk accent for a clearer Confirm CTA",
+        route: "/review",
+        element: { id: "ConfirmBooking", label: "Confirm booking" },
+        attachmentIds: [uploaded.attachment.attachmentId],
+      }),
+    }).then((response) => response.json());
+    assert.equal(turn.status, "awaiting-approval");
+    const proposalId = turn.proposals[0].proposalId;
+
+    const accepted = await acceptAgentProposal(root, proposalId);
+    assert.equal(accepted.status, "accepted");
+    assert.match(
+      await readFile(path.join(root, "examples", "foreign-booking", "styles.css"), "utf8"),
+      /#085c8f/,
+    );
+
+    const activity = await fetch(`${listening.url}api/v1/agent/activity`).then((response) => response.json());
+    const types = activity.activity.map((event) => event.type);
+    assert.ok(types.includes("proposed-file-change"));
+    assert.ok(types.includes("applied-file-change"));
+  } finally {
+    if (api) await api.close();
     await rm(root, { recursive: true, force: true });
   }
 });

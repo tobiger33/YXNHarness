@@ -58,10 +58,15 @@ import {
   updateFeedback,
 } from "./feedback.mjs";
 import {
+  acceptAgentProposal,
   agentPanelState,
   createAgentSession,
+  getAgentProposal,
   listAgentActivity,
+  listAgentProposals,
+  rejectAgentProposal,
   submitAgentTurn,
+  workspaceEditAdapterDeclaration,
 } from "./agent-adapter.mjs";
 import {
   formatAttachPlan,
@@ -2161,7 +2166,12 @@ export {
   agentPanelState,
   createAgentSession,
   listAgentActivity,
+  listAgentProposals,
+  acceptAgentProposal,
+  rejectAgentProposal,
+  getAgentProposal,
   submitAgentTurn,
+  workspaceEditAdapterDeclaration,
   runAttach,
   planElementAdopt,
   formatElementAdoptPlan,

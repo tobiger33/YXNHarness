@@ -56,6 +56,10 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/agent/sessions` | Adapter sessions |
 | POST | `/api/v1/agent/sessions` | Start adapter session |
 | POST | `/api/v1/agent/turns` | Submit turn to connected adapter |
+| GET | `/api/v1/agent/proposals` | List file-change proposals (`?status=`) |
+| GET | `/api/v1/agent/proposals/:id` | Proposal detail + diffs |
+| POST | `/api/v1/agent/proposals/:id/accept` | Host Accept → write proposed files |
+| POST | `/api/v1/agent/proposals/:id/reject` | Host Reject |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
@@ -74,9 +78,11 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 `/api/v1/workspace/approve` then offers **Push** (`/workspace/push`) and
 **Remotes aktualisieren** (`/workspace/fetch`). Composer messages become local
 feedback when no agent adapter is connected; with `agent.adapter` set they POST
-`/api/v1/agent/turns`. The Agent plug control GETs `/api/v1/attach` for a
-dry-run attach preview. Preview/Compare demos are layout examples only;
-attach/probe use the real project when configured.
+`/api/v1/agent/turns`. File-change adapters (`workspace-edit`) return proposals
+the host Accepts or Rejects via `/api/v1/agent/proposals/:id/*`. The Agent plug
+control GETs `/api/v1/attach` for a dry-run attach preview. Preview/Compare
+demos are layout examples only; attach/probe use the real project when
+configured.
 
 See also [`feedback.md`](feedback.md), [`agent-adapter.md`](agent-adapter.md),
 [`workspace.md`](workspace.md), [`share.md`](share.md),

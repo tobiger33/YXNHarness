@@ -72,7 +72,7 @@
     "agent": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Optional connected agent adapter. null/omitted keeps solo local feedback. \"local\" enables the built-in task packager. A relative .mjs path loads a project module exporting createAdapter().",
+      "description": "Optional connected agent adapter. null/omitted keeps solo local feedback. \"local\" enables the built-in task packager. \"workspace-edit\" proposes reversible visual file changes for host Accept. A relative .mjs path loads a project module exporting createAdapter().",
       "properties": {
         "adapter": {
           "type": ["string", "null"],
