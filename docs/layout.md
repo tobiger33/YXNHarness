@@ -59,3 +59,21 @@ This is local UI storage, not an agent upload API. External task text lists the
 image names with an instruction to attach them separately. A backend adapter
 must persist attachment IDs with feedback/messages and include the actual image
 files in agent handoffs before images can reach a connected agent.
+
+## Repository home
+
+The root URL and `#/home` show the repository overview. The brand is a real link
+to this page; `#/workspace` opens the existing three-pane workbench. Browser
+Back/Forward and direct links work. Switching within the page keeps the composer,
+attachments and panel layout mounted rather than rebuilding the workspace.
+
+The connected repository is populated from the real workspace API. Search and
+Recent filter the overview locally. Add workspace stores the name and address
+of another running YXNHarness instance; opening that entry navigates to its
+workbench. Entries persist in this browser's localStorage and can be removed.
+Saved addresses are not presented as verified connections. Credential-bearing
+URLs, query parameters and non-HTTPS/non-loopback addresses are rejected.
+
+The backend still serves one root per instance. A cross-repository catalog,
+GitHub repository discovery, clone/open actions and shared repository storage
+require a backend contract; the UI does not pretend to provide those features.

@@ -28,7 +28,7 @@ test("cockpit panel splitters resize, reset, and restore from localStorage", asy
     await waitForServer(`http://127.0.0.1:${port}/`);
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/#/workspace`, { waitUntil: "networkidle" });
 
     const left = page.locator(".splitter-left");
     await assert.equal(await left.isVisible(), true);

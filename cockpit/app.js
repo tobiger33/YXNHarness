@@ -1,3 +1,4 @@
+import { mountHome } from "/cockpit/home.js";
 import { mountAttachments } from "/cockpit/attachments.js";
 
 const root = document.getElementById("yxn-workbench");
@@ -768,6 +769,7 @@ async function refresh() {
     ]);
     if (!operation.current()) return false;
     state.workspace = workspace;
+    home.update(workspace);
     state.runs = runsPayload.runs || [];
     state.handoffs = handoffsPayload.handoffs || [];
     state.feedback = feedback.threads || [];
@@ -790,6 +792,7 @@ async function refresh() {
     return true;
   } catch (error) {
     failure = error;
+    home.failed();
     return false;
   } finally {
     operation.finish(failure);
@@ -883,6 +886,7 @@ function setTool(on) {
 q("#select-tool").addEventListener("click", () => setTool(true));
 q("#interact-tool").addEventListener("click", () => setTool(false));
 const attachments = mountAttachments(root, toast);
+const home = mountHome(root, toast);
 q("#add-context").addEventListener("click", () => addContext(state.workspace?.branch || "branch"));
 q("#device").addEventListener("change", (event) => {
   q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";

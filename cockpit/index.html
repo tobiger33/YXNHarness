@@ -9,18 +9,43 @@
 <body>
 <div id="yxn-workbench" aria-label="YXNHarness Workbench">
   <header class="topbar">
-    <div class="brand" id="workspace-brand" role="img" aria-label="YXNHarness" aria-busy="false">
+    <a class="brand" id="workspace-brand" href="#/home" aria-label="YXNHarness — repository overview" aria-busy="false">
       <span class="brand-symbol" aria-hidden="true">
         <img class="brand-idle" src="/cockpit/assets/yxn-symbol.svg" width="20" height="20" alt="">
         <img class="brand-loading" src="/cockpit/assets/yxn-loader.svg" width="20" height="20" alt="">
       </span>
       <img class="brand-wordmark" src="/cockpit/assets/yxn-lettering.svg" width="49" height="20" alt="" aria-hidden="true">
       <span class="brand-harness" aria-hidden="true">Harness</span>
-    </div>
+    </a>
+    <span class="home-location">/ <span>Overview</span></span>
     <span class="slash">/</span><span class="project" id="project-name">workspace</span><span class="slash">/</span>
     <span class="current-branch"><i data-lucide="git-branch" aria-hidden="true"></i><span id="active-branch">…</span></span>
     <span class="grow"></span><span class="prototype">Local cockpit</span><div class="layout-controls" aria-label="Panels"><button class="icon-button" data-toggle-panel="left" aria-label="Workspace einklappen" aria-expanded="true" aria-controls="workspace-sidebar"><i data-lucide="panel-left" aria-hidden="true"></i></button><button class="icon-button" data-toggle-panel="right" aria-label="Agent einklappen" aria-expanded="true" aria-controls="agent-sidebar"><i data-lucide="panel-right" aria-hidden="true"></i></button></div>
   </header>
+  <section class="home-page" id="home-page" aria-label="Repository overview" hidden>
+    <aside class="home-sidebar" aria-label="Home navigation">
+      <div class="section-name">Workspace</div>
+      <button type="button" class="nav-item active" data-home-filter="all" aria-pressed="true"><i data-lucide="folders" aria-hidden="true"></i>Repositories<span class="count" id="repository-count">0</span></button>
+      <button type="button" class="nav-item" data-home-filter="recent" aria-pressed="false"><i data-lucide="clock-3" aria-hidden="true"></i>Recent</button>
+      <div class="home-sidebar-footer"><span class="avatar">YX</span><div>Your workspace<small>Local · no account required</small></div></div>
+    </aside>
+    <main class="home-main">
+      <div class="home-heading"><div><p class="home-eyebrow">YOUR WORKSPACE</p><h1 id="home-title" tabindex="-1">Repositories</h1><p class="home-subtitle">Your projects, ready to pick up where you left off.</p></div><button type="button" class="button primary" id="add-workspace"><i data-lucide="plus" aria-hidden="true"></i>Add workspace</button></div>
+      <div class="home-toolbar"><label class="home-search"><i data-lucide="search" aria-hidden="true"></i><input type="search" id="repository-search" aria-label="Search repositories" placeholder="Find a repository…"></label><a class="home-resume" id="resume-workspace" href="#/workspace" hidden>Open workspace<i data-lucide="arrow-right" aria-hidden="true"></i></a></div>
+      <div class="repository-list" id="repository-list" aria-label="Repositories"></div>
+      <div class="home-footnote"><i data-lucide="monitor" aria-hidden="true"></i><span>Your connected repository appears here automatically. Add other running YXN workspaces by their address.</span></div>
+    </main>
+  </section>
+  <dialog class="workspace-dialog" id="add-workspace-dialog" aria-labelledby="add-workspace-title">
+    <header><h2 id="add-workspace-title">Add a workspace</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
+    <p>Save the address of another running YXNHarness workspace.</p>
+    <form>
+      <label>Repository name<input name="name" required maxlength="100" placeholder="My project" autocomplete="off"></label>
+      <label>Workspace address<input name="url" type="url" required placeholder="http://localhost:8787/" autocomplete="off"></label>
+      <p class="home-form-error" role="alert" hidden></p>
+      <button type="submit" class="button primary">Add to overview</button>
+    </form>
+  </dialog>
   <div class="workspace">
     <aside class="sidebar" id="workspace-sidebar">
       <div class="section-name">Workspace<button class="icon-button" data-toggle-panel="left" aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Workspace einklappen"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></div>
