@@ -1,0 +1,11 @@
+{
+  "name": "foreign-booking",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stand-in for an existing web app that did not start with YXNHarness",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node server.mjs"
+  }
+}

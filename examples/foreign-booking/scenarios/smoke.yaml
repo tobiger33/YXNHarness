@@ -1,0 +1,47 @@
+version: 1
+name: smoke
+description: >-
+  Reviewed attach-demo scenario for Harbor Desk. Generated from probe, then
+  expects added. Treat as evidence only after a green run.
+viewports:
+  - name: desktop
+    width: 1280
+    height: 800
+  - name: mobile
+    width: 390
+    height: 844
+steps:
+  - name: Set destination city
+    command: setCity
+    snapshot: 01-setcity
+    payload:
+      value: Lisbon
+    expect:
+      city: Lisbon
+      canReview: true
+  - name: Set nights
+    command: setNights
+    snapshot: 02-setnights
+    payload:
+      value: 3
+    expect:
+      nights: 3
+  - name: Move to review
+    command: goReview
+    snapshot: 03-goreview
+    payload: null
+    expect:
+      step: review
+  - name: Confirm booking
+    command: goConfirm
+    snapshot: 04-goconfirm
+    payload: null
+    expect:
+      step: done
+  - name: Reset
+    command: reset
+    snapshot: 05-reset
+    payload: null
+    expect:
+      step: search
+      city: ""

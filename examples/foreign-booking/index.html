@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Harbor Desk</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <p class="brand">Harbor Desk</p>
+    <p id="progress" class="progress"></p>
+
+    <section id="search" class="panel">
+      <h1>Find a berth</h1>
+      <label>
+        City
+        <input id="city" type="text" autocomplete="off" placeholder="Lisbon">
+      </label>
+      <label>
+        Nights
+        <input id="nights" type="number" min="1" max="14" value="2">
+      </label>
+      <button id="to-review" type="button">Review</button>
+    </section>
+
+    <section id="review" class="panel" hidden>
+      <h1>Review stay</h1>
+      <p id="summary"></p>
+      <div class="actions">
+        <button id="back-search" type="button" class="ghost">Back</button>
+        <button id="to-confirm" type="button">Confirm</button>
+      </div>
+    </section>
+
+    <section id="done" class="panel" hidden>
+      <h1>Booked</h1>
+      <p id="receipt"></p>
+      <button id="reset" type="button" class="ghost">New search</button>
+    </section>
+  </main>
+
+  <!-- Product code first; harness adapter is optional and opt-in. -->
+  <script type="module" src="/store.js"></script>
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/harness-adapter.js"></script>
+</body>
+</html>
