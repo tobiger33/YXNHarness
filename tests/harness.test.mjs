@@ -29,8 +29,10 @@ import {
 import { chromiumStatus } from "../scripts/browser-setup.mjs";
 import { defaultHostConfig, validateHostConfig } from "../scripts/host-config.mjs";
 import {
+  buildWorkspaceReview,
   collectGit,
   collectWorkspace,
+  planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
 } from "../scripts/workspace.mjs";
@@ -212,6 +214,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     checkout: null,
     create: null,
     start: null,
+    review: null,
+    adopt: null,
+    path: null,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -281,6 +286,26 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     start: "main",
     apply: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--review", "feature/demo", "--path", "app.js"]), {
+    ...base,
+    action: "workspace",
+    review: "feature/demo",
+    path: "app.js",
+  });
+  assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--apply"]), {
+    ...base,
+    action: "workspace",
+    adopt: "feature/demo",
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--apply", "--note", "keep the header"]), {
+    ...base,
+    action: "workspace",
+    adopt: "feature/demo",
+    apply: true,
+    note: "keep the header",
+  });
+  assert.throws(() => parseArgs(["workspace", "--note", "x"]), /only valid with workspace --adopt/);
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -303,8 +328,9 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, or workspace/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
-  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout or --create/);
-  assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /either --checkout or --create/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
+  assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /only one of/);
+  assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review/);
   assert.throws(() => parseArgs(["workspace", "--start", "main"]), /only valid with workspace --create/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
@@ -452,7 +478,7 @@ test("workspace collects read-only git branch inventory", async () => {
     assert.ok(workspace.commit);
     assert.ok(workspace.branches.some((entry) => entry.name === "main" && entry.current));
     assert.ok(workspace.branches.some((entry) => entry.name === "feature/demo" && !entry.current));
-    assert.match(workspace.note, /checkout/i);
+    assert.match(workspace.note, /review|adopt|checkout/i);
 
     const stamp = collectGit(root);
     assert.equal(stamp.branch, "main");
@@ -506,6 +532,70 @@ test("workspace collects read-only git branch inventory", async () => {
     assert.equal(fromMain.status, "applied");
     assert.equal(fromMain.startPoint.ref, "main");
     assert.equal(collectWorkspace(root).branch, "feature/from-main");
+
+    // Review + adopt: diverge feature/demo, then merge into current.
+    git(["checkout", "feature/demo"]);
+    await writeFile(path.join(root, "demo.txt"), "from-demo\n");
+    git(["add", "demo.txt"]);
+    git(["commit", "-m", "demo change"]);
+    git(["checkout", "feature/from-main"]);
+
+    const emptyReview = buildWorkspaceReview(root, { theirs: "main" });
+    assert.ok(emptyReview.status === "ready" || emptyReview.status === "noop");
+
+    const review = buildWorkspaceReview(root, { theirs: "feature/demo" });
+    assert.equal(review.status, "ready");
+    assert.ok(review.files.some((file) => file.path === "demo.txt"));
+    assert.equal(review.yours.branch, "feature/from-main");
+    assert.equal(review.theirs.branch, "feature/demo");
+
+    const patched = buildWorkspaceReview(root, { theirs: "feature/demo", path: "demo.txt" });
+    assert.equal(patched.status, "ready");
+    assert.match(patched.patch?.text || "", /from-demo/);
+
+    const adoptPreview = planWorkspaceAdopt(root, { theirs: "feature/demo", apply: false });
+    assert.equal(adoptPreview.status, "ready");
+    assert.equal(collectWorkspace(root).branch, "feature/from-main");
+    assert.equal(await readFile(path.join(root, "demo.txt"), "utf8").catch(() => null), null);
+
+    const adopted = planWorkspaceAdopt(root, { theirs: "feature/demo", apply: true });
+    assert.equal(adopted.status, "applied");
+    assert.equal(collectWorkspace(root).branch, "feature/from-main");
+    assert.equal(await readFile(path.join(root, "demo.txt"), "utf8"), "from-demo\n");
+
+    // Second diverge + adopt with a merge note (forces merge commit).
+    git(["checkout", "-b", "feature/noted"]);
+    await writeFile(path.join(root, "noted.txt"), "noted\n");
+    git(["add", "noted.txt"]);
+    git(["commit", "-m", "noted change"]);
+    git(["checkout", "feature/from-main"]);
+    const notedPreview = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: false,
+      comment: "Keep layout; tweak copy later.",
+    });
+    assert.equal(notedPreview.status, "ready");
+    assert.equal(notedPreview.comment, "Keep layout; tweak copy later.");
+    assert.match(notedPreview.mergeMessage, /Keep layout/);
+
+    const noted = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: true,
+      comment: "Keep layout; tweak copy later.",
+    });
+    assert.equal(noted.status, "applied");
+    assert.equal(noted.comment, "Keep layout; tweak copy later.");
+    const log = git(["log", "-1", "--pretty=%B"]);
+    assert.match(log, /Adopt feature\/noted into feature\/from-main/);
+    assert.match(log, /Keep layout; tweak copy later/);
+    assert.equal(await readFile(path.join(root, "noted.txt"), "utf8"), "noted\n");
+
+    const tooLong = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: false,
+      comment: "x".repeat(2001),
+    });
+    assert.equal(tooLong.status, "blocked");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -548,7 +638,8 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     const overview = await fetch(`${listening.url}api/v1/overview`).then((response) => response.json());
     assert.equal(overview.host.config.host.projectLabel, "api-demo");
     assert.equal(overview.index.summary.runCount, 1);
-    assert.equal(overview.api.readOnly, true);
+    assert.equal(overview.api.readOnly, false);
+    assert.deepEqual(overview.api.localWrites, ["POST /api/v1/workspace/adopt"]);
     assert.equal(overview.workspace.available, false);
 
     const workspace = await fetch(`${listening.url}api/v1/workspace`).then((response) => response.json());
@@ -558,7 +649,9 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     const ui = await fetch(listening.url);
     assert.equal(ui.status, 200);
     assert.match(ui.headers.get("content-type") || "", /text\/html/);
-    assert.match(await ui.text(), /YXNHarness/);
+    const uiHtml = await ui.text();
+    assert.match(uiHtml, /YXNHarness/);
+    assert.match(uiHtml, /Branches/);
 
     const css = await fetch(`${listening.url}cockpit/styles.css`);
     assert.equal(css.status, 200);
@@ -567,6 +660,18 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     const apiIndex = await fetch(`${listening.url}api/v1`).then((response) => response.json());
     assert.equal(apiIndex.name, "yxnharness-cockpit-api");
     assert.equal(apiIndex.links.ui, "/");
+    assert.ok(apiIndex.links.review);
+    assert.ok(apiIndex.links.adopt);
+
+    const reviewMissing = await fetch(`${listening.url}api/v1/workspace/review?ref=main`);
+    assert.equal(reviewMissing.status, 400);
+
+    const adoptBlocked = await fetch(`${listening.url}api/v1/workspace/adopt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main", apply: false }),
+    }).then((response) => response.json());
+    assert.equal(adoptBlocked.status, "blocked");
 
     const run = await fetch(`${listening.url}api/v1/runs/${encodeURIComponent(runId)}`).then((response) => response.json());
     assert.equal(run.result.status, "passed");

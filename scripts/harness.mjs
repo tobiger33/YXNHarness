@@ -47,9 +47,13 @@ import {
 import {
   collectGit,
   collectWorkspace,
+  buildWorkspaceReview,
+  formatAdoptPlan,
   formatCheckoutPlan,
   formatCreatePlan,
   formatWorkspace,
+  formatWorkspaceReview,
+  planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
 } from "./workspace.mjs";
@@ -69,7 +73,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout branch|--create branch] [--start branch] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch] [--path file] [--start branch] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
@@ -107,6 +111,9 @@ function parseArgs(argv) {
     checkout: null,
     create: null,
     start: null,
+    review: null,
+    adopt: null,
+    path: null,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -133,6 +140,21 @@ function parseArgs(argv) {
       const create = rest[index + 1];
       if (!create || create.startsWith("--")) throw new Error("--create requires a new local branch name.");
       options.create = create;
+      index += 1;
+    } else if (argument === "--review") {
+      const review = rest[index + 1];
+      if (!review || review.startsWith("--")) throw new Error("--review requires an existing local branch name.");
+      options.review = review;
+      index += 1;
+    } else if (argument === "--adopt") {
+      const adopt = rest[index + 1];
+      if (!adopt || adopt.startsWith("--")) throw new Error("--adopt requires an existing local branch name.");
+      options.adopt = adopt;
+      index += 1;
+    } else if (argument === "--path") {
+      const filePath = rest[index + 1];
+      if (!filePath || filePath.startsWith("--")) throw new Error("--path requires a repository-relative file path.");
+      options.path = filePath;
       index += 1;
     } else if (argument === "--start") {
       const start = rest[index + 1];
@@ -207,23 +229,40 @@ function parseArgs(argv) {
     throw new Error("status only accepts --root and --json.");
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
-      options.out || options.from || options.note || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--start/--dry-run/--apply/--force only.");
+      options.out || options.from || options.port !== null)) {
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--start/--note/--dry-run/--apply/--force only.");
   }
-  if (action === "workspace" && options.checkout && options.create) {
-    throw new Error("Use either --checkout or --create, not both.");
+  if (action === "workspace" && options.note && !options.adopt) {
+    throw new Error("--note is only valid with workspace --adopt (or handoff).");
   }
-  if (action === "workspace" && (options.apply || options.dryRun || options.force) && !options.checkout && !options.create) {
-    throw new Error("--apply, --dry-run, and --force require --checkout or --create for workspace.");
+  const workspaceMutators = [options.checkout, options.create, options.review, options.adopt].filter(Boolean);
+  if (action === "workspace" && workspaceMutators.length > 1) {
+    throw new Error("Use only one of --checkout, --create, --review, or --adopt.");
+  }
+  if (action === "workspace" && (options.apply || options.dryRun || options.force) &&
+      !options.checkout && !options.create && !options.adopt) {
+    throw new Error("--apply, --dry-run, and --force require --checkout, --create, or --adopt for workspace.");
   }
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
+  }
+  if (action === "workspace" && options.path && !options.review) {
+    throw new Error("--path is only valid with workspace --review.");
   }
   if (options.checkout && action !== "workspace") {
     throw new Error("--checkout is only valid with workspace.");
   }
   if (options.create && action !== "workspace") {
     throw new Error("--create is only valid with workspace.");
+  }
+  if (options.review && action !== "workspace") {
+    throw new Error("--review is only valid with workspace.");
+  }
+  if (options.adopt && action !== "workspace") {
+    throw new Error("--adopt is only valid with workspace.");
+  }
+  if (options.path && action !== "workspace") {
+    throw new Error("--path is only valid with workspace.");
   }
   if (options.start && action !== "workspace") {
     throw new Error("--start is only valid with workspace.");
@@ -246,8 +285,11 @@ function parseArgs(argv) {
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if ((options.from || options.note) && action !== "handoff") {
-    throw new Error("--from and --note are only valid with handoff.");
+  if (options.from && action !== "handoff") {
+    throw new Error("--from is only valid with handoff.");
+  }
+  if (options.note && !["handoff", "workspace"].includes(action)) {
+    throw new Error("--note is only valid with handoff or workspace --adopt.");
   }
   if (options.port !== null && action !== "serve") {
     throw new Error("--port is only valid with serve.");
@@ -333,8 +375,8 @@ function explainNextSteps(report) {
   steps.push({
     id: "workspace",
     command: "npm run harness -- workspace --json",
-    then: "npm run harness -- workspace --create <branch> --dry-run",
-    why: "Git workspace inventory; host-controlled local --create/--checkout (no fetch/push).",
+    then: "npm run harness -- workspace --review <branch>",
+    why: "Git workspace: create/checkout, review diffs, adopt (merge) into your branch — local only.",
   });
   steps.push({
     id: "handoff",
@@ -1264,7 +1306,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("scaffold probes the app and drafts a scenario YAML (preview by default; --apply writes; --force overwrites).");
     console.log("host-config stores local cockpit policy (private by default; share links never grant write/merge).");
     console.log("status refreshes artifacts/index.json and summarizes runs, host policy, and Git workspace.");
-    console.log("workspace lists branches; --create/--checkout <branch> --dry-run|--apply mutate locally (dirty trees need --force).");
+    console.log("workspace: --create/--checkout/--review/--adopt <branch> (adopt merges theirs into yours; dirty trees need --force).");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
@@ -1399,6 +1441,25 @@ async function main(argv = process.argv.slice(2)) {
     return report;
   }
   if (options.action === "workspace") {
+    if (options.review) {
+      const review = buildWorkspaceReview(root, { theirs: options.review, path: options.path });
+      review.ok = review.status === "ready" || review.status === "noop";
+      console.log(options.json ? JSON.stringify(review, null, 2) : formatWorkspaceReview(review));
+      if (!review.ok) process.exitCode = 1;
+      return review;
+    }
+    if (options.adopt) {
+      const plan = planWorkspaceAdopt(root, {
+        theirs: options.adopt,
+        apply: options.apply,
+        force: options.force,
+        comment: options.note,
+      });
+      plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatAdoptPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     if (options.create) {
       const plan = planWorkspaceCreate(root, {
         branch: options.create,
@@ -1427,7 +1488,7 @@ async function main(argv = process.argv.slice(2)) {
       ok: true,
       ...workspace,
       explanation: workspace.available
-        ? "Branch inventory for the cockpit. Use --create/--checkout <branch> --dry-run, then --apply after host review."
+        ? "Branch inventory. Review with --review <branch>; adopt with --adopt <branch> --apply after host review."
         : "No Git workspace detected. Branches cannot be listed until the project is a repository.",
     };
     console.log(options.json ? JSON.stringify(report, null, 2) : formatWorkspace(workspace));

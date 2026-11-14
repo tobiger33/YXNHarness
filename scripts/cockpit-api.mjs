@@ -4,7 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadHostConfig } from "./host-config.mjs";
 import { buildRunIndex, writeRunIndex } from "./run-index.mjs";
-import { collectWorkspace } from "./workspace.mjs";
+import {
+  buildWorkspaceReview,
+  collectWorkspace,
+  planWorkspaceAdopt,
+} from "./workspace.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -123,13 +127,16 @@ async function buildOverview(root, { refresh = true } = {}) {
     generatedAt: new Date().toISOString(),
     root,
     api: {
-      readOnly: true,
+      readOnly: false,
       loopbackOnly: true,
+      localWrites: ["POST /api/v1/workspace/adopt"],
       endpoints: [
         "GET /api/v1/health",
         "GET /api/v1/overview",
         "GET /api/v1/host-config",
         "GET /api/v1/workspace",
+        "GET /api/v1/workspace/review",
+        "POST /api/v1/workspace/adopt",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
         "GET /api/v1/handoffs",
@@ -277,8 +284,9 @@ function apiIndexPayload(projectRoot) {
   return {
     name: "yxnharness-cockpit-api",
     version: 1,
-    readOnly: true,
+    readOnly: false,
     loopbackOnly: true,
+    localWrites: ["POST /api/v1/workspace/adopt"],
     root: projectRoot,
     links: {
       ui: "/",
@@ -286,12 +294,28 @@ function apiIndexPayload(projectRoot) {
       overview: "/api/v1/overview",
       hostConfig: "/api/v1/host-config",
       workspace: "/api/v1/workspace",
+      review: "/api/v1/workspace/review?ref=",
+      adopt: "/api/v1/workspace/adopt",
       runs: "/api/v1/runs",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + read API. No writes, no remote bind.",
+    note: "Local cockpit UI + API (loopback). Adopt is the only write; no remote bind.",
   };
+}
+
+async function readJsonBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const error = new Error("Invalid JSON body.");
+    error.statusCode = 400;
+    throw error;
+  }
 }
 
 function createCockpitApi({
@@ -304,11 +328,6 @@ function createCockpitApi({
   const staticRoot = path.resolve(uiRoot);
   const server = createServer(async (request, response) => {
     try {
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        response.writeHead(405, { Allow: "GET, HEAD" }).end("Method not allowed");
-        return;
-      }
-
       let url;
       try {
         url = new URL(request.url || "/", `http://${host}`);
@@ -318,6 +337,24 @@ function createCockpitApi({
       }
 
       const { pathname, searchParams } = url;
+      const method = request.method || "GET";
+
+      if (pathname === "/api/v1/workspace/adopt" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = planWorkspaceAdopt(projectRoot, {
+          theirs: body.ref || body.theirs || body.branch,
+          apply: body.apply === true,
+          force: body.force === true,
+          comment: body.comment ?? body.note ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (method !== "GET" && method !== "HEAD") {
+        response.writeHead(405, { Allow: "GET, HEAD, POST" }).end("Method not allowed");
+        return;
+      }
 
       if (pathname === "/api" || pathname === "/api/v1") {
         sendJson(response, 200, apiIndexPayload(projectRoot));
@@ -327,7 +364,7 @@ function createCockpitApi({
       if (pathname === "/" || pathname === "/index.html" || pathname.startsWith("/cockpit/")) {
         try {
           const filePath = await resolveUiFile(staticRoot, pathname === "/index.html" ? "/" : pathname);
-          await sendFile(response, request.method, filePath, UI_CONTENT_TYPES);
+          await sendFile(response, method, filePath, UI_CONTENT_TYPES);
         } catch (error) {
           if (error.statusCode === 403 || error.statusCode === 404 || error.code === "ENOENT") {
             sendText(response, error.statusCode === 403 ? 403 : 404, "Not found");
@@ -362,6 +399,14 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/workspace") {
         sendJson(response, 200, collectWorkspace(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/review") {
+        const ref = searchParams.get("ref") || searchParams.get("theirs") || "";
+        const filePath = searchParams.get("path") || null;
+        const review = buildWorkspaceReview(projectRoot, { theirs: ref, path: filePath });
+        sendJson(response, review.status === "blocked" ? 400 : 200, review);
         return;
       }
 

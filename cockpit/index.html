@@ -10,53 +10,96 @@
   <link rel="stylesheet" href="/cockpit/styles.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="rail" aria-label="Cockpit navigation">
-      <div class="rail-brand">
+  <div class="app">
+    <header class="topbar">
+      <div class="topbar-left">
         <p class="brand">YXNHarness</p>
-        <p class="brand-sub">Cockpit</p>
+        <span class="top-sep" aria-hidden="true"></span>
+        <nav class="mode-nav" aria-label="Views">
+          <button type="button" class="mode-tab active" data-mode="review">Review</button>
+          <button type="button" class="mode-tab" data-mode="runs">Runs</button>
+          <button type="button" class="mode-tab" data-mode="handoffs">Handoffs</button>
+        </nav>
       </div>
-
-      <div class="rail-status">
-        <span id="live-pill" class="pill pill-pending">connecting</span>
-        <button type="button" id="refresh-btn" class="ghost" title="Refresh">↻</button>
+      <div class="topbar-right">
+        <p id="branch-current" class="top-meta">…</p>
+        <button type="button" id="refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">↻</button>
       </div>
+    </header>
 
-      <section class="rail-section" aria-labelledby="host-title">
-        <h2 id="host-title">Host</h2>
-        <dl id="host-facts" class="facts"></dl>
-      </section>
+    <div id="view-review" class="view view-review">
+      <aside class="context" aria-label="Review context">
+        <section class="context-block">
+          <h2 class="context-label">Branches</h2>
+          <div id="branches-list" class="branch-list" role="list"></div>
+        </section>
 
-      <section class="rail-section rail-grow" aria-labelledby="runs-title">
-        <div class="rail-section-head">
-          <h2 id="runs-title">Runs</h2>
-          <p id="runs-summary" class="rail-meta">…</p>
+        <section class="context-block context-grow" id="review-context" hidden>
+          <div class="summary-card">
+            <h2 id="review-heading" class="summary-title">Review</h2>
+            <p id="review-meta" class="summary-meta"></p>
+            <p id="review-summary-text" class="summary-body"></p>
+            <p id="review-stats" class="summary-stats"></p>
+          </div>
+
+          <div class="files-card">
+            <div class="files-head">
+              <h3>Files</h3>
+              <span id="files-count" class="muted"></span>
+            </div>
+            <div id="files-list" class="files-list" role="list"></div>
+          </div>
+        </section>
+
+        <section id="composer" class="composer" hidden>
+          <textarea
+            id="adopt-comment"
+            class="composer-input"
+            rows="2"
+            maxlength="2000"
+            placeholder="Optional note — or leave empty to take as-is…"
+          ></textarea>
+          <div class="composer-bar">
+            <button type="button" class="btn btn-ghost" id="adopt-cancel" hidden>Cancel</button>
+            <button type="button" class="btn btn-primary" id="adopt-confirm">Übernehmen</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="stage" aria-labelledby="diff-title">
+        <div class="stage-tabs">
+          <span class="stage-tab active">Diff</span>
+          <span id="diff-title" class="stage-file muted"></span>
         </div>
-        <div id="runs-list" class="list" role="list"></div>
-      </section>
-
-      <section class="rail-section" aria-labelledby="handoff-title">
-        <div class="rail-section-head">
-          <h2 id="handoff-title">Handoffs</h2>
+        <div id="diff-body" class="diff-body">
+          <div class="empty-state">
+            <p class="empty-title">Pick a branch</p>
+            <p class="empty-copy">Select another local branch to review its changes against yours — then adopt with an optional note.</p>
+          </div>
         </div>
-        <div id="handoffs-list" class="list" role="list"></div>
-      </section>
+      </main>
+    </div>
 
-      <footer class="rail-foot">
-        <span id="generated-at">—</span>
-        <a href="/api/v1/overview" target="_blank" rel="noreferrer">API</a>
-      </footer>
-    </aside>
-
-    <main class="stage" aria-labelledby="detail-title">
-      <header class="stage-bar">
-        <div>
-          <h1 id="detail-title">Workspace</h1>
-          <p id="detail-lede" class="stage-lede">Select a run or handoff from the rail.</p>
+    <div id="view-runs" class="view view-stack" hidden>
+      <aside class="stack-rail">
+        <div class="stack-head">
+          <h2>Runs</h2>
+          <p id="runs-summary" class="muted">…</p>
         </div>
-      </header>
-      <div id="detail-body" class="stage-body"></div>
-    </main>
+        <div id="runs-list" class="stack-list" role="list"></div>
+      </aside>
+      <main id="run-detail" class="stack-detail"></main>
+    </div>
+
+    <div id="view-handoffs" class="view view-stack" hidden>
+      <aside class="stack-rail">
+        <div class="stack-head">
+          <h2>Handoffs</h2>
+        </div>
+        <div id="handoffs-list" class="stack-list" role="list"></div>
+      </aside>
+      <main id="handoff-detail" class="stack-detail"></main>
+    </div>
   </div>
 
   <script type="module" src="/cockpit/app.js"></script>
