@@ -3,7 +3,9 @@
 Stand-in for an **already existing** web app that did not start as a harness
 project. Product logic lives in `store.js` / `app.js`. The optional
 `harness-adapter.js` maps that store onto `window.__harness` when
-`?harness=1` is present.
+`?harness=1` is present. `preview-inspector.js` adds the live Select bridge
+when the cockpit also injects `yxnSession` + `yxnParentOrigin` (see
+[`docs/preview-inspector.md`](../../docs/preview-inspector.md)).
 
 ## Point YXNHarness at this folder
 

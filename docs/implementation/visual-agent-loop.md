@@ -74,13 +74,15 @@ malformed/oversized data. A source branch must come from the preview's trusted
 workspace mapping, not an arbitrary value supplied by page content. The target
 must not gain Git/merge/API credentials. Selection content remains untrusted data.
 
-**Proposed event envelope (not implemented yet):**
+**Event envelope (draft implemented):**
 `{ protocol: "yxn.preview", version: 1, sessionId, type, requestId?, payload }`
 Types: ready, capabilities, set-mode, mode-changed, route-changed,
 element-selected, selection-cleared, error. Confirm the contract with the UI
-team before treating it as an existing protocol. The UI team will map adapter
-rectangles to its toolbar and map selections to the existing composer card.
-Do not enable Live Select until an actual adapter advertises and acknowledges it.
+team before treating it as frozen. Host: `cockpit/preview.js` +
+`preview-protocol.js`. Fixture adapter:
+`examples/foreign-booking/preview-inspector.js`. Live Select stays disabled
+until the adapter advertises `selection: true` and the host acknowledges it.
+Details: [`preview-inspector.md`](../preview-inspector.md).
 
 ## Cursor work package: attachment transport
 

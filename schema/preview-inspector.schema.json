@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yxnharness.dev/schema/preview-inspector.schema.json",
+  "title": "YXNHarness live preview inspector protocol",
+  "description": "Versioned postMessage envelope between cockpit preview host and an opt-in target inspector. Selection content is untrusted data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "version", "sessionId", "type"],
+  "properties": {
+    "protocol": { "const": "yxn.preview" },
+    "version": { "const": 1 },
+    "sessionId": { "type": "string", "minLength": 8, "maxLength": 80 },
+    "type": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "capabilities",
+        "set-mode",
+        "mode-changed",
+        "route-changed",
+        "element-selected",
+        "selection-cleared",
+        "error"
+      ]
+    },
+    "requestId": { "type": ["string", "null"], "maxLength": 80 },
+    "payload": { "type": ["object", "null"] }
+  }
+}
