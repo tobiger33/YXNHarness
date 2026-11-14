@@ -8,6 +8,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   buildScaffoldScenario,
+  compareRuns,
   createCockpitApi,
   createHandoffPackage,
   ensureChromium,
@@ -217,6 +218,8 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     review: null,
     adopt: null,
     path: null,
+    baseline: null,
+    against: null,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -313,6 +316,13 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     from: "last-green",
     note: "fix mobile",
   });
+  assert.deepEqual(parseArgs(["compare", "--baseline", "last-green", "--against", "last-run", "--json"]), {
+    ...base,
+    action: "compare",
+    json: true,
+    baseline: "last-green",
+    against: "last-run",
+  });
   assert.deepEqual(parseArgs(["serve", "--port", "8791", "--json"]), {
     ...base,
     action: "serve",
@@ -333,6 +343,8 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review/);
   assert.throws(() => parseArgs(["workspace", "--start", "main"]), /only valid with workspace --create/);
   assert.throws(() => parseArgs(["serve", "--apply"]), /read-only/);
+  assert.throws(() => parseArgs(["compare", "--apply"]), /compare accepts|--baseline|--against|only/);
+  assert.throws(() => parseArgs(["handoff", "--baseline", "x"]), /only valid with compare/);
   assert.throws(() => parseArgs(["run", "demo.yaml", "--unknown"]), /Unknown option/);
 });
 
@@ -368,6 +380,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "host-config"));
     assert.ok(steps.some((step) => step.id === "status"));
     assert.ok(steps.some((step) => step.id === "handoff"));
+    assert.ok(steps.some((step) => step.id === "compare"));
     assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
@@ -662,6 +675,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(apiIndex.links.ui, "/");
     assert.ok(apiIndex.links.review);
     assert.ok(apiIndex.links.adopt);
+    assert.ok(apiIndex.links.compare);
 
     const reviewMissing = await fetch(`${listening.url}api/v1/workspace/review?ref=main`);
     assert.equal(reviewMissing.status, 400);
@@ -672,6 +686,9 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       body: JSON.stringify({ ref: "main", apply: false }),
     }).then((response) => response.json());
     assert.equal(adoptBlocked.status, "blocked");
+
+    const compareMissing = await fetch(`${listening.url}api/v1/compare`);
+    assert.equal(compareMissing.status, 400);
 
     const run = await fetch(`${listening.url}api/v1/runs/${encodeURIComponent(runId)}`).then((response) => response.json());
     assert.equal(run.result.status, "passed");
@@ -690,6 +707,81 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(post.status, 405);
   } finally {
     if (api) await api.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("compare diffs state and screenshots between two runs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-compare-"));
+  try {
+    const baselineId = "2026-01-01T00-00-00-000Z-1";
+    const candidateId = "2026-01-01T00-00-00-000Z-2";
+    const makeRun = async (runId, { nameValue, screenshotBytes }) => {
+      const runDir = path.join(root, "artifacts", runId);
+      await mkdir(path.join(runDir, "screenshots"), { recursive: true });
+      await writeFile(path.join(runDir, "screenshots", "desktop-01.png"), screenshotBytes);
+      await writeFile(path.join(runDir, "result.json"), JSON.stringify({
+        version: 1,
+        runId,
+        scenario: { name: "demo", path: "scenarios/demo.yaml" },
+        status: "passed",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:01.000Z",
+        durationMs: 1000,
+        counts: { viewports: 1, steps: 1, failures: 0, screenshots: 1 },
+        viewports: [{
+          name: "desktop",
+          status: "passed",
+          steps: [{
+            index: 0,
+            command: "setName",
+            status: "passed",
+            before: { name: "" },
+            after: { name: nameValue },
+            screenshot: "screenshots/desktop-01.png",
+          }],
+        }],
+        artifacts: {
+          stateLog: "state.jsonl",
+          appLog: "app.log",
+          screenshots: ["screenshots/desktop-01.png"],
+          contactSheet: null,
+        },
+      }));
+    };
+
+    await makeRun(baselineId, { nameValue: "Alex", screenshotBytes: "png-a" });
+    await makeRun(candidateId, { nameValue: "Alex", screenshotBytes: "png-a" });
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId: baselineId,
+      scenario: "demo",
+      result: `artifacts/${baselineId}/result.json`,
+    }));
+    await writeFile(path.join(root, "artifacts", "last-run.json"), JSON.stringify({
+      runId: candidateId,
+      scenario: "demo",
+      result: `artifacts/${candidateId}/result.json`,
+      status: "passed",
+    }));
+
+    const equal = await compareRuns(root, { baseline: "last-green", against: "last-run" });
+    assert.equal(equal.status, "equal");
+    assert.equal(equal.ok, true);
+
+    await makeRun(candidateId, { nameValue: "Blake", screenshotBytes: "png-b" });
+    const changed = await compareRuns(root, {
+      baseline: baselineId,
+      against: candidateId,
+    });
+    assert.equal(changed.status, "changed");
+    assert.equal(changed.ok, false);
+    assert.ok(changed.summary.stateChanges >= 1);
+    assert.ok(changed.summary.screenshotChanges >= 1);
+    assert.ok(changed.differences.states.some((entry) => entry.key.includes("setName")));
+
+    const same = await compareRuns(root, { baseline: baselineId, against: baselineId });
+    assert.equal(same.status, "equal");
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

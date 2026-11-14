@@ -116,6 +116,14 @@ npm run harness -- handoff --from last-green --apply
 
 See [`docs/handoff.md`](docs/handoff.md).
 
+Compare a candidate run against last-green (state + screenshots):
+
+```sh
+npm run harness -- compare --json
+```
+
+See [`docs/compare.md`](docs/compare.md).
+
 Serve the local cockpit shell plus a loopback-only read API:
 
 ```sh

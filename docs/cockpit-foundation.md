@@ -70,6 +70,15 @@ npm run harness -- serve
 Loopback-only UI + JSON for cockpit development (`/` shell, `/api/v1` data).
 See [`cockpit-api.md`](cockpit-api.md).
 
+## Compare
+
+```sh
+npm run harness -- compare --json
+```
+
+Diffs state and screenshots between `last-green` and `last-run` (or explicit
+run ids). See [`compare.md`](compare.md).
+
 ## What this is not
 
 - Not collaboration hosting
