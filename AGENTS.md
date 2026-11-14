@@ -4,6 +4,24 @@ YXNHarness is an agent-neutral toolkit for building and validating visual
 changes in existing software projects. The user chooses the coding agent; this
 repo provides project-native control and evidence, not a model-specific agent.
 
+## Cold start (“Mach das” / prove the product)
+
+When the host gives you this repository and asks you to make it work, demo it,
+or prove the loop — **do not** start with `scenarios/minimal.yaml`.
+
+1. `npm ci`
+2. Terminal A: `npm run harness -- serve`
+3. Terminal B: `node examples/foreign-booking/server.mjs`
+4. Open the cockpit → **Open app** (`http://127.0.0.1:4173/`) → wait for live inspector
+5. Interact once, then **Select** → **Kommentieren** → send → **Preview** → **Accept** → **Commit**
+
+That is the product path. Full checklist:
+[`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
+Browser evidence: `node --test tests/cockpit-harbor-loop.test.mjs`.
+
+Only after that demo (or when the host asks for scenario verification) run the
+Playwright scenario runner under “Running and reviewing scenarios”.
+
 ## Non-negotiable rules
 
 - Implement target changes in the target project's own language and supported

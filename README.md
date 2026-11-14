@@ -11,10 +11,41 @@ software projects. The long-term goal is to support UI and animation work
 across web, mobile, and desktop stacks, with agents working through native
 project APIs instead of patching rendered interfaces.
 
-## First vertical slice
+## Demo the product loop (Harbor Desk)
 
-This repository starts with a local, two-step web example and a declarative
-Playwright scenario runner. It demonstrates the core interaction:
+If someone hands you this repo and says “make it work” / “Mach das”, **start
+here** — not with the scenario runner below. This is the visual feedback →
+propose → Preview → Accept → Commit path that YXNHarness is built for.
+
+Requirements: Node.js 20+ and npm.
+
+```sh
+npm ci
+# Terminal A — cockpit (this repo already opts into workspace-edit)
+npm run harness -- serve
+# Terminal B — Harbor Desk fixture
+node examples/foreign-booking/server.mjs
+```
+
+1. Open the printed cockpit URL (default `http://127.0.0.1:8787/#/workspace`).
+2. **Open app** — the field prefills `http://127.0.0.1:4173/` from
+   `harness.config.json`. Confirm and wait for “Live inspector ready”.
+3. **Interact** through Search → Review → Confirm → New search (no auto-select).
+4. **Select** an element → **Kommentieren** → type a short instruction → send.
+5. Review the quiet timeline + **Edited** diff → **Preview** → **Accept**.
+6. **Changes** → **Commit** (summary trailer: `Summary written by YXN.`).
+
+Evidence: Accept rewrites `examples/foreign-booking/styles.css` (reversible
+accent). Automated check:
+`node --test tests/cockpit-harbor-loop.test.mjs`.
+
+Details: [`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md),
+[`docs/agent-adapter.md`](docs/agent-adapter.md), [`AGENTS.md`](AGENTS.md).
+
+## Scenario runner (verification foundation)
+
+This repository also ships a local, two-step web example and a declarative
+Playwright scenario runner. It demonstrates the control-surface foundation:
 
 1. A target app deliberately exposes `window.__harness`.
 2. A YAML scenario discovers and calls supported commands, then checks
@@ -29,12 +60,11 @@ requiring a particular model provider.
 See [`docs/vision.md`](docs/vision.md) for product direction and
 [`AGENTS.md`](AGENTS.md) for contribution and agent rules.
 
-## Run the example
+## Run a scenario
 
-Requirements: Node.js 20+ and npm.
+After `npm ci` (and a one-time browser install with host consent):
 
 ```sh
-npm ci
 npm run harness -- setup --install-browser
 # Ask the host, then:
 npm run harness -- setup --install-browser --yes
@@ -186,19 +216,9 @@ Open `http://127.0.0.1:8787/` for the UI. `GET/POST /api/v1/attach` is the
 one-command attach loop over HTTP (same as `harness attach`). See
 [`docs/cockpit-api.md`](docs/cockpit-api.md) and [`docs/attach.md`](docs/attach.md).
 
-Optional connected agent adapter (provider-neutral; default stays disconnected):
-
-```json
-{ "agent": { "adapter": "local" } }
-```
-
-Set that in `harness.host.json` to package composer turns under
-`artifacts/agent/` without calling a remote model. Custom project modules work
-too — see [`docs/agent-adapter.md`](docs/agent-adapter.md).
-
-The UI/backend handoff and acceptance flow for element selection, comments,
-adaptation requests and screenshot transport is in
-[`docs/implementation/visual-agent-loop.md`](docs/implementation/visual-agent-loop.md).
+This repo’s `harness.host.json` already sets `"agent": { "adapter": "workspace-edit" }`
+for the Harbor Desk demo. Other projects stay disconnected until they opt in —
+see [`docs/agent-adapter.md`](docs/agent-adapter.md).
 
 ## Attach to an existing repo
 
