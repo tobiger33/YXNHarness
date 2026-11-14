@@ -1178,6 +1178,42 @@ q("#attach-preview")?.addEventListener("click", async () => {
     if (button) button.disabled = false;
   }
 });
+q("#share-preview")?.addEventListener("click", async () => {
+  const button = q("#share-preview");
+  if (button) button.disabled = true;
+  try {
+    const plan = await apiPost("/api/v1/share", { apply: false, note: "Cockpit share preview" });
+    const feed = q("#chat-feed");
+    const card = document.createElement("div");
+    card.className = "agent-response";
+    const title = document.createElement("div");
+    title.className = "thought";
+    title.textContent = `Share ${plan.status || "preview"} · grant ${plan.access?.grant || "view"}`;
+    card.append(title);
+    const body = document.createElement("p");
+    body.textContent = plan.explanation
+      || plan.blockedReasons?.join("; ")
+      || "Share invite dry-run complete.";
+    card.append(body);
+    if (plan.manifest?.designApproval?.hostSaysYesMeans) {
+      const next = document.createElement("div");
+      next.className = "agent-event";
+      next.textContent = plan.manifest.designApproval.hostSaysYesMeans;
+      card.append(next);
+    }
+    feed.append(card);
+    feed.scrollTop = feed.scrollHeight;
+    pushActivity(`Share preview · ${plan.status || "ready"}`);
+    toast(plan.status === "blocked"
+      ? (plan.blockedReasons?.[0] || "Share blocked")
+      : `Share dry-run: ${plan.access?.grant || "view"} only`);
+    icons();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
 q("#new-chat").addEventListener("click", () => {
   state.contexts = [];
   clearElementSelection();
