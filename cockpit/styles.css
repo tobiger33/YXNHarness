@@ -78,3 +78,13 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .brand[aria-busy="true"] .brand-idle { display: none; }
 #yxn-workbench .brand[aria-busy="true"] .brand-loading { display: block; }
 #yxn-workbench #refresh:disabled { cursor: progress; }
+
+/* Region loading uses existing surfaces and leaves the workbench interactive. */
+#yxn-workbench .app-preview { position: relative; }
+#yxn-workbench .region-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; min-width: 0; }
+#yxn-workbench .region-status img { display: block; flex-shrink: 0; }
+#yxn-workbench .region-status span { overflow-wrap: anywhere; }
+#yxn-workbench .preview-status { position: absolute; bottom: 12px; left: 12px; max-width: calc(100% - 24px); padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); z-index: 1; }
+#yxn-workbench .region-status-slot { min-height: 32px; margin-top: -10px; margin-bottom: 8px; }
+#yxn-workbench .region-status .button { padding: 3px 7px; flex-shrink: 0; }
+#yxn-workbench .region-status.is-error { color: var(--text); flex-wrap: wrap; }

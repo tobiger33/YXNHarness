@@ -46,6 +46,10 @@
       <section class="screen preview-screen" id="screen-preview" role="tabpanel" aria-labelledby="tab-preview">
         <div class="preview-label"><span><span class="status-dot"></span>Interactive preview</span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
         <div class="app-preview" id="app-preview">
+          <div class="region-status preview-status" id="preview-status" role="status" aria-live="polite" hidden>
+            <img src="/cockpit/assets/yxn-loader.svg" width="22" height="22" alt="" aria-hidden="true">
+            <span></span><button type="button" class="button" id="preview-retry" hidden>Retry</button>
+          </div>
           <div class="puls-header"><b><i data-lucide="asterisk" aria-hidden="true"></i>PULS</b><span>Personal banking</span></div>
           <div class="puls-body" id="puls-body">
             <div class="step"><span>Getting to know you</span><span>02 / 04</span></div><div class="step-track"><span></span></div>
@@ -71,6 +75,12 @@
       </section>
       <section class="screen changes-screen" id="screen-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
         <div class="view-heading"><h2>Branch changes</h2><p id="changes-subtitle">Select another branch to review its diff against yours.</p></div>
+        <div class="region-status-slot">
+          <div class="region-status" id="changes-status" role="status" aria-live="polite" hidden>
+            <img src="/cockpit/assets/yxn-loader.svg" width="18" height="18" alt="" aria-hidden="true">
+            <span></span><button type="button" class="button" id="changes-retry" hidden>Retry</button>
+          </div>
+        </div>
         <div id="changes-body">
           <p class="view-note">Pick a branch in the workspace sidebar to load a real 3-dot review.</p>
         </div>

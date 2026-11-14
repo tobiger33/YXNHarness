@@ -27,3 +27,17 @@ The local cockpit follows the accepted workbench design:
 | External mode | Builds a copyable task (no fake model replies) |
 
 Light/Dark follow `color-scheme` / `light-dark()` system preference.
+
+## Loading feedback
+
+The YXN symbol animates in the brand during workspace requests. Region-level
+feedback appears after 200ms, using the existing neutral surfaces without a
+global overlay. The Preview example stays visible; its indicator reports the
+actual workspace refresh, not a simulated app startup. A real preview lifecycle
+can use the same region feedback once a preview adapter is connected.
+
+Changes keeps the previous diff visible while fetching the selected review and
+its patches. Merge actions stay hidden until the complete review is ready.
+Outdated responses cannot overwrite a newer selection. Both regions offer an
+inline Retry action after a failed request; read requests time out after 30s.
+The loader SVG respects reduced-motion preferences.

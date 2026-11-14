@@ -80,7 +80,7 @@ function formatTime(iso) {
 }
 
 async function apiGet(pathname) {
-  const response = await fetch(pathname, { headers: { Accept: "application/json" } });
+  const response = await fetch(pathname, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(30000) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || data.blockedReasons?.join("; ") || `${response.status}`);
   return data;
@@ -414,12 +414,60 @@ function selectBranch(name) {
   else setView("changes");
 }
 
+// Local feedback only: no global overlay, and short requests never flash a loader.
+const regionLoads = new Map();
+function beginRegionLoad(name, label) {
+  const previous = regionLoads.get(name);
+  if (previous) clearTimeout(previous.timer);
+  const status = q(`#${name}-status`);
+  const target = q(name === "preview" ? "#puls-body" : "#changes-body");
+  const operation = {};
+  regionLoads.set(name, operation);
+  status.hidden = true;
+  status.classList.remove("is-error");
+  status.querySelector("img").hidden = false;
+  status.querySelector("button").hidden = true;
+  target.setAttribute("aria-busy", "true");
+  operation.timer = setTimeout(() => {
+    status.querySelector("span").textContent = label;
+    status.hidden = false;
+  }, 200);
+  return {
+    current: () => regionLoads.get(name) === operation,
+    finish(error = null) {
+      if (regionLoads.get(name) !== operation) return;
+      clearTimeout(operation.timer);
+      target.setAttribute("aria-busy", "false");
+      status.hidden = !error;
+      if (error) {
+        status.classList.add("is-error");
+        status.querySelector("img").hidden = true;
+        status.querySelector("span").textContent = name === "preview"
+          ? "Workspace could not be loaded."
+          : "Changes could not be loaded.";
+        status.querySelector("button").hidden = false;
+      }
+    },
+  };
+}
+function clearRegionLoad(name) {
+  const previous = regionLoads.get(name);
+  if (previous) clearTimeout(previous.timer);
+  regionLoads.delete(name);
+  q(`#${name}-status`).hidden = true;
+  q(name === "preview" ? "#puls-body" : "#changes-body").setAttribute("aria-busy", "false");
+}
+q("#preview-retry").addEventListener("click", () => refresh());
+q("#changes-retry").addEventListener("click", () => loadChanges());
+
 async function loadChanges() {
   const body = q("#changes-body");
   const actions = q("#change-actions");
   const theirs = state.reviewBranch;
   const yours = state.workspace?.branch;
   if (!theirs || theirs === yours) {
+    clearRegionLoad("changes");
+    state.review = null;
     body.innerHTML = `<p class="view-note">Select another local branch to review its changes against <b>${escapeHtml(yours || "your branch")}</b>.</p>`;
     actions.hidden = true;
     q("#changes-count").textContent = "0";
@@ -427,70 +475,83 @@ async function loadChanges() {
     icons();
     return;
   }
-  body.innerHTML = `<p class="view-note">Loading review for ${escapeHtml(theirs)}…</p>`;
-  const review = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(theirs)}`);
-  state.review = review;
-  const summary = review.summary || { filesChanged: 0, additions: 0, deletions: 0 };
-  q("#changes-count").textContent = String(summary.filesChanged || 0);
-  q("#changes-subtitle").textContent = `${yours} ← ${theirs}`;
-  if (!review.files?.length) {
-    body.innerHTML = `<p class="view-note">${escapeHtml(review.explanation || "No unique file changes.")}</p>`;
-    actions.hidden = true;
-    icons();
-    return;
-  }
-  const filesHtml = [];
-  for (const [index, file] of review.files.slice(0, 12).entries()) {
-    let patch = "";
-    try {
+  const operation = beginRegionLoad("changes", `Loading changes · ${theirs}`);
+  actions.hidden = true;
+  qa("[data-adopt-path]").forEach((button) => { button.disabled = true; });
+  state.review = null;
+  let failure = null;
+  try {
+    const review = await apiGet(`/api/v1/workspace/review?ref=${encodeURIComponent(theirs)}`);
+    if (!operation.current()) return;
+    const summary = review.summary || { filesChanged: 0, additions: 0, deletions: 0 };
+    q("#changes-count").textContent = String(summary.filesChanged || 0);
+    q("#changes-subtitle").textContent = `${yours} ← ${theirs}`;
+    if (!review.files?.length) {
+      body.innerHTML = `<p class="view-note">${escapeHtml(review.explanation || "No unique file changes.")}</p>`;
+      actions.hidden = true;
+      q("#changes-note").textContent = "No unique changes for the selected branch.";
+      icons();
+      return;
+    }
+    const filesHtml = [];
+    for (const [index, file] of review.files.slice(0, 12).entries()) {
+      let patch = "";
       const detailed = await apiGet(
         `/api/v1/workspace/review?ref=${encodeURIComponent(theirs)}&path=${encodeURIComponent(file.path)}`,
       );
+      if (!operation.current()) return;
       patch = detailed.patch?.text || "";
-    } catch {
-      patch = "";
+      const lines = (patch || "").split("\n").slice(0, 80).map((line) => {
+        let cls = "";
+        if (line.startsWith("+") && !line.startsWith("+++")) cls = "added";
+        else if (line.startsWith("-") && !line.startsWith("---")) cls = "removed";
+        return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
+      }).join("");
+      filesHtml.push(`
+        <details class="file-diff"${index === 0 ? " open" : ""}>
+          <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
+            <span>+${file.additions} −${file.deletions}</span>
+            <button type="button" class="ghost file-adopt" data-adopt-path="${escapeHtml(file.path)}">Datei übernehmen</button>
+          </summary>
+          <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
+        </details>
+      `);
     }
-    const lines = (patch || "").split("\n").slice(0, 80).map((line) => {
-      let cls = "";
-      if (line.startsWith("+") && !line.startsWith("+++")) cls = "added";
-      else if (line.startsWith("-") && !line.startsWith("---")) cls = "removed";
-      return `<div class="${cls}"><span></span>${escapeHtml(line || " ")}</div>`;
-    }).join("");
-    filesHtml.push(`
-      <details class="file-diff"${index === 0 ? " open" : ""}>
-        <summary><i data-lucide="file-code-2" aria-hidden="true"></i>${escapeHtml(file.path)}
-          <span>+${file.additions} −${file.deletions}</span>
-          <button type="button" class="ghost file-adopt" data-adopt-path="${escapeHtml(file.path)}">Datei übernehmen</button>
-        </summary>
-        <div class="code">${lines || "<div><span></span>(no textual patch)</div>"}</div>
-      </details>
-    `);
-  }
-  body.innerHTML = `
-    <div class="diff-summary">
-      <span>${summary.filesChanged} files changed</span>
-      <span class="diff-numbers">+${summary.additions} <em>−${summary.deletions}</em></span>
-    </div>
-    ${filesHtml.join("")}
-    <label class="view-note" style="display:block;margin-top:12px">Optional note
-      <textarea id="adopt-note" rows="2" placeholder="Optional merge note…" style="display:block;width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--bg)"></textarea>
-    </label>
-  `;
-  actions.hidden = false;
-  q("#changes-note").textContent = "Real git review · Übernehmen = whole branch · Datei übernehmen = one path into the index.";
-  qa("[data-adopt-path]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      adoptSelected({ paths: [button.getAttribute("data-adopt-path")] });
+    body.innerHTML = `
+      <div class="diff-summary">
+        <span>${summary.filesChanged} files changed</span>
+        <span class="diff-numbers">+${summary.additions} <em>−${summary.deletions}</em></span>
+      </div>
+      ${filesHtml.join("")}
+      <label class="view-note" style="display:block;margin-top:12px">Optional note
+        <textarea id="adopt-note" rows="2" placeholder="Optional merge note…" style="display:block;width:100%;margin-top:6px;border:1px solid var(--line);border-radius:6px;padding:8px;background:var(--bg)"></textarea>
+      </label>
+    `;
+    state.review = review;
+    actions.hidden = false;
+    q("#changes-note").textContent = "Real git review · Übernehmen = whole branch · Datei übernehmen = one path into the index.";
+    qa("[data-adopt-path]").forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        adoptSelected({ paths: [button.getAttribute("data-adopt-path")] });
+      });
     });
-  });
-  icons();
+    icons();
+  } catch (error) {
+    failure = error;
+    if (operation.current()) {
+      actions.hidden = true;
+      q("#changes-note").textContent = "Review unavailable. Retry to load the selected branch.";
+    }
+  } finally {
+    operation.finish(failure);
+  }
 }
 
 async function adoptSelected({ paths = null } = {}) {
   const theirs = state.reviewBranch;
-  if (!theirs) return;
+  if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true" || q("#apply").disabled) return;
   const note = q("#adopt-note")?.value?.trim() || null;
   q("#apply").disabled = true;
   try {
@@ -688,6 +749,8 @@ function showExtra(nav) {
 let pendingRefreshes = 0;
 
 async function refresh() {
+  const operation = beginRegionLoad("preview", "Refreshing workspace…");
+  let failure = null;
   pendingRefreshes += 1;
   q("#workspace-brand").setAttribute("aria-busy", "true");
   q("#refresh").disabled = true;
@@ -699,6 +762,7 @@ async function refresh() {
       apiGet("/api/v1/feedback"),
       apiGet("/api/v1/agent"),
     ]);
+    if (!operation.current()) return false;
     state.workspace = workspace;
     state.runs = runsPayload.runs || [];
     state.handoffs = handoffsPayload.handoffs || [];
@@ -718,14 +782,17 @@ async function refresh() {
     renderChatSeed();
     setMode(state.mode, false);
     pushActivity("Workspace refreshed");
+    icons();
+    return true;
   } catch (error) {
-    toast(`API offline: ${error.message}`);
+    failure = error;
+    return false;
   } finally {
+    operation.finish(failure);
     pendingRefreshes -= 1;
     q("#workspace-brand").setAttribute("aria-busy", String(pendingRefreshes > 0));
     q("#refresh").disabled = pendingRefreshes > 0;
   }
-  icons();
 }
 
 // Prototype-preserving interactions
@@ -780,8 +847,7 @@ q("#device").addEventListener("change", (event) => {
   q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";
 });
 q("#refresh").addEventListener("click", async () => {
-  await refresh();
-  toast("Workspace refreshed.");
+  if (await refresh()) toast("Workspace refreshed.");
 });
 q("#activity-toggle").addEventListener("click", () => {
   const panel = q("#activity-panel");
