@@ -1,4 +1,11 @@
 import { snapshotElement } from "/cockpit/element-details.js";
+import {
+  createPreviewMessage,
+  createSessionId,
+  normalizeSelectedElements,
+  parsePreviewMessage,
+  withPreviewSession,
+} from "/cockpit/preview-protocol.js";
 
 const PREVIEW_KEY = "yxnharness.preview.url.v1";
 
@@ -11,6 +18,9 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   const form = dialog.querySelector("form");
   const status = q("#live-preview-status");
   let previewUrl = null;
+  let previewOrigin = null;
+  let sessionId = null;
+  let inspectorReady = false;
   let loadingTimer;
   let timeout;
   let loadVersion = 0;
@@ -23,15 +33,26 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     if (url.origin === location.origin) throw new Error("Use the app's development server address, not this workbench address.");
     return url.href;
   }
+  function postToFrame(type, payload = null) {
+    if (!sessionId || !frame.contentWindow || !previewOrigin) return;
+    frame.contentWindow.postMessage(createPreviewMessage(sessionId, type, payload), previewOrigin);
+  }
+  function setSelectAvailability(enabled, title) {
+    q("#select-tool").disabled = !enabled;
+    if (enabled) q("#select-tool").removeAttribute("title");
+    else q("#select-tool").title = title || "Live element selection requires an inspector adapter.";
+  }
   function load(url) {
     previewUrl = url;
+    previewOrigin = new URL(url).origin;
+    sessionId = createSessionId();
+    inspectorReady = false;
     interact();
     demo.hidden = true;
     frame.hidden = false;
     surface.classList.add("live-preview");
     q("#disconnect-preview").hidden = false;
-    q("#select-tool").disabled = true;
-    q("#select-tool").title = "Live element selection requires an inspector adapter. App navigation remains available.";
+    setSelectAvailability(false, "Waiting for the app inspector adapter…");
     q("#preview-kind").textContent = "Live application";
     q("#preview-external").href = url;
     q("#preview-external").hidden = false;
@@ -54,13 +75,55 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
       status.hidden = false;
       frame.setAttribute("aria-busy", "false");
     }, 20000);
-    frame.src = url;
+    frame.src = withPreviewSession(url, sessionId, location.origin);
   }
   frame.addEventListener("load", () => {
     if (!previewUrl) return;
     clearTimeout(loadingTimer); clearTimeout(timeout);
     frame.setAttribute("aria-busy", "false");
     status.hidden = true;
+    // Frame load alone is not inspector readiness — wait for ready/capabilities.
+  });
+  window.addEventListener("message", (event) => {
+    if (!previewUrl || !sessionId || !previewOrigin) return;
+    if (event.origin !== previewOrigin) return;
+    if (event.source !== frame.contentWindow) return;
+    const message = parsePreviewMessage(event.data, { sessionId });
+    if (!message) return;
+    if (message.type === "ready" || message.type === "capabilities") {
+      const caps = message.payload?.capabilities || message.payload || {};
+      inspectorReady = caps.selection === true;
+      setSelectAvailability(
+        inspectorReady,
+        "This app did not advertise selection. Navigation stays in Interact.",
+      );
+      if (inspectorReady) {
+        notify?.("Live inspector ready — Select is available.");
+        if (selecting()) postToFrame("set-mode", { mode: "select" });
+      }
+      return;
+    }
+    if (message.type === "route-changed" && typeof message.payload?.route === "string") {
+      root.dataset.previewRoute = message.payload.route;
+      q("#route").textContent = `${previewUrl} · ${message.payload.route}`;
+      root.dispatchEvent(new Event("yxn:preview-route"));
+      return;
+    }
+    if (message.type === "element-selected") {
+      const elements = normalizeSelectedElements(message.payload).map((entry) => ({
+        ...entry,
+        previewUrl,
+      }));
+      if (elements.length) select(elements, null, { mode: "add" });
+      return;
+    }
+    if (message.type === "selection-cleared") {
+      // Host keeps draft context; only drop live highlight anchors.
+      return;
+    }
+    if (message.type === "error" && message.payload?.message) {
+      notify?.(String(message.payload.message));
+    }
   });
   frame.addEventListener("error", () => {
     clearTimeout(loadingTimer); clearTimeout(timeout);
@@ -92,14 +155,16 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   q("#refresh").addEventListener("click", () => { if (previewUrl) load(previewUrl); });
   q("#disconnect-preview").onclick = () => {
     previewUrl = null;
+    previewOrigin = null;
+    sessionId = null;
+    inspectorReady = false;
     ++loadVersion;
     clearTimeout(loadingTimer); clearTimeout(timeout);
     frame.removeAttribute("src"); frame.hidden = true;
     status.hidden = true;
     demo.hidden = false;
     surface.classList.remove("live-preview");
-    q("#select-tool").disabled = false;
-    q("#select-tool").removeAttribute("title");
+    setSelectAvailability(true);
     q("#disconnect-preview").hidden = true;
     q("#preview-external").hidden = true;
     q("#preview-kind").textContent = "Example application";
@@ -109,6 +174,10 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     interact();
     try { localStorage.removeItem(PREVIEW_KEY); } catch { /* no persistence */ }
   };
+  root.addEventListener("yxn:selection-mode", () => {
+    if (!previewUrl || !inspectorReady) return;
+    postToFrame("set-mode", { mode: selecting() ? "select" : "interact" });
+  });
 
   // The example uses native form validation and explicit navigation, just like a target app.
   function step(name) {

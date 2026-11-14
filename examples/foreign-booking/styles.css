@@ -99,3 +99,13 @@ button.ghost {
 #summary, #receipt {
   line-height: 1.45;
 }
+
+/* Opt-in inspector highlights (only when ?harness=1&yxnSession=… is present). */
+.yxn-inspector .yxn-inspector-selectable {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+.yxn-inspector .yxn-inspector-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
