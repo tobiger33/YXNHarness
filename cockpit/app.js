@@ -28,6 +28,8 @@ const state = {
   agent: null,
   review: null,
   activity: [],
+  mergeProposals: [],
+  mergePolicy: null,
 };
 
 let panels = {
@@ -828,7 +830,7 @@ async function loadChanges() {
     `;
     state.review = review;
     actions.hidden = false;
-    q("#changes-note").textContent = "Real git review · Design passt = approve+merge · Übernehmen = merge · Datei = one path.";
+    q("#changes-note").textContent = "Real git review · Design passt = host Accept · Merge vorschlagen = wait for host/leader · Übernehmen = merge · Datei = one path.";
     const next = q("#approve-next");
     if (next) next.hidden = true;
     qa("[data-adopt-path]").forEach((button) => {
@@ -851,11 +853,147 @@ async function loadChanges() {
 }
 
 function setChangesBusy(busy) {
-  for (const id of ["#apply", "#approve-design", "#discard"]) {
+  for (const id of ["#apply", "#approve-design", "#propose-merge", "#discard", "#commit-apply"]) {
     const button = q(id);
     if (button) button.disabled = busy;
   }
   qa("[data-adopt-path]").forEach((button) => { button.disabled = busy; });
+  qa("[data-merge-accept], [data-merge-reject]").forEach((button) => { button.disabled = busy; });
+}
+
+function renderCommitPanel() {
+  const panel = q("#commit-panel");
+  if (!panel) return;
+  const dirty = Boolean(state.workspace?.dirty);
+  panel.hidden = !dirty;
+  if (!dirty) return;
+  const attribution = q("#commit-attribution");
+  if (attribution) {
+    attribution.textContent = "YXN adds “Summary written by YXN.” to the commit message.";
+  }
+}
+
+function renderMergeProposals() {
+  const panel = q("#merge-proposals-panel");
+  const list = q("#merge-proposals-list");
+  const note = q("#merge-policy-note");
+  const roleSelect = q("#merge-role");
+  if (!panel || !list) return;
+  const pending = (state.mergeProposals || []).filter((item) => item.status === "pending");
+  const policy = state.mergePolicy;
+  if (note) {
+    const leader = policy?.leader?.label;
+    note.textContent = leader
+      ? `Host or leader (${leader}) must Accept. Share links never grant merge.`
+      : "Host must Accept. Set access.leader in harness.host.json to allow a leader Approver.";
+  }
+  if (roleSelect) {
+    const leaderOption = roleSelect.querySelector('option[value="leader"]');
+    if (leaderOption) leaderOption.disabled = !policy?.canLeaderAccept;
+    if (!policy?.canLeaderAccept && roleSelect.value === "leader") roleSelect.value = "host";
+  }
+  panel.hidden = pending.length === 0;
+  list.innerHTML = pending.map((proposal) => `
+    <div class="extra-row merge-proposal-card" data-merge-id="${escapeHtml(proposal.proposalId)}">
+      <strong>${escapeHtml(proposal.theirs || "branch")}</strong>
+      <small>${escapeHtml((proposal.summary || "").split("\n")[0] || "Merge")} · ${escapeHtml(proposal.attribution || "Summary written by YXN.")}</small>
+      <div class="change-actions" style="margin-top:8px">
+        <button type="button" class="button primary" data-merge-accept="${escapeHtml(proposal.proposalId)}">Accept merge</button>
+        <button type="button" class="button" data-merge-reject="${escapeHtml(proposal.proposalId)}">Reject</button>
+      </div>
+    </div>
+  `).join("");
+  qa("[data-merge-accept]").forEach((button) => {
+    button.onclick = () => decideMergeProposal(button.getAttribute("data-merge-accept"), "accept");
+  });
+  qa("[data-merge-reject]").forEach((button) => {
+    button.onclick = () => decideMergeProposal(button.getAttribute("data-merge-reject"), "reject");
+  });
+}
+
+async function decideMergeProposal(proposalId, decision) {
+  if (!proposalId) return;
+  const role = q("#merge-role")?.value === "leader" ? "leader" : "host";
+  setChangesBusy(true);
+  try {
+    const path = decision === "accept"
+      ? `/api/v1/workspace/merge-proposals/${encodeURIComponent(proposalId)}/accept`
+      : `/api/v1/workspace/merge-proposals/${encodeURIComponent(proposalId)}/reject`;
+    const plan = await apiPost(path, { role, apply: true });
+    if (plan.status === "blocked" || plan.ok === false) {
+      throw new Error(plan.blockedReasons?.join("; ") || plan.error || "Merge decision failed");
+    }
+    toast(plan.explanation || (decision === "accept" ? "Merge accepted." : "Merge rejected."));
+    pushActivity(`${decision === "accept" ? "Accepted" : "Rejected"} merge · ${proposalId}`);
+    if (decision === "accept") showApproveNext(plan);
+    await refresh();
+    setView("changes");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
+}
+
+async function proposeMerge() {
+  const theirs = state.reviewBranch;
+  if (!theirs || !state.review) return;
+  const note = q("#adopt-note")?.value?.trim() || "Merge proposed";
+  setChangesBusy(true);
+  try {
+    const plan = await apiPost("/api/v1/workspace/merge-proposals", {
+      ref: theirs,
+      summary: note,
+      apply: true,
+    });
+    if (plan.status === "blocked") {
+      throw new Error(plan.blockedReasons?.join("; ") || "Merge propose blocked");
+    }
+    if (plan.status === "noop") {
+      toast(plan.explanation || "Nothing to propose.");
+      return;
+    }
+    toast(plan.explanation || `Merge proposed · ${theirs}`);
+    pushActivity(`Merge proposed · ${theirs}`);
+    await refresh();
+    setView("changes");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
+}
+
+async function commitWorkspace() {
+  const message = q("#commit-summary")?.value?.trim();
+  if (!message) {
+    toast("Write a short commit summary first.");
+    return;
+  }
+  setChangesBusy(true);
+  try {
+    const preview = await apiPost("/api/v1/workspace/commit", { message, apply: false });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Commit blocked");
+    }
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Nothing to commit.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/commit", { message, apply: true });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Commit failed");
+    }
+    toast(applied.explanation || "Committed. Summary written by YXN.");
+    pushActivity(`Committed · ${applied.workspace?.shortCommit || "ok"}`);
+    const summary = q("#commit-summary");
+    if (summary) summary.value = "";
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
+  }
 }
 
 function showApproveNext(plan) {
@@ -909,12 +1047,14 @@ async function approveDesign() {
   if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true") return;
   if (q("#approve-design")?.disabled) return;
   const note = q("#adopt-note")?.value?.trim() || "Design approved";
+  const role = q("#merge-role")?.value === "leader" ? "leader" : "host";
   setChangesBusy(true);
   try {
     const preview = await apiPost("/api/v1/workspace/approve", {
       ref: theirs,
       apply: false,
       note,
+      role,
     });
     if (preview.status === "blocked") {
       throw new Error(preview.blockedReasons?.join("; ") || "Design approve blocked");
@@ -927,6 +1067,7 @@ async function approveDesign() {
       ref: theirs,
       apply: true,
       note,
+      role,
     });
     if (applied.status === "blocked") {
       throw new Error(applied.blockedReasons?.join("; ") || "Design approve failed");
@@ -1274,12 +1415,13 @@ async function refresh() {
   q("#workspace-brand").setAttribute("aria-busy", "true");
   q("#refresh").disabled = true;
   try {
-    const [workspace, runsPayload, handoffsPayload, feedback, agent] = await Promise.all([
+    const [workspace, runsPayload, handoffsPayload, feedback, agent, merges] = await Promise.all([
       apiGet("/api/v1/workspace"),
       apiGet("/api/v1/runs?refresh=0"),
       apiGet("/api/v1/handoffs"),
       apiGet("/api/v1/feedback"),
       apiGet("/api/v1/agent"),
+      apiGet("/api/v1/workspace/merge-proposals?status=pending").catch(() => ({ proposals: [], policy: null })),
     ]);
     if (!operation.current()) return false;
     state.workspace = workspace;
@@ -1289,6 +1431,8 @@ async function refresh() {
     state.handoffs = handoffsPayload.handoffs || [];
     state.feedback = feedback.threads || [];
     state.agent = agent;
+    state.mergeProposals = merges.proposals || [];
+    state.mergePolicy = merges.policy || null;
     q("#project-name").textContent = (workspace.root || "workspace").split(/[/\\]/).filter(Boolean).pop() || "workspace";
     q("#active-branch").textContent = workspace.branch || "(detached)";
     q("#chat-branch").textContent = workspace.branch || "—";
@@ -1307,6 +1451,8 @@ async function refresh() {
     renderRecent();
     renderCompareSources();
     renderChatSeed();
+    renderCommitPanel();
+    renderMergeProposals();
     setMode(state.mode, false);
     pushActivity("Workspace refreshed");
     icons();
@@ -1556,6 +1702,8 @@ q("#activity-toggle").addEventListener("click", () => {
 });
 q("#apply").addEventListener("click", () => adoptSelected());
 q("#approve-design")?.addEventListener("click", () => approveDesign());
+q("#propose-merge")?.addEventListener("click", () => proposeMerge());
+q("#commit-apply")?.addEventListener("click", () => commitWorkspace());
 q("#approve-next-dismiss")?.addEventListener("click", () => {
   const panel = q("#approve-next");
   if (panel) panel.hidden = true;

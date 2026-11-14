@@ -56,6 +56,15 @@ import {
 } from "../scripts/workspace.mjs";
 import { createShareInvite, listShares } from "../scripts/share.mjs";
 import { planDesignApprove } from "../scripts/design-approve.mjs";
+import {
+  planWorkspaceCommit,
+  withYxnSummaryAttribution,
+  YXN_SUMMARY_FOOTER,
+} from "../scripts/workspace-commit.mjs";
+import {
+  acceptMergeProposal,
+  writeMergeProposal,
+} from "../scripts/merge-proposals.mjs";
 
 test("scenario validation accepts the supported data model", () => {
   const scenario = validateScenario({
@@ -237,6 +246,11 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     review: null,
     adopt: null,
     approve: null,
+    commit: false,
+    mergePropose: null,
+    mergeAccept: null,
+    mergeReject: null,
+    role: "host",
     fetch: false,
     push: false,
     remote: null,
@@ -479,8 +493,28 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, attach, or share/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
-  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, --adopt, --approve, --fetch, or --push/);
+  assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, --adopt, --approve, --commit, --merge-propose, --merge-accept, --merge-reject, --fetch, or --push/);
   assert.throws(() => parseArgs(["workspace", "--checkout", "a", "--create", "b"]), /only one of/);
+  assert.deepEqual(parseArgs(["workspace", "--commit", "--note", "Ship it", "--apply"]), {
+    ...base,
+    action: "workspace",
+    commit: true,
+    note: "Ship it",
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["workspace", "--merge-propose", "feature/x", "--note", "Merge me", "--apply"]), {
+    ...base,
+    action: "workspace",
+    mergePropose: "feature/x",
+    note: "Merge me",
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["workspace", "--merge-accept", "merge-abc", "--role", "leader"]), {
+    ...base,
+    action: "workspace",
+    mergeAccept: "merge-abc",
+    role: "leader",
+  });
   assert.throws(() => parseArgs(["workspace", "--approve", "feature/x", "--path", "a.js"]), /whole-branch only/);
   assert.throws(() => parseArgs(["workspace", "--path", "x"]), /only valid with workspace --review or --adopt/);
   assert.throws(() => parseArgs(["workspace", "--hunks", "1"]), /only valid with workspace --adopt/);
@@ -958,8 +992,12 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.deepEqual(overview.api.localWrites, [
       "POST /api/v1/workspace/adopt",
       "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/commit",
       "POST /api/v1/workspace/push",
       "POST /api/v1/workspace/fetch",
+      "POST /api/v1/workspace/merge-proposals",
+      "POST /api/v1/workspace/merge-proposals/:id/accept",
+      "POST /api/v1/workspace/merge-proposals/:id/reject",
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
@@ -973,6 +1011,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "POST /api/v1/agent/proposals/:id/accept",
       "POST /api/v1/agent/proposals/:id/reject",
     ]);
+    assert.deepEqual(overview.host.mergePolicy?.approvers, ["host"]);
     assert.equal(overview.workspace.available, false);
 
     const workspace = await fetch(`${listening.url}api/v1/workspace`).then((response) => response.json());
@@ -1446,8 +1485,9 @@ test("design approve merges branch with Design approved note and next steps", as
 
     const preview = await planDesignApprove(root, { theirs: "feature/design", apply: false });
     assert.equal(preview.status, "ready");
-    assert.equal(preview.note, "Design approved");
-    assert.equal(preview.adopt.comment, "Design approved");
+    assert.match(preview.note, /Design approved/);
+    assert.match(preview.note, /Summary written by YXN\./);
+    assert.match(preview.adopt.comment, /Summary written by YXN\./);
     assert.ok(preview.next.some((step) => /--approve/.test(step)));
 
     const applied = await planDesignApprove(root, {
@@ -1456,12 +1496,137 @@ test("design approve merges branch with Design approved note and next steps", as
       note: "Design approved · keep header",
     });
     assert.equal(applied.status, "applied", applied.blockedReasons?.join("; ") || applied.explanation);
-    assert.equal(applied.note, "Design approved · keep header");
+    assert.match(applied.note, /Design approved · keep header/);
+    assert.match(applied.note, /Summary written by YXN\./);
     assert.match(applied.explanation, /Design approved/);
+    assert.equal(applied.mergeProposal?.status, "accepted");
     assert.ok(applied.next.some((step) => /--push/.test(step)));
     assert.ok(applied.next.some((step) => /fetch/.test(step)));
     assert.equal(collectWorkspace(root).branch, "main");
     assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v2/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace commit attributes summary to YXN", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-commit-"));
+  try {
+    const run = (args) => {
+      const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    };
+    run(["init", "-b", "main"]);
+    run(["config", "user.email", "test@example.com"]);
+    run(["config", "user.name", "Test"]);
+    await writeFile(path.join(root, "note.txt"), "one\n");
+    run(["add", "note.txt"]);
+    run(["commit", "-m", "base"]);
+    await writeFile(path.join(root, "note.txt"), "two\n");
+
+    assert.equal(withYxnSummaryAttribution("Hello"), `Hello\n\n${YXN_SUMMARY_FOOTER}`);
+    const preview = await planWorkspaceCommit(root, { message: "Update note", apply: false });
+    assert.equal(preview.status, "ready");
+    assert.match(preview.message, /Summary written by YXN\./);
+    assert.equal(collectWorkspace(root).dirty, true);
+
+    const applied = await planWorkspaceCommit(root, { message: "Update note", apply: true });
+    assert.equal(applied.status, "applied", applied.blockedReasons?.join("; "));
+    assert.equal(collectWorkspace(root).dirty, false);
+    const log = spawnSync("git", ["log", "-1", "--pretty=%B"], { cwd: root, encoding: "utf8" });
+    assert.match(log.stdout, /Update note/);
+    assert.match(log.stdout, /Summary written by YXN\./);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("merge proposals require host or configured leader Accept", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-merge-"));
+  try {
+    const run = (args) => {
+      const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    };
+    run(["init", "-b", "main"]);
+    run(["config", "user.email", "test@example.com"]);
+    run(["config", "user.name", "Test"]);
+    await writeFile(path.join(root, "app.js"), "v1\n");
+    await writeFile(path.join(root, ".gitignore"), "artifacts/\n");
+    run(["add", "app.js", ".gitignore"]);
+    run(["commit", "-m", "base"]);
+    run(["checkout", "-b", "feature/merge"]);
+    await writeFile(path.join(root, "app.js"), "v2\n");
+    run(["add", "app.js"]);
+    run(["commit", "-m", "feature"]);
+    run(["checkout", "main"]);
+
+    const dry = await writeMergeProposal(root, {
+      theirs: "feature/merge",
+      summary: "Bring feature",
+      apply: false,
+    });
+    assert.equal(dry.status, "ready");
+    assert.match(dry.proposal.summary, /Summary written by YXN\./);
+
+    const proposed = await writeMergeProposal(root, {
+      theirs: "feature/merge",
+      summary: "Bring feature",
+      apply: true,
+    });
+    assert.equal(proposed.status, "proposed");
+    const proposalId = proposed.proposal.proposalId;
+
+    const leaderBlocked = await acceptMergeProposal(root, proposalId, {
+      role: "leader",
+      apply: true,
+    });
+    assert.equal(leaderBlocked.status, "blocked");
+    assert.equal(collectWorkspace(root).branch, "main");
+    assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v1/);
+
+    // Host Accept works without a leader. Separate proposal for leader path.
+    const hostAccepted = await acceptMergeProposal(root, proposalId, {
+      role: "host",
+      apply: true,
+    });
+    assert.equal(hostAccepted.status, "accepted", hostAccepted.blockedReasons?.join("; "));
+    assert.equal(hostAccepted.proposal.acceptedBy, "host");
+    assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v2/);
+
+    // Reset tree and prove configured leader can Accept.
+    run(["reset", "--hard", "HEAD~0"]);
+    // Recreate feature tip already merged — make a new branch tip.
+    run(["checkout", "-b", "feature/merge-2"]);
+    await writeFile(path.join(root, "app.js"), "v3\n");
+    run(["add", "app.js"]);
+    run(["commit", "-m", "feature-2"]);
+    run(["checkout", "main"]);
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify({
+      ...defaultHostConfig({ projectLabel: "merge-leader" }),
+      access: {
+        visibility: "private",
+        shareLinkGrant: "view",
+        mergeAuthority: "leader",
+        leader: { label: "Design lead" },
+      },
+    }, null, 2));
+    run(["add", "harness.host.json"]);
+    run(["commit", "-m", "host-leader"]);
+
+    const proposed2 = await writeMergeProposal(root, {
+      theirs: "feature/merge-2",
+      summary: "Leader path",
+      apply: true,
+    });
+    assert.equal(proposed2.status, "proposed");
+    const accepted = await acceptMergeProposal(root, proposed2.proposal.proposalId, {
+      role: "leader",
+      apply: true,
+    });
+    assert.equal(accepted.status, "accepted", accepted.blockedReasons?.join("; "));
+    assert.equal(accepted.proposal.acceptedBy, "leader");
+    assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v3/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

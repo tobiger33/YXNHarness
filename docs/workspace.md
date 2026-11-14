@@ -130,10 +130,15 @@ npm run harness -- serve
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
 | POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — loopback only |
-| POST | `/api/v1/workspace/approve` | `{ ref, apply?, force?, note? }` — design approve (whole-branch adopt) |
+| POST | `/api/v1/workspace/approve` | `{ ref, apply?, force?, note?, role? }` — design approve (propose+Accept; YXN summary) |
+| POST | `/api/v1/workspace/commit` | `{ message\|summary, apply?, paths? }` — commit dirty tree; always appends `Summary written by YXN.` |
+| GET | `/api/v1/workspace/merge-proposals` | `?status=pending` — list merge proposals + host/leader policy |
+| POST | `/api/v1/workspace/merge-proposals` | `{ ref, summary?, apply? }` — queue merge for host/leader Accept |
+| POST | `/api/v1/workspace/merge-proposals/:id/accept` | `{ role?: "host"\|"leader", apply? }` — Accept gated merge |
+| POST | `/api/v1/workspace/merge-proposals/:id/reject` | `{ role?, reason? }` — Reject gated merge |
 | POST | `/api/v1/workspace/push` | `{ apply?, remote?, force? }` — push current branch (force = force-with-lease) |
 | POST | `/api/v1/workspace/fetch` | `{ apply?, remote?, prune? }` — on-demand remote refresh |
-| GET | `/api/v1/overview` | Includes a short `workspace` summary |
+| GET | `/api/v1/overview` | Includes a short `workspace` summary + `host.mergePolicy` |
 
 Adopt body modes:
 
@@ -141,18 +146,58 @@ Adopt body modes:
 - `paths: ["a.js"]` (or `path`) → file adopt into the index
 - `path` + `hunks: [1,3]` → hunk adopt into the index
 
+## Commit (YXN summary)
+
+```sh
+npm run harness -- workspace --commit --note "Hero spacing" --dry-run
+npm run harness -- workspace --commit --note "Hero spacing" --apply
+```
+
+The harness always appends `Summary written by YXN.` to the commit message.
+
+## Merge proposals (host / leader Accept)
+
+Merges proposed through YXN do not run until the host — or a configured
+`access.leader` — Accepts. Share links never grant merge.
+
+```sh
+npm run harness -- workspace --merge-propose feature/demo --note "Ship onboarding" --apply
+npm run harness -- workspace --merge-accept merge-<id> --role host
+# with harness.host.json access.leader.label set:
+npm run harness -- workspace --merge-accept merge-<id> --role leader
+```
+
+Optional host config:
+
+```json
+{
+  "access": {
+    "visibility": "private",
+    "shareLinkGrant": "view",
+    "mergeAuthority": "leader",
+    "leader": { "label": "Design lead" }
+  }
+}
+```
+
+`mergeAuthority: "leader"` marks the leader as preferred Approver; the host can
+always Accept. Without `leader`, only the host can Accept.
+
 ## Design approve
 
-Whole-branch host approval with a fixed semantic note. No push.
+Whole-branch host/leader Accept with a YXN-attributed summary. No push.
+Creates a merge proposal and Accepts it in one step (Design passt).
 
 ```sh
 npm run harness -- workspace --approve feature/demo --dry-run
 npm run harness -- workspace --approve feature/demo --apply
 npm run harness -- workspace --approve feature/demo --apply --note "Design approved · keep copy"
+npm run harness -- workspace --approve feature/demo --apply --role leader
 ```
 
-Cockpit Changes: **Design passt** → `POST /api/v1/workspace/approve`. After apply,
-the UI offers **Push** then **Remotes aktualisieren**.
+Cockpit Changes: **Design passt** → `POST /api/v1/workspace/approve`.
+**Merge vorschlagen** queues a pending proposal for host/leader Accept.
+After Accept, the UI offers **Push** then **Remotes aktualisieren**.
 
 ## Push (publish current branch)
 

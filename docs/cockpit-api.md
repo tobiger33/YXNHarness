@@ -30,7 +30,12 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
 | POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
-| POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"? }` — design approve (whole-branch; default note Design approved) |
+| POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"?, "role"? }` — design approve (propose+Accept; YXN summary) |
+| POST | `/api/v1/workspace/commit` | `{ "message"\|"summary", "apply"?, "paths"? }` — commit; appends `Summary written by YXN.` |
+| GET | `/api/v1/workspace/merge-proposals` | `?status=` — pending merge proposals + host/leader policy |
+| POST | `/api/v1/workspace/merge-proposals` | `{ "ref", "summary"?, "apply"? }` — queue merge for host/leader Accept |
+| POST | `/api/v1/workspace/merge-proposals/:id/accept` | `{ "role"?: "host"\|"leader", "apply"? }` — Accept gated merge |
+| POST | `/api/v1/workspace/merge-proposals/:id/reject` | `{ "role"?, "reason"? }` — Reject gated merge |
 | POST | `/api/v1/workspace/push` | `{ "apply"?, "remote"?, "force"? }` — push current branch (`force` → `--force-with-lease`) |
 | POST | `/api/v1/workspace/fetch` | `{ "apply"?, "remote"?, "prune"? }` — on-demand `git fetch` (remote-tracking only) |
 | GET | `/api/v1/share` | List local share invites |
@@ -74,9 +79,13 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 - Panel widths persist in `localStorage`; double-click a splitter to reset
 
 **Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
-`/api/v1/workspace/adopt`; **Design passt** POSTs
-`/api/v1/workspace/approve` then offers **Push** (`/workspace/push`) and
-**Remotes aktualisieren** (`/workspace/fetch`). Composer messages become local
+`/api/v1/workspace/adopt`; **Merge vorschlagen** queues
+`/api/v1/workspace/merge-proposals`; **Design passt** POSTs
+`/api/v1/workspace/approve` (propose + host/leader Accept) then offers **Push**
+(`/workspace/push`) and **Remotes aktualisieren** (`/workspace/fetch`). Dirty
+trees show a **Commit** panel (`/workspace/commit`) that always attributes the
+summary to YXN. Pending merges wait for host or configured leader Accept.
+Composer messages become local
 feedback when no agent adapter is connected; with `agent.adapter` set they POST
 `/api/v1/agent/turns`. File-change adapters (`workspace-edit`) return proposals
 the host Accepts or Rejects via `/api/v1/agent/proposals/:id/*`. The Agent plug

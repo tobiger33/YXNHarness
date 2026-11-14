@@ -106,6 +106,15 @@ import {
   formatDesignApprovePlan,
   planDesignApprove,
 } from "./design-approve.mjs";
+import {
+  formatCommitPlan,
+  planWorkspaceCommit,
+} from "./workspace-commit.mjs";
+import {
+  acceptMergeProposal,
+  rejectMergeProposal,
+  writeMergeProposal,
+} from "./merge-proposals.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -122,7 +131,7 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--fetch|--push] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--commit|--merge-propose branch|--merge-accept id|--merge-reject id|--fetch|--push] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--role host|leader] [--dry-run|--apply] [--force] [--json]
   npm run harness -- share [--root path] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
@@ -169,6 +178,11 @@ function parseArgs(argv) {
     review: null,
     adopt: null,
     approve: null,
+    commit: false,
+    mergePropose: null,
+    mergeAccept: null,
+    mergeReject: null,
+    role: "host",
     fetch: false,
     push: false,
     remote: null,
@@ -245,6 +259,37 @@ function parseArgs(argv) {
       const approve = rest[index + 1];
       if (!approve || approve.startsWith("--")) throw new Error("--approve requires an existing local branch name.");
       options.approve = approve;
+      index += 1;
+    } else if (argument === "--commit") {
+      options.commit = true;
+    } else if (argument === "--merge-propose") {
+      const mergePropose = rest[index + 1];
+      if (!mergePropose || mergePropose.startsWith("--")) {
+        throw new Error("--merge-propose requires an existing local branch name.");
+      }
+      options.mergePropose = mergePropose;
+      index += 1;
+    } else if (argument === "--merge-accept") {
+      const mergeAccept = rest[index + 1];
+      if (!mergeAccept || mergeAccept.startsWith("--")) {
+        throw new Error("--merge-accept requires a merge proposal id.");
+      }
+      options.mergeAccept = mergeAccept;
+      index += 1;
+    } else if (argument === "--merge-reject") {
+      const mergeReject = rest[index + 1];
+      if (!mergeReject || mergeReject.startsWith("--")) {
+        throw new Error("--merge-reject requires a merge proposal id.");
+      }
+      options.mergeReject = mergeReject;
+      index += 1;
+    } else if (argument === "--role") {
+      const role = rest[index + 1];
+      if (!role || role.startsWith("--")) throw new Error("--role requires host or leader.");
+      if (role !== "host" && role !== "leader") {
+        throw new Error("--role must be host or leader.");
+      }
+      options.role = role;
       index += 1;
     } else if (argument === "--fetch") {
       options.fetch = true;
@@ -427,10 +472,16 @@ function parseArgs(argv) {
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
       options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--fetch/--push/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--commit/--merge-propose/--merge-accept/--merge-reject/--fetch/--push/--remote/--path/--hunks/--start/--note/--role/--dry-run/--apply/--force only.");
   }
-  if (action === "workspace" && options.note && !options.adopt && !options.approve) {
-    throw new Error("--note is only valid with workspace --adopt/--approve (or handoff / share).");
+  if (action === "workspace" && options.note && !options.adopt && !options.approve && !options.commit && !options.mergePropose) {
+    throw new Error("--note is only valid with workspace --adopt/--approve/--commit/--merge-propose (or handoff / share).");
+  }
+  if (options.role !== "host" && action !== "workspace") {
+    throw new Error("--role is only valid with workspace --approve/--merge-accept/--merge-reject.");
+  }
+  if (action === "workspace" && options.role !== "host" && !options.approve && !options.mergeAccept && !options.mergeReject) {
+    throw new Error("--role is only valid with workspace --approve/--merge-accept/--merge-reject.");
   }
   const workspaceMutators = [
     options.checkout,
@@ -438,15 +489,20 @@ function parseArgs(argv) {
     options.review,
     options.adopt,
     options.approve,
+    options.commit ? "commit" : null,
+    options.mergePropose,
+    options.mergeAccept,
+    options.mergeReject,
     options.fetch ? "fetch" : null,
     options.push ? "push" : null,
   ].filter(Boolean);
   if (action === "workspace" && workspaceMutators.length > 1) {
-    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, --fetch, or --push.");
+    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, --commit, --merge-propose, --merge-accept, --merge-reject, --fetch, or --push.");
   }
   if (action === "workspace" && (options.apply || options.dryRun || options.force) &&
-      !options.checkout && !options.create && !options.adopt && !options.approve && !options.fetch && !options.push) {
-    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, --fetch, or --push for workspace.");
+      !options.checkout && !options.create && !options.adopt && !options.approve && !options.commit &&
+      !options.mergePropose && !options.mergeAccept && !options.mergeReject && !options.fetch && !options.push) {
+    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, --commit, --merge-propose, --merge-accept, --merge-reject, --fetch, or --push for workspace.");
   }
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
@@ -492,6 +548,18 @@ function parseArgs(argv) {
   }
   if (options.approve && action !== "workspace") {
     throw new Error("--approve is only valid with workspace.");
+  }
+  if (options.commit && action !== "workspace") {
+    throw new Error("--commit is only valid with workspace.");
+  }
+  if (options.mergePropose && action !== "workspace") {
+    throw new Error("--merge-propose is only valid with workspace.");
+  }
+  if (options.mergeAccept && action !== "workspace") {
+    throw new Error("--merge-accept is only valid with workspace.");
+  }
+  if (options.mergeReject && action !== "workspace") {
+    throw new Error("--merge-reject is only valid with workspace.");
   }
   if (options.path && action !== "workspace") {
     throw new Error("--path is only valid with workspace.");
@@ -539,7 +607,7 @@ function parseArgs(argv) {
     throw new Error("--skip-doctor is only valid with attach.");
   }
   if (options.note && !["handoff", "workspace", "feedback", "elements", "share"].includes(action)) {
-    throw new Error("--note is only valid with handoff, workspace --adopt/--approve, feedback --bundle, elements --adopt, or share.");
+    throw new Error("--note is only valid with handoff, workspace --adopt/--approve/--commit/--merge-propose/--merge-reject, feedback --bundle, elements --adopt, or share.");
   }
   if (options.sourceBranch && action !== "elements") {
     throw new Error("--source-branch is only valid with elements --adopt.");
@@ -1839,12 +1907,68 @@ async function main(argv = process.argv.slice(2)) {
       if (!plan.ok) process.exitCode = 1;
       return plan;
     }
+    if (options.commit) {
+      const plan = await planWorkspaceCommit(root, {
+        message: options.note,
+        paths: options.paths.length ? options.paths : null,
+        apply: options.apply,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatCommitPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
+    if (options.mergePropose) {
+      const plan = await writeMergeProposal(root, {
+        theirs: options.mergePropose,
+        summary: options.note,
+        createdBy: "harness-cli",
+        apply: options.apply,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : [
+        `Merge propose: ${plan.status}`,
+        plan.explanation,
+        ...(plan.proposal?.proposalId ? [`Proposal: ${plan.proposal.proposalId}`] : []),
+        ...(plan.blockedReasons || []).map((reason) => `Blocked: ${reason}`),
+        ...(plan.next || []).map((step) => `Next: ${step}`),
+      ].filter(Boolean).join("\n"));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
+    if (options.mergeAccept) {
+      const plan = await acceptMergeProposal(root, options.mergeAccept, {
+        role: options.role,
+        force: options.force,
+        apply: !options.dryRun,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : [
+        `Merge accept: ${plan.status}`,
+        `Role: ${plan.role}`,
+        plan.explanation,
+        ...(plan.blockedReasons || []).map((reason) => `Blocked: ${reason}`),
+        ...(plan.next || []).map((step) => `Next: ${step}`),
+      ].filter(Boolean).join("\n"));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
+    if (options.mergeReject) {
+      const plan = await rejectMergeProposal(root, options.mergeReject, {
+        role: options.role,
+        reason: options.note,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : [
+        `Merge reject: ${plan.status}`,
+        ...(plan.blockedReasons || []).map((reason) => `Blocked: ${reason}`),
+      ].filter(Boolean).join("\n"));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     if (options.approve) {
       const plan = await planDesignApprove(root, {
         theirs: options.approve,
         apply: options.apply,
         force: options.force,
         note: options.note,
+        role: options.role,
       });
       console.log(options.json ? JSON.stringify(plan, null, 2) : formatDesignApprovePlan(plan));
       if (!plan.ok) process.exitCode = 1;
@@ -2180,6 +2304,11 @@ export {
   formatPushPlan,
   planDesignApprove,
   formatDesignApprovePlan,
+  planWorkspaceCommit,
+  formatCommitPlan,
+  writeMergeProposal,
+  acceptMergeProposal,
+  rejectMergeProposal,
   listShares,
   probeApp,
   runScenario,

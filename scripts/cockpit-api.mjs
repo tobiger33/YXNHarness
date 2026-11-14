@@ -17,6 +17,14 @@ import { planElementAdopt } from "./element-adopt.mjs";
 import { PHASES as ATTACH_PHASES } from "./attach.mjs";
 import { createShareInvite, listShares } from "./share.mjs";
 import { planDesignApprove } from "./design-approve.mjs";
+import { planWorkspaceCommit } from "./workspace-commit.mjs";
+import {
+  acceptMergeProposal,
+  listMergeProposals,
+  mergeApproverPolicy,
+  rejectMergeProposal,
+  writeMergeProposal,
+} from "./merge-proposals.mjs";
 import {
   bundleFeedback,
   createFeedback,
@@ -164,8 +172,12 @@ async function buildOverview(root, { refresh = true } = {}) {
       localWrites: [
         "POST /api/v1/workspace/adopt",
         "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/commit",
         "POST /api/v1/workspace/push",
         "POST /api/v1/workspace/fetch",
+        "POST /api/v1/workspace/merge-proposals",
+        "POST /api/v1/workspace/merge-proposals/:id/accept",
+        "POST /api/v1/workspace/merge-proposals/:id/reject",
         "POST /api/v1/feedback",
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
@@ -187,8 +199,13 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/workspace/review",
         "POST /api/v1/workspace/adopt",
         "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/commit",
         "POST /api/v1/workspace/push",
         "POST /api/v1/workspace/fetch",
+        "GET /api/v1/workspace/merge-proposals",
+        "POST /api/v1/workspace/merge-proposals",
+        "POST /api/v1/workspace/merge-proposals/:id/accept",
+        "POST /api/v1/workspace/merge-proposals/:id/reject",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
         "GET /api/v1/compare",
@@ -221,7 +238,10 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/artifacts/*",
       ],
     },
-    host,
+    host: {
+      ...host,
+      mergePolicy: mergeApproverPolicy(host.config),
+    },
     workspace: {
       available: workspace.available,
       branch: workspace.branch,
@@ -366,8 +386,12 @@ function apiIndexPayload(projectRoot) {
     localWrites: [
       "POST /api/v1/workspace/adopt",
       "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/commit",
       "POST /api/v1/workspace/push",
       "POST /api/v1/workspace/fetch",
+      "POST /api/v1/workspace/merge-proposals",
+      "POST /api/v1/workspace/merge-proposals/:id/accept",
+      "POST /api/v1/workspace/merge-proposals/:id/reject",
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
@@ -389,8 +413,10 @@ function apiIndexPayload(projectRoot) {
       review: "/api/v1/workspace/review?ref=",
       adopt: "/api/v1/workspace/adopt",
       approve: "/api/v1/workspace/approve",
+      commit: "/api/v1/workspace/commit",
       push: "/api/v1/workspace/push",
       fetch: "/api/v1/workspace/fetch",
+      mergeProposals: "/api/v1/workspace/merge-proposals",
       runs: "/api/v1/runs",
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
       promote: "/api/v1/promote?from=last-green",
@@ -407,7 +433,7 @@ function apiIndexPayload(projectRoot) {
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments, optional agent turns/proposals. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, commit, host/leader merge Accept, push, fetch, feedback, element adopt, attach, share invite, attachments, optional agent turns/proposals. No remote agent required.",
   };
 }
 
@@ -549,9 +575,89 @@ function createCockpitApi({
           apply: body.apply === true,
           force: body.force === true,
           note: body.note ?? body.comment ?? null,
+          role: body.role === "leader" ? "leader" : "host",
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;
+      }
+
+      if (pathname === "/api/v1/workspace/commit" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await planWorkspaceCommit(projectRoot, {
+          message: body.message ?? body.summary ?? body.note ?? body.comment ?? null,
+          paths: Array.isArray(body.paths) ? body.paths : (body.path ? [body.path] : null),
+          apply: body.apply === true,
+          allowEmpty: body.allowEmpty === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/merge-proposals" && method === "GET") {
+        const listed = await listMergeProposals(projectRoot, {
+          status: searchParams.get("status") || null,
+        });
+        const host = await loadHostConfig(projectRoot);
+        sendJson(response, 200, {
+          ...listed,
+          policy: mergeApproverPolicy(host.config),
+        });
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/merge-proposals" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await writeMergeProposal(projectRoot, {
+          theirs: body.ref || body.theirs || body.branch,
+          summary: body.summary ?? body.message ?? body.note ?? body.comment ?? null,
+          createdBy: body.createdBy ?? "cockpit",
+          apply: body.apply !== false,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      {
+        const mergeAccept = pathname.match(/^\/api\/v1\/workspace\/merge-proposals\/([^/]+)\/accept$/);
+        if (mergeAccept && method === "POST") {
+          const body = await readJsonBody(request);
+          try {
+            const plan = await acceptMergeProposal(projectRoot, decodeURIComponent(mergeAccept[1]), {
+              role: body.role === "leader" ? "leader" : "host",
+              force: body.force === true,
+              apply: body.apply !== false,
+            });
+            sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+          } catch (error) {
+            sendJson(response, error.statusCode || 500, {
+              status: "blocked",
+              ok: false,
+              error: error.message || "Merge accept failed",
+            });
+          }
+          return;
+        }
+      }
+
+      {
+        const mergeReject = pathname.match(/^\/api\/v1\/workspace\/merge-proposals\/([^/]+)\/reject$/);
+        if (mergeReject && method === "POST") {
+          const body = await readJsonBody(request);
+          try {
+            const plan = await rejectMergeProposal(projectRoot, decodeURIComponent(mergeReject[1]), {
+              role: body.role === "leader" ? "leader" : "host",
+              reason: body.reason ?? body.note ?? null,
+            });
+            sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+          } catch (error) {
+            sendJson(response, error.statusCode || 500, {
+              status: "blocked",
+              ok: false,
+              error: error.message || "Merge reject failed",
+            });
+          }
+          return;
+        }
       }
 
       if (pathname === "/api/v1/share" && method === "POST") {
