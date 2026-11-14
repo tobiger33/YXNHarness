@@ -132,3 +132,25 @@ on pointer release to distinguish quick drags from clicks. A 350ms stationary
 press commits the precise target once; release does not toggle it off. Hover
 highlighting settles after 100ms without automatically adding context. A reserved
 action slot keeps the canvas stationary while a hold selection is committed.
+
+## Reviewing element comments
+
+Each selected element/reference above the composer opens a native dialog with
+its original route/revision, a visual snapshot (when captured) and its own
+editable desired change. The snapshot is a restricted structured component tree,
+not executable HTML; field values are not captured. Comments and their last ten
+local revisions persist with the selection. Switching elements with unsaved
+changes asks the user to save/cancel rather than discarding the text. Sending
+includes the latest individual comments alongside common instructions.
+
+Draft edits update the draft. Existing feedback can be reopened from chat or the
+Feedback list. Saving it uses PATCH to append a new message/revision to the same
+thread; prior messages remain visible. This neither rewrites already executed
+agent work nor reruns an agent. Sent external references can be reviewed locally;
+revisions must be sent again to update the external task. Visual snapshots are
+cached locally for the most recent 50 element/revision identities. Missing
+snapshots are labelled explicitly rather than fabricated.
+
+Selection gestures must start and end inside the visible project preview.
+Targets are validated as project-owned registered elements; shell controls,
+sidebar, chat and outer canvas margins cannot become selection/comment targets.

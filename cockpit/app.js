@@ -1,3 +1,5 @@
+import { mountElementDetails } from "/cockpit/element-details.js";
+
 import { mountPreview } from "/cockpit/preview.js";
 import { mountHome } from "/cockpit/home.js";
 import { mountAttachments } from "/cockpit/attachments.js";
@@ -47,6 +49,8 @@ try {
     state.view = savedUi.view || state.view;
     state.mode = savedUi.mode || state.mode;
     state.contexts = Array.isArray(savedUi.contexts) ? savedUi.contexts : state.contexts;
+    state.contextNotes = savedUi.contextNotes && typeof savedUi.contextNotes === "object" ? savedUi.contextNotes : {};
+    state.elementArchive = savedUi.elementArchive && typeof savedUi.elementArchive === "object" ? savedUi.elementArchive : {};
     if (savedUi.selection && typeof savedUi.selection.id === "string" && typeof savedUi.selection.route === "string" && savedUi.selection.source && ["comment", "adopt"].includes(savedUi.selection.intent)) state.selection = savedUi.selection;
     state.model = savedUi.model || state.model;
     state.reasoning = savedUi.reasoning || state.reasoning;
@@ -112,6 +116,8 @@ function persistUi() {
     view: state.view,
     mode: state.mode,
     contexts: state.contexts,
+    contextNotes: state.contextNotes || {},
+    elementArchive: state.elementArchive || {},
     selection: state.selection,
     model: state.model,
     reasoning: state.reasoning,
@@ -312,7 +318,14 @@ function renderChips() {
       renderChips();
       persistUi();
     };
-    chip.append(icon, text, button);
+    const open = document.createElement("button");
+    open.type = "button"; open.className = "context-chip-open";
+    open.append(icon, text);
+    open.onclick = () => {
+      if (state.selection && label === `${state.selection.label} · ${state.selection.route}`) openElementDetails(0);
+      else elementDetails.open({ source: {}, elements: [{ id: label, label, route: "Context reference", comment: state.contextNotes?.[label] || "" }], contextLabel: label });
+    };
+    chip.append(open, button);
     chips.append(chip);
   });
   icons();
@@ -612,7 +625,12 @@ function renderChatSeed() {
   for (const thread of open) {
     const user = document.createElement("div");
     user.className = "user-message";
-    user.textContent = thread.preview || thread.threadId;
+    const openComment = document.createElement("button");
+    openComment.type = "button"; openComment.className = "saved-comment-open";
+    openComment.textContent = thread.preview || thread.threadId;
+    openComment.setAttribute("aria-label", "Open saved comment");
+    openComment.onclick = () => elementDetails.openThread(thread.threadId);
+    user.append(openComment);
     feed.append(user);
     const meta = document.createElement("div");
     meta.className = "agent-event";
@@ -629,7 +647,11 @@ function renderChatSeed() {
 }
 
 async function sendMessage() {
-  const value = q("#chat-input").value.trim();
+  const common = q("#chat-input").value.trim();
+  const drafts = state.selection?.elements || [];
+  const elementNotes = drafts.filter((element) => element.comment?.trim()).map((element) => `${element.label} (${element.route}): ${element.comment.trim()}`).join("\n\n");
+  const contextNotes = state.contexts.filter((label) => state.contextNotes?.[label]?.trim()).map((label) => `${label}: ${state.contextNotes[label].trim()}`).join("\n\n");
+  const value = [common, elementNotes, contextNotes].filter(Boolean).join("\n\n");
   if (!value || busy) return;
   busy = true;
   q(".send").disabled = true;
@@ -643,6 +665,13 @@ async function sendMessage() {
     context.className = "sent-selection-context";
     context.textContent = `${selection.label} · ${selection.route} · ${selection.intent === "adopt" ? "Übernehmen" : "Kommentieren"}`;
     user.append(context);
+    const cards = document.createElement("div"); cards.className = "sent-element-list";
+    (selection.elements || [selection]).forEach((entry, index) => {
+      const button = document.createElement("button"); button.type = "button"; button.className = "element-reference";
+      button.textContent = entry.label; button.onclick = () => elementDetails.open({ ...selection, localArchive: true }, index, (updated) => { selection.elements = updated.elements; });
+      cards.append(button);
+    });
+    user.append(cards);
   }
   attachments.appendToMessage(user);
   feed.append(user);
@@ -733,7 +762,7 @@ async function sendMessage() {
         route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
         element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
         source: selection?.source || null,
-        appState: selection?.elements?.length > 1 ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, source: { ...(element.source || selection.source), elementId: element.id } })) } : null,
+        appState: selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
@@ -745,6 +774,10 @@ async function sendMessage() {
       actions.className = "agent-event";
       actions.textContent = "✓ Local feedback written · comments are context";
       answer.append(actions);
+      if (plan.thread?.threadId) {
+        const review = document.createElement("button"); review.type = "button"; review.className = "button"; review.textContent = "Review / edit comment";
+        review.onclick = () => elementDetails.openThread(plan.thread.threadId); answer.append(review);
+      }
       thought.textContent = "Feedback saved";
       pushActivity("Created feedback thread");
       await refreshFeedbackOnly();
@@ -779,10 +812,11 @@ function showExtra(nav) {
     q("#extra-title").textContent = "Feedback";
     q("#extra-subtitle").textContent = "Local visual threads tied to branch/commit/route/element.";
     q("#extra-content").innerHTML = (state.feedback || []).map((thread) => `
-      <div class="extra-row">${escapeHtml(thread.preview || thread.threadId)}
+      <button type="button" class="extra-row saved-feedback-open" data-feedback-id="${escapeHtml(thread.threadId)}">${escapeHtml(thread.preview || thread.threadId)}
         <small>${escapeHtml(thread.status)} · ${escapeHtml(thread.scope)} · ${escapeHtml(thread.branch || "—")} @ ${escapeHtml((thread.commit || "").slice(0, 7) || "—")}</small>
-      </div>
+      </button>
     `).join("") || `<div class="extra-row">No feedback yet<small>Use the agent composer to add some</small></div>`;
+    qa("[data-feedback-id]").forEach((button) => { button.onclick = () => elementDetails.openThread(button.dataset.feedbackId); });
   } else if (kind === "reviews") {
     q("#extra-title").textContent = "Reviews";
     q("#extra-subtitle").textContent = "Handoff packages ready for your coding agent.";
@@ -947,8 +981,14 @@ function renderElementSelection() {
   const routes = [...new Set((selected.elements || [selected]).map((element) => element.route))];
   q("#selection-context-route").textContent = `${routes.length > 1 ? `${routes.length} pages` : selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
   root.dispatchEvent(new CustomEvent("yxn:selection-change", { detail: { elements: selected.elements || [selected] } }));
-  q("#selection-context-elements").textContent = (selected.elements || []).length > 1 ? selected.elements.map((element) => `${element.label} (${element.route})`).join(" · ") : "";
-  q("#selection-context-elements").hidden = (selected.elements || []).length < 2;
+  q("#selection-context-elements").replaceChildren();
+  (selected.elements || [selected]).forEach((element, index) => {
+    const button = document.createElement("button"); button.type = "button"; button.className = "element-reference";
+    button.textContent = `${element.label} (${element.route})${element.comment ? " · comment" : ""}`;
+    button.onclick = () => openElementDetails(index);
+    q("#selection-context-elements").append(button);
+  });
+  q("#selection-context-elements").hidden = false;
   q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
 
 }
@@ -967,6 +1007,10 @@ function selectElement(element, anchor, { mode = "add" } = {}) {
   if (!elements.length) { clearElementSelection(); return; }
   if (previous) state.contexts = state.contexts.filter((entry) => entry !== `${previous.label} · ${previous.route}`);
   selectedAnchor = anchor;
+  state.elementArchive ||= {};
+  for (const entry of elements) if (entry.preview) state.elementArchive[JSON.stringify([entry.id, entry.route, entry.source?.commit || null])] = entry.preview;
+  const archiveKeys = Object.keys(state.elementArchive);
+  for (const stale of archiveKeys.slice(0, Math.max(0, archiveKeys.length - 50))) delete state.elementArchive[stale];
   const first = elements[0];
   state.selection = {
     ...first,
@@ -1008,6 +1052,53 @@ q("#selection-context-clear").addEventListener("click", clearElementSelection);
 root.addEventListener("yxn:preview-route", renderElementSelection);
 window.addEventListener("resize", renderElementSelection);
 q("#screen-preview").addEventListener("scroll", renderElementSelection);
+
+function openElementDetails(index) {
+  if (!state.selection) return;
+  elementDetails.open({ ...state.selection, elements: state.selection.elements || [state.selection] }, index);
+}
+q("#selection-context-name").addEventListener("click", () => openElementDetails(0));
+const elementDetails = mountElementDetails(root, {
+  notify: toast,
+  lookupPreview: (id, route, commit) => state.elementArchive?.[JSON.stringify([id, route, commit || null])],
+  async save(model, index, body) {
+    if (model.threadId) {
+      if (!body) throw new Error("A saved comment cannot be empty.");
+      const response = await fetch(`/api/v1/feedback/${encodeURIComponent(model.threadId)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body, apply: true }),
+      });
+      const result = await response.json();
+      if (!response.ok || result.status === "blocked") throw new Error(result.error || result.blockedReasons?.join("; ") || "Comment could not be saved.");
+      await refreshFeedbackOnly(); renderChatSeed();
+      if (!q("#extra-screen").hidden && q('.nav-item.active')?.dataset.nav === "feedback") showExtra(q('[data-nav="feedback"]'));
+      toast("New comment revision saved. No agent was rerun.");
+      return;
+    }
+    if (model.contextLabel) {
+      state.contextNotes ||= {};
+      state.contextNotes[model.contextLabel] = body;
+      persistUi(); toast("Context comment saved."); return;
+    }
+    const source = model.elements[index];
+    let entry = state.selection?.elements?.find((element) => element.id === source.id && element.route === source.route);
+    if (!entry && model.localArchive) {
+      selectElement(source, null, { mode: "add" });
+      entry = state.selection.elements.find((element) => element.id === source.id && element.route === source.route);
+    }
+    if (!entry) throw new Error("This element is no longer in the selection. Select it again before saving.");
+    if (entry.comment !== body) {
+      entry.commentHistory ||= [];
+      if (entry.comment && !entry.commentHistory.length) entry.commentHistory.push({ body: entry.comment, at: new Date().toISOString() });
+      entry.commentHistory.push({ body, at: new Date().toISOString() });
+      entry.commentHistory = entry.commentHistory.slice(-10);
+      entry.comment = body;
+    }
+    source.comment = entry.comment;
+    source.commentHistory = structuredClone(entry.commentHistory || []);
+    persistUi(); renderElementSelection();
+    toast(model.localArchive ? "Revised draft saved. Send again to update the request." : "Element comment saved in your draft.");
+  },
+});
 
 const attachments = mountAttachments(root, toast);
 const home = mountHome(root, toast);

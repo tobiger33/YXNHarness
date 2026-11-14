@@ -221,3 +221,39 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .element-actions { flex-wrap: nowrap; }
 #yxn-workbench .element-actions>span { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 #yxn-workbench .element-actions button { flex-shrink: 0; white-space: nowrap; }
+
+#yxn-workbench .context-chip-open, #yxn-workbench .selection-detail-open, #yxn-workbench .saved-comment-open { border: 0; padding: 0; background: transparent; color: inherit; text-align: left; font: inherit; }
+#yxn-workbench .context-chip-open { min-width: 0; gap: 4px; }
+#yxn-workbench .selection-detail-open { overflow-wrap: anywhere; }
+#yxn-workbench .element-reference { padding: 3px 5px; border: 1px solid var(--line); background: var(--bg); border-radius: 4px; color: var(--muted); font-size: 10px; text-align: left; overflow-wrap: anywhere; }
+#yxn-workbench #selection-context-elements, #yxn-workbench .sent-element-list { display: flex; flex-wrap: wrap; gap: 5px; }
+#yxn-workbench .sent-element-list { margin-top: 7px; }
+#yxn-workbench .element-detail-dialog { width: min(860px,calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; }
+#yxn-workbench .element-detail-dialog::backdrop { background: #0009; }
+#yxn-workbench .element-detail-dialog>header { display: flex; align-items: center; justify-content: space-between; padding: 15px 20px; gap: 12px; border-bottom: 1px solid var(--line); }
+#yxn-workbench .element-detail-dialog h2 { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+#yxn-workbench .element-detail-meta, #yxn-workbench .element-detail-note { font-size: 11px; color: var(--muted); margin-top: 5px; overflow-wrap: anywhere; }
+#yxn-workbench .element-detail-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
+#yxn-workbench .element-detail-list button { background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font-size: 11px; overflow-wrap: anywhere; }
+#yxn-workbench .element-detail-list button[aria-pressed=true] { background: var(--selected); }
+#yxn-workbench .element-detail-body { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); }
+#yxn-workbench .element-detail-snapshot { min-width: 0; padding: 20px; background: var(--canvas); }
+#yxn-workbench .element-detail-snapshot>span { font-size: 11px; color: var(--muted); }
+#yxn-workbench .element-detail-preview { margin: 10px auto; padding: 15px 0; max-width: 100%; overflow-wrap: anywhere; }
+#yxn-workbench .element-detail-body form { padding: 20px; display: flex; flex-direction: column; gap: 15px; min-width: 0; }
+#yxn-workbench .element-detail-body label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+#yxn-workbench .element-detail-body textarea { padding: 9px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; min-height: 130px; }
+#yxn-workbench .element-detail-body footer { display: flex; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+#yxn-workbench .element-detail-body details { font-size: 11px; }
+#yxn-workbench .element-detail-history>div { border-bottom: 1px solid var(--line); padding: 10px 0; }
+#yxn-workbench .element-detail-history small { color: var(--muted); }
+#yxn-workbench .element-detail-history p { white-space: pre-wrap; margin-top: 4px; }
+@media(max-width:600px) { #yxn-workbench .element-detail-body { grid-template-columns: minmax(0,1fr); } }
+
+/* Select applies to the project, never to the workbench shell. */
+#yxn-workbench.is-selecting>.topbar, #yxn-workbench.is-selecting .sidebar, #yxn-workbench.is-selecting .agent { user-select: none; }
+#yxn-workbench.is-selecting .agent textarea, #yxn-workbench.is-selecting .agent input { user-select: text; }
+#yxn-workbench .element-detail-dialog>header h2 { font-size: 16px; }
+#yxn-workbench .element-detail-preview h2 { font-size: 27px; line-height: 1.13; }
+#yxn-workbench .element-detail-preview button:disabled { opacity: 1; }
+#yxn-workbench .saved-feedback-open { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; }

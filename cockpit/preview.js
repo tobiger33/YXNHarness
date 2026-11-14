@@ -1,3 +1,5 @@
+import { snapshotElement } from "/cockpit/element-details.js";
+
 const PREVIEW_KEY = "yxnharness.preview.url.v1";
 
 export function mountPreview(root, { selecting, select, interact, notify }) {
@@ -117,7 +119,21 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   }
   // The example owns these stable IDs; never infer target app identity from DOM text.
   const selectable = "[data-demo-element]:not([data-demo-container])";
-  const targetAt = (element) => element.closest(selectable);
+  const targetAt = (element) => {
+    if (!demo.contains(element)) return null;
+    const target = element.closest(selectable);
+    return target && demo.contains(target) ? target : null;
+  };
+  function projectBounds() {
+    const rect = demo.getBoundingClientRect();
+    const clip = q("#screen-preview").getBoundingClientRect();
+    return { left: Math.max(rect.left, clip.left, 0), top: Math.max(rect.top, clip.top, 0), right: Math.min(rect.right, clip.right, innerWidth), bottom: Math.min(rect.bottom, clip.bottom, innerHeight) };
+  }
+  function inProject(event) {
+    if (previewUrl || demo.hidden) return false;
+    const rect = projectBounds();
+    return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  }
   let hovered = null;
   let hoverTimer;
   function hover(element) {
@@ -127,9 +143,9 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     hovered?.classList.add("demo-hover");
   }
   function chooseMany(elements, mode = "add") {
-    const unique = [...new Set(elements)];
+    const unique = [...new Set(elements)].filter((element) => demo.contains(element) && element.matches(selectable) && element.getClientRects().length);
     if (!unique.length) return;
-    const entries = unique.map((element) => ({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }));
+    const entries = unique.map((element) => ({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent, preview: snapshotElement(element) }));
     select(entries, unique[0], { mode });
   }
   function choose(element) { chooseMany([element], "toggle"); }
@@ -150,7 +166,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   let suppressClick = false;
   window.addEventListener("pointerup", () => { setTimeout(() => { suppressClick = false; }, 0); });
   function boxAt(event) {
-    const rect = surface.getBoundingClientRect();
+    const rect = projectBounds();
     const x = Math.max(rect.left, Math.min(event.clientX, rect.right));
     const y = Math.max(rect.top, Math.min(event.clientY, rect.bottom));
     return { left: Math.min(drag.x, x), top: Math.min(drag.y, y), right: Math.max(drag.x, x), bottom: Math.max(drag.y, y) };
@@ -179,7 +195,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     for (const element of demo.querySelectorAll(".demo-candidate")) element.classList.remove("demo-candidate");
   }
   surface.addEventListener("pointerdown", (event) => {
-    if (!selecting() || previewUrl || event.button !== 0 || event.target.closest(".region-status")) return;
+    if (!selecting() || previewUrl || event.button !== 0 || !demo.contains(event.target) || !inProject(event)) return;
     event.preventDefault();
     suppressClick = true;
     hover(null);
@@ -194,6 +210,12 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   });
   surface.addEventListener("pointermove", (event) => {
     if (!drag) return;
+    if (!inProject(event)) {
+      clearTimeout(drag.holdTimer);
+      marquee.hidden = true;
+      for (const element of demo.querySelectorAll(".demo-candidate")) element.classList.remove("demo-candidate");
+      return;
+    }
     const box = boxAt(event);
     if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
     drag.moved = true;
@@ -207,6 +229,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   });
   surface.addEventListener("pointerup", (event) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!inProject(event)) { cancelDrag(); return; }
     const moved = drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 5;
     const matched = moved ? inside(boxAt(event)) : drag.target ? [drag.target] : [];
     const committed = drag.committed;
@@ -217,7 +240,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   surface.addEventListener("lostpointercapture", () => { if (drag) cancelDrag(); });
   surface.addEventListener("click", (event) => {
     if (suppressClick) { suppressClick = false; event.preventDefault(); event.stopPropagation(); return; }
-    if (!selecting() || previewUrl) return;
+    if (!selecting() || previewUrl || !demo.contains(event.target)) return;
     event.preventDefault(); event.stopPropagation();
     // Keyboard/assistive activation has no preceding pointer gesture.
     if (event.detail === 0) {
