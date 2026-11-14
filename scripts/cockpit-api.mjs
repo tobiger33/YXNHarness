@@ -345,6 +345,7 @@ function createCockpitApi({
           theirs: body.ref || body.theirs || body.branch,
           apply: body.apply === true,
           force: body.force === true,
+          comment: body.comment ?? body.note ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;

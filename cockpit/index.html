@@ -55,6 +55,21 @@
         </div>
         <div id="stage-actions" class="stage-actions" hidden></div>
       </header>
+      <section id="adopt-sheet" class="adopt-sheet" hidden aria-label="Adopt with optional note">
+        <p id="adopt-sheet-lede" class="adopt-sheet-lede"></p>
+        <label class="adopt-label" for="adopt-comment">Note</label>
+        <textarea
+          id="adopt-comment"
+          class="adopt-comment"
+          rows="3"
+          maxlength="2000"
+          placeholder="Optional — why you’re adopting, or what still needs changing…"
+        ></textarea>
+        <div class="adopt-sheet-actions">
+          <button type="button" class="btn btn-ghost" id="adopt-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="adopt-confirm">Übernehmen</button>
+        </div>
+      </section>
       <div id="detail-body" class="stage-body"></div>
     </main>
   </div>

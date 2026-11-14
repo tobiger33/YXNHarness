@@ -9,6 +9,11 @@ const els = {
   detailLede: document.getElementById("detail-lede"),
   detailBody: document.getElementById("detail-body"),
   stageActions: document.getElementById("stage-actions"),
+  adoptSheet: document.getElementById("adopt-sheet"),
+  adoptSheetLede: document.getElementById("adopt-sheet-lede"),
+  adoptComment: document.getElementById("adopt-comment"),
+  adoptCancel: document.getElementById("adopt-cancel"),
+  adoptConfirm: document.getElementById("adopt-confirm"),
   generatedAt: document.getElementById("generated-at"),
 };
 
@@ -19,6 +24,8 @@ const state = {
   review: null,
   reviewFile: null,
   adopting: false,
+  adoptOpen: false,
+  adoptForce: false,
 };
 
 function escapeHtml(value) {
@@ -103,6 +110,38 @@ function detailCards(entries) {
 function clearActions() {
   els.stageActions.hidden = true;
   els.stageActions.innerHTML = "";
+}
+
+function closeAdoptSheet({ restoreAction = false } = {}) {
+  const wasOpen = state.adoptOpen;
+  state.adoptOpen = false;
+  state.adoptForce = false;
+  els.adoptSheet.hidden = true;
+  els.adoptComment.value = "";
+  els.adoptConfirm.disabled = false;
+  els.adoptConfirm.textContent = "Übernehmen";
+  if (restoreAction && wasOpen && state.selected?.type === "review" && state.review) {
+    setAdoptAction(true);
+  }
+}
+
+function openAdoptSheet({ force = false } = {}) {
+  const review = state.review;
+  const theirs = state.selected?.id || review?.theirs?.branch || "—";
+  const yours = review?.yours?.branch || state.workspace?.branch || "—";
+  const summary = review?.summary || {};
+  const files = summary.filesChanged ?? "—";
+  const stats = summary.additions != null
+    ? ` · +${summary.additions}/-${summary.deletions}`
+    : "";
+  state.adoptOpen = true;
+  state.adoptForce = force;
+  clearActions();
+  els.adoptSheetLede.textContent = `Merge ${theirs} → ${yours} (${files} files${stats}). Note is optional — leave empty to take as-is.`;
+  els.adoptSheet.hidden = false;
+  els.adoptConfirm.disabled = false;
+  els.adoptConfirm.textContent = force ? "Force Übernehmen" : "Übernehmen";
+  queueMicrotask(() => els.adoptComment.focus());
 }
 
 function setAdoptAction(enabled, label = "Übernehmen") {
@@ -223,7 +262,9 @@ function paintReview(review, selectedPath, message = null) {
   els.detailLede.textContent = `${yours} ← ${theirs} · ${summary.filesChanged} files · +${summary.additions}/-${summary.deletions}`;
 
   const canAdopt = review.status === "ready" || review.status === "noop";
-  setAdoptAction(canAdopt && !state.adopting, state.adopting ? "Übernehmen…" : "Übernehmen");
+  if (!state.adoptOpen) {
+    setAdoptAction(canAdopt && !state.adopting, state.adopting ? "Übernehmen…" : "Übernehmen");
+  }
 
   if (!review.files?.length) {
     els.detailBody.innerHTML = `
@@ -267,7 +308,8 @@ async function showReview(branchName, { path = null, message = null } = {}) {
   state.selected = { type: "review", id: branchName };
   state.reviewFile = path;
   highlightSelection();
-  clearActions();
+  if (!state.adopting && !state.adoptOpen) closeAdoptSheet();
+  if (!state.adoptOpen) clearActions();
   els.detailTitle.textContent = `Review · ${branchName}`;
   els.detailLede.textContent = "Loading diff…";
   els.detailBody.innerHTML = stageEmpty("Loading", "Fetching branch review…");
@@ -292,49 +334,55 @@ async function showReview(branchName, { path = null, message = null } = {}) {
   }
 }
 
-async function adoptCurrent(force = false) {
+async function adoptCurrent({ force = false, comment = null } = {}) {
   if (!state.selected || state.selected.type !== "review" || state.adopting) return;
   const ref = state.selected.id;
   state.adopting = true;
   setAdoptAction(false, "Übernehmen…");
+  els.adoptConfirm.disabled = true;
+  els.adoptConfirm.textContent = "Übernehmen…";
   try {
-    const preview = await apiPost("/api/v1/workspace/adopt", { ref, apply: false, force });
+    const preview = await apiPost("/api/v1/workspace/adopt", { ref, apply: false, force, comment });
     if (preview.status === "blocked") {
       throw new Error(preview.blockedReasons?.join("; ") || "Adopt blocked");
     }
     if (preview.status === "noop") {
+      closeAdoptSheet();
       await showReview(ref, { path: state.reviewFile, message: { ok: true, text: preview.explanation || "Already on that branch." } });
       return;
     }
-    const applied = await apiPost("/api/v1/workspace/adopt", { ref, apply: true, force });
+    const applied = await apiPost("/api/v1/workspace/adopt", { ref, apply: true, force, comment });
     if (applied.status === "blocked") {
       throw new Error(applied.blockedReasons?.join("; ") || "Adopt failed");
     }
+    closeAdoptSheet();
     await refresh({ keepSelection: false });
     els.detailTitle.textContent = "Adopted";
     els.detailLede.textContent = applied.explanation || `Merged ${ref} into your branch.`;
     clearActions();
+    const noteLine = applied.comment
+      ? `Note recorded on the merge commit: “${applied.comment}”`
+      : "Taken as-is (no merge note).";
     els.detailBody.innerHTML = stageEmpty(
       "Übernommen",
-      applied.explanation || `Changes from ${ref} are now on your current branch.`,
+      `${applied.explanation || `Changes from ${ref} are now on your current branch.`} ${noteLine}`,
     );
   } catch (error) {
     const dirty = /dirty/i.test(error.message);
+    closeAdoptSheet();
     await showReview(ref, {
       path: state.reviewFile,
       message: {
         ok: false,
         text: dirty
-          ? `${error.message} — retry with force only after host consent.`
+          ? `${error.message} — open Übernehmen again and use Force after host consent.`
           : error.message,
       },
     });
     if (dirty) {
       setAdoptAction(true, "Force Übernehmen");
       const btn = document.getElementById("adopt-btn");
-      if (btn) {
-        btn.dataset.force = "1";
-      }
+      if (btn) btn.dataset.force = "1";
     }
   } finally {
     state.adopting = false;
@@ -344,6 +392,7 @@ async function adoptCurrent(force = false) {
 async function showRun(runId) {
   state.selected = { type: "run", id: runId };
   state.review = null;
+  closeAdoptSheet();
   clearActions();
   els.detailTitle.textContent = "Run";
   els.detailLede.textContent = runId;
@@ -378,6 +427,7 @@ async function showRun(runId) {
 async function showHandoff(handoffId) {
   state.selected = { type: "handoff", id: handoffId };
   state.review = null;
+  closeAdoptSheet();
   clearActions();
   els.detailTitle.textContent = "Handoff";
   els.detailLede.textContent = handoffId;
@@ -460,15 +510,38 @@ els.refreshBtn.addEventListener("click", () => {
   refresh();
 });
 
+els.adoptCancel.addEventListener("click", () => {
+  closeAdoptSheet({ restoreAction: true });
+});
+
+els.adoptConfirm.addEventListener("click", () => {
+  const comment = els.adoptComment.value.trim() || null;
+  adoptCurrent({ force: state.adoptForce, comment });
+});
+
+els.adoptComment.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+    event.preventDefault();
+    els.adoptConfirm.click();
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeAdoptSheet({ restoreAction: true });
+  }
+});
+
 document.addEventListener("click", (event) => {
   const adopt = event.target.closest("#adopt-btn");
   if (adopt) {
-    adoptCurrent(adopt.dataset.force === "1");
+    openAdoptSheet({ force: adopt.dataset.force === "1" });
     return;
   }
   const button = event.target.closest("[data-kind][data-id]");
   if (!button) return;
-  if (button.dataset.kind === "review") showReview(button.dataset.id);
+  if (button.dataset.kind === "review") {
+    closeAdoptSheet();
+    showReview(button.dataset.id);
+  }
   if (button.dataset.kind === "file") showReview(state.selected?.id, { path: button.dataset.id });
   if (button.dataset.kind === "run") showRun(button.dataset.id);
   if (button.dataset.kind === "handoff") showHandoff(button.dataset.id);

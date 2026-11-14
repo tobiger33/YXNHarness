@@ -229,8 +229,11 @@ function parseArgs(argv) {
     throw new Error("status only accepts --root and --json.");
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
-      options.out || options.from || options.note || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--start/--dry-run/--apply/--force only.");
+      options.out || options.from || options.port !== null)) {
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--start/--note/--dry-run/--apply/--force only.");
+  }
+  if (action === "workspace" && options.note && !options.adopt) {
+    throw new Error("--note is only valid with workspace --adopt (or handoff).");
   }
   const workspaceMutators = [options.checkout, options.create, options.review, options.adopt].filter(Boolean);
   if (action === "workspace" && workspaceMutators.length > 1) {
@@ -282,8 +285,11 @@ function parseArgs(argv) {
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if ((options.from || options.note) && action !== "handoff") {
-    throw new Error("--from and --note are only valid with handoff.");
+  if (options.from && action !== "handoff") {
+    throw new Error("--from is only valid with handoff.");
+  }
+  if (options.note && !["handoff", "workspace"].includes(action)) {
+    throw new Error("--note is only valid with handoff or workspace --adopt.");
   }
   if (options.port !== null && action !== "serve") {
     throw new Error("--port is only valid with serve.");
@@ -1447,6 +1453,7 @@ async function main(argv = process.argv.slice(2)) {
         theirs: options.adopt,
         apply: options.apply,
         force: options.force,
+        comment: options.note,
       });
       plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
       console.log(options.json ? JSON.stringify(plan, null, 2) : formatAdoptPlan(plan));

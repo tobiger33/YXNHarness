@@ -58,10 +58,15 @@ for that file.
 ```sh
 npm run harness -- workspace --adopt feature/demo --dry-run
 npm run harness -- workspace --adopt feature/demo --apply
+npm run harness -- workspace --adopt feature/demo --apply --note "Keep layout; tweak copy later"
 ```
 
-Merges **their** local branch into **your** current branch (`git merge --no-edit`).
-This is the CLI equivalent of the cockpit **Übernehmen** button.
+Merges **their** local branch into **your** current branch.
+This is the CLI equivalent of the cockpit **Übernehmen** flow.
+
+Optional `--note` is host/agent context (not instructions). When present it is
+written into a merge commit (`git merge --no-ff -m …`). Without a note, a normal
+fast-forward-capable merge is used.
 
 Guards (create + checkout + adopt):
 

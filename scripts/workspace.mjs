@@ -293,13 +293,68 @@ function formatWorkspaceReview(review) {
   return lines.join("\n");
 }
 
+const ADOPT_COMMENT_MAX = 2000;
+
+/** Optional merge note — host/agent context, never executed as instructions. */
+function normalizeAdoptComment(value) {
+  if (value == null) return null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/\r\n/g, "\n").trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("\0")) {
+    const error = new Error("Adopt comment must not contain null bytes.");
+    error.code = "INVALID_ADOPT_COMMENT";
+    throw error;
+  }
+  if (trimmed.length > ADOPT_COMMENT_MAX) {
+    const error = new Error(`Adopt comment exceeds ${ADOPT_COMMENT_MAX} characters.`);
+    error.code = "INVALID_ADOPT_COMMENT";
+    throw error;
+  }
+  return trimmed;
+}
+
+function buildAdoptMergeMessage({ yours, theirs, comment = null } = {}) {
+  const subject = `Adopt ${theirs} into ${yours}`;
+  if (!comment) return subject;
+  return `${subject}\n\n${comment}`;
+}
+
 /**
  * Adopt *theirs* into the current branch (git merge). Host-controlled; no push.
+ * Optional comment is recorded on the merge commit (forces --no-ff when present).
  */
-function planWorkspaceAdopt(root, { theirs, apply = false, force = false } = {}) {
+function planWorkspaceAdopt(root, { theirs, apply = false, force = false, comment = null } = {}) {
   const projectRoot = path.resolve(root);
   const before = collectWorkspace(projectRoot);
   const targetName = typeof theirs === "string" ? theirs.trim() : "";
+  let adoptComment = null;
+  try {
+    adoptComment = normalizeAdoptComment(comment);
+  } catch (error) {
+    return {
+      version: 1,
+      action: "adopt",
+      apply: Boolean(apply),
+      force: Boolean(force),
+      root: projectRoot,
+      yours: before.available
+        ? {
+            branch: before.branch,
+            commit: before.commit,
+            shortCommit: before.shortCommit,
+            dirty: before.dirty,
+            changedFiles: before.changedFiles,
+          }
+        : null,
+      theirs: null,
+      review: null,
+      comment: null,
+      blockedReasons: [error.message],
+      status: "blocked",
+      workspace: before,
+    };
+  }
 
   const base = {
     version: 1,
@@ -318,6 +373,7 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false } = {})
       : null,
     theirs: null,
     review: null,
+    comment: adoptComment,
     blockedReasons: [],
   };
 
@@ -379,20 +435,32 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false } = {})
     };
   }
 
+  const mergeMessage = buildAdoptMergeMessage({
+    yours: before.branch,
+    theirs: target.name,
+    comment: adoptComment,
+  });
+  base.mergeMessage = mergeMessage;
+
   if (!apply) {
     return {
       ...base,
       status: "ready",
       explanation: `Ready to merge ${target.name} into ${before.branch}` +
         (review.summary?.filesChanged
-          ? ` (${review.summary.filesChanged} files, +${review.summary.additions}/-${review.summary.deletions}).`
-          : " (no unique file changes — may still fast-forward/record merge)."),
+          ? ` (${review.summary.filesChanged} files, +${review.summary.additions}/-${review.summary.deletions})`
+          : " (no unique file changes — may still fast-forward/record merge)") +
+        (adoptComment ? " with a merge note." : "."),
       workspace: before,
     };
   }
 
   try {
-    runGit(projectRoot, ["merge", "--no-edit", "--", target.name], { allowFailure: false });
+    // A comment must land on a merge commit, so force --no-ff when one is provided.
+    const mergeArgs = adoptComment
+      ? ["merge", "--no-ff", "-m", mergeMessage, "--", target.name]
+      : ["merge", "--no-edit", "--", target.name];
+    runGit(projectRoot, mergeArgs, { allowFailure: false });
   } catch (error) {
     // Leave conflict state visible; agent/host must resolve with plain git.
     return {
@@ -410,7 +478,8 @@ function planWorkspaceAdopt(root, { theirs, apply = false, force = false } = {})
   return {
     ...base,
     status: "applied",
-    explanation: `Adopted ${target.name} into ${after.branch} @ ${after.shortCommit || after.commit}.`,
+    explanation: `Adopted ${target.name} into ${after.branch} @ ${after.shortCommit || after.commit}` +
+      (adoptComment ? " (merge note recorded)." : "."),
     workspace: after,
   };
 }
@@ -426,10 +495,11 @@ function formatAdoptPlan(plan) {
       `Diff: ${plan.review.summary.filesChanged} files · +${plan.review.summary.additions}/-${plan.review.summary.deletions}`,
     );
   }
+  if (plan.comment) lines.push(`Note: ${plan.comment}`);
   if (plan.explanation) lines.push(plan.explanation);
   for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
   if (plan.status === "ready") {
-    lines.push("Apply with: npm run harness -- workspace --adopt <branch> --apply");
+    lines.push("Apply with: npm run harness -- workspace --adopt <branch> --apply [--note \"…\"]");
   }
   if (plan.workspace?.available && plan.status === "applied") {
     lines.push(formatWorkspace(plan.workspace));
@@ -808,6 +878,7 @@ function formatWorkspace(workspace) {
 }
 
 export {
+  buildAdoptMergeMessage,
   buildWorkspaceReview,
   collectGit,
   collectWorkspace,
@@ -818,6 +889,7 @@ export {
   formatWorkspaceReview,
   isSafeBranchName,
   listLocalBranches,
+  normalizeAdoptComment,
   planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,

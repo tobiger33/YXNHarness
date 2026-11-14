@@ -298,6 +298,14 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     adopt: "feature/demo",
     apply: true,
   });
+  assert.deepEqual(parseArgs(["workspace", "--adopt", "feature/demo", "--apply", "--note", "keep the header"]), {
+    ...base,
+    action: "workspace",
+    adopt: "feature/demo",
+    apply: true,
+    note: "keep the header",
+  });
+  assert.throws(() => parseArgs(["workspace", "--note", "x"]), /only valid with workspace --adopt/);
   assert.deepEqual(parseArgs(["handoff", "--from", "last-green", "--apply", "--note", "fix mobile"]), {
     ...base,
     action: "handoff",
@@ -554,6 +562,40 @@ test("workspace collects read-only git branch inventory", async () => {
     assert.equal(adopted.status, "applied");
     assert.equal(collectWorkspace(root).branch, "feature/from-main");
     assert.equal(await readFile(path.join(root, "demo.txt"), "utf8"), "from-demo\n");
+
+    // Second diverge + adopt with a merge note (forces merge commit).
+    git(["checkout", "-b", "feature/noted"]);
+    await writeFile(path.join(root, "noted.txt"), "noted\n");
+    git(["add", "noted.txt"]);
+    git(["commit", "-m", "noted change"]);
+    git(["checkout", "feature/from-main"]);
+    const notedPreview = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: false,
+      comment: "Keep layout; tweak copy later.",
+    });
+    assert.equal(notedPreview.status, "ready");
+    assert.equal(notedPreview.comment, "Keep layout; tweak copy later.");
+    assert.match(notedPreview.mergeMessage, /Keep layout/);
+
+    const noted = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: true,
+      comment: "Keep layout; tweak copy later.",
+    });
+    assert.equal(noted.status, "applied");
+    assert.equal(noted.comment, "Keep layout; tweak copy later.");
+    const log = git(["log", "-1", "--pretty=%B"]);
+    assert.match(log, /Adopt feature\/noted into feature\/from-main/);
+    assert.match(log, /Keep layout; tweak copy later/);
+    assert.equal(await readFile(path.join(root, "noted.txt"), "utf8"), "noted\n");
+
+    const tooLong = planWorkspaceAdopt(root, {
+      theirs: "feature/noted",
+      apply: false,
+      comment: "x".repeat(2001),
+    });
+    assert.equal(tooLong.status, "blocked");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
