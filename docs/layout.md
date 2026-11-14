@@ -122,3 +122,13 @@ elements array; grouped comments preserve all members in feedback appState.
 The rectangle is a thin, non-interactive outline with a very light fill; actions
 and metadata stay above the preview and in the composer. The composer uses a
 neutral outer focus treatment instead of a blue outline around its textarea.
+
+Selection hit testing excludes structural screen/form/fieldset wrappers. For
+nested enclosed targets, the smallest concrete control or content wins. Text
+selection tests the painted text bounds, so a narrow rectangle around visible
+text does not require enclosing its full-width block. Blank clicks or empty
+rectangles never fall back to the screen container. Movement is checked again
+on pointer release to distinguish quick drags from clicks. A 350ms stationary
+press commits the precise target once; release does not toggle it off. Hover
+highlighting settles after 100ms without automatically adding context. A reserved
+action slot keeps the canvas stationary while a hold selection is committed.

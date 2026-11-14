@@ -214,3 +214,10 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench.is-selecting #app-preview { touch-action: none; }
 #yxn-workbench.is-marquee-dragging #demo-preview { user-select: none; }
 #yxn-workbench #selection-context-elements { max-height: 70px; overflow: auto; }
+
+/* Keep the canvas still while a hold/drag selection becomes committed. */
+#yxn-workbench .element-actions-slot { display: none; }
+#yxn-workbench.is-selecting .element-actions-slot { display: block; height: 38px; flex-shrink: 0; }
+#yxn-workbench .element-actions { flex-wrap: nowrap; }
+#yxn-workbench .element-actions>span { flex: 1; min-width: 0; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+#yxn-workbench .element-actions button { flex-shrink: 0; white-space: nowrap; }

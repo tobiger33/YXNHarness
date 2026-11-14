@@ -116,8 +116,12 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     root.dispatchEvent(new Event("yxn:preview-route"));
   }
   // The example owns these stable IDs; never infer target app identity from DOM text.
+  const selectable = "[data-demo-element]:not([data-demo-container])";
+  const targetAt = (element) => element.closest(selectable);
   let hovered = null;
+  let hoverTimer;
   function hover(element) {
+    clearTimeout(hoverTimer);
     hovered?.classList.remove("demo-hover");
     hovered = element;
     hovered?.classList.add("demo-hover");
@@ -134,7 +138,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     for (const element of demo.querySelectorAll("[data-demo-element]")) {
       const screen = element.closest("[data-demo-step]")?.dataset.demoStep;
       const route = screen ? `/${screen}` : root.dataset.previewRoute;
-      element.classList.toggle("demo-selected", selected.some((entry) => entry.id === element.dataset.demoElement && entry.route === route));
+      element.classList.toggle("demo-selected", !element.hasAttribute("data-demo-container") && selected.some((entry) => entry.id === element.dataset.demoElement && entry.route === route));
     }
   });
   const marquee = document.createElement("div");
@@ -152,13 +156,22 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     return { left: Math.min(drag.x, x), top: Math.min(drag.y, y), right: Math.max(drag.x, x), bottom: Math.max(drag.y, y) };
   }
   function inside(box) {
-    return [...demo.querySelectorAll("[data-demo-element]")].filter((element) => {
+    const enclosed = [...demo.querySelectorAll(selectable)].filter((element) => {
       if (!element.getClientRects().length) return false;
-      const rect = element.getBoundingClientRect();
+      let rect = element.getBoundingClientRect();
+      if (element.matches("h1,h2,h3,p,legend,b,small")) {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const lines = [...range.getClientRects()].filter((line) => line.width > 0 && line.height > 0);
+        if (lines.length) rect = { left: Math.min(...lines.map((line) => line.left)), top: Math.min(...lines.map((line) => line.top)), right: Math.max(...lines.map((line) => line.right)), bottom: Math.max(...lines.map((line) => line.bottom)), width: rect.width, height: rect.height };
+      }
       return rect.width > 0 && rect.height > 0 && rect.left >= box.left - 1 && rect.top >= box.top - 1 && rect.right <= box.right + 1 && rect.bottom <= box.bottom + 1;
     });
+    // Prefer actual content/controls over any enclosing field or layout wrapper.
+    return enclosed.filter((element) => !enclosed.some((other) => other !== element && element.contains(other)));
   }
   function cancelDrag() {
+    clearTimeout(drag?.holdTimer);
     if (drag && surface.hasPointerCapture(drag.pointerId)) surface.releasePointerCapture(drag.pointerId);
     drag = null;
     marquee.hidden = true;
@@ -170,7 +183,13 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     event.preventDefault();
     suppressClick = true;
     hover(null);
-    drag = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, target: event.target.closest("[data-demo-element]") };
+    drag = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, committed: false, target: targetAt(event.target) };
+    const gesture = drag;
+    gesture.holdTimer = setTimeout(() => {
+      if (drag !== gesture || gesture.moved || !gesture.target) return;
+      chooseMany([gesture.target], "add");
+      gesture.committed = true;
+    }, 350);
     surface.setPointerCapture(event.pointerId);
   });
   surface.addEventListener("pointermove", (event) => {
@@ -178,6 +197,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     const box = boxAt(event);
     if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
     drag.moved = true;
+    clearTimeout(drag.holdTimer);
     root.classList.add("is-marquee-dragging");
     const rect = surface.getBoundingClientRect();
     marquee.hidden = false;
@@ -187,10 +207,11 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   });
   surface.addEventListener("pointerup", (event) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
-    const matched = drag.moved ? inside(boxAt(event)) : drag.target ? [drag.target] : [];
-    const moved = drag.moved;
+    const moved = drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 5;
+    const matched = moved ? inside(boxAt(event)) : drag.target ? [drag.target] : [];
+    const committed = drag.committed;
     cancelDrag();
-    chooseMany(matched, moved ? "add" : "toggle");
+    if (moved || !committed) chooseMany(matched, moved ? "add" : "toggle");
   });
   surface.addEventListener("pointercancel", () => { suppressClick = false; cancelDrag(); });
   surface.addEventListener("lostpointercapture", () => { if (drag) cancelDrag(); });
@@ -200,12 +221,18 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     event.preventDefault(); event.stopPropagation();
     // Keyboard/assistive activation has no preceding pointer gesture.
     if (event.detail === 0) {
-      const element = event.target.closest("[data-demo-element]");
+      const element = targetAt(event.target);
       if (element) choose(element);
     }
   }, true);
   demo.addEventListener("pointerover", (event) => {
-    if (selecting() && !drag) hover(event.target.closest("[data-demo-element]"));
+    if (!selecting() || drag) return;
+    const element = targetAt(event.target);
+    clearTimeout(hoverTimer);
+    if (element === hovered) return;
+    hovered?.classList.remove("demo-hover");
+    hovered = null;
+    hoverTimer = setTimeout(() => { if (selecting() && !drag) hover(element); }, 100);
   });
   demo.addEventListener("pointerleave", () => hover(null));
   root.addEventListener("yxn:selection-clear", () => {
@@ -219,7 +246,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     for (const element of demo.querySelectorAll("[data-demo-element]")) {
       if (selecting()) {
         if (!tabIndices.has(element)) tabIndices.set(element, element.getAttribute("tabindex"));
-        if (!element.matches("button,input,select,textarea,a[href]")) element.tabIndex = 0;
+        if (!element.hasAttribute("data-demo-container") && !element.matches("button,input,select,textarea,a[href]")) element.tabIndex = 0;
       } else if (tabIndices.has(element)) {
         const original = tabIndices.get(element);
         if (original === null) element.removeAttribute("tabindex");
@@ -229,7 +256,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   });
   demo.addEventListener("keydown", (event) => {
     if (!selecting() || !["Enter", " "].includes(event.key)) return;
-    const element = event.target.closest("[data-demo-element]");
+    const element = targetAt(event.target);
     if (!element) return;
     event.preventDefault(); event.stopPropagation();
     choose(element);

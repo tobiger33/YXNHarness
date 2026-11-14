@@ -941,6 +941,7 @@ function renderElementSelection() {
   q("#element-actions").hidden = !selected || !selectedAnchor?.isConnected || !selecting;
   if (!selected) return;
   q("#selected-element-name").textContent = selected.label;
+  q("#selected-element-name").title = selected.label;
   q("#selection-context-name").textContent = selected.label;
   q("#selection-context-branches").textContent = `${selected.source.branch || "Current preview"} → ${state.workspace?.branch || "Current branch"}`;
   const routes = [...new Set((selected.elements || [selected]).map((element) => element.route))];
