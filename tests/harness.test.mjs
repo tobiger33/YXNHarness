@@ -760,3 +760,27 @@ test("setup blocks unsupported projects instead of inventing an app command", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("doctor marks plain existing web apps as agent-attachable", async () => {
+  const fixture = path.resolve("examples/foreign-booking");
+  const report = await inspectProject(fixture);
+  assert.equal(report.project.platform, "web");
+  assert.deepEqual(report.project.commands.start, ["npm", "run", "dev"]);
+  assert.equal(report.agentAttach.mode, "existing-project");
+  assert.equal(report.agentAttach.attachable, true);
+  assert.ok(report.agentAttach.docs.includes("docs/attach-existing.md"));
+  assert.match(report.agentAttach.note, /coding agent performs attach/i);
+
+  const steps = explainNextSteps({
+    ...report,
+    harness: {
+      ...report.harness,
+      configExists: false,
+      controlSurface: { status: "no-reference", files: [] },
+    },
+  });
+  const control = steps.find((step) => step.id === "control-surface");
+  assert.ok(control);
+  assert.match(control.why, /AGENT TASK/);
+  assert.ok(Array.isArray(control.agentChecklist) && control.agentChecklist.length >= 3);
+});

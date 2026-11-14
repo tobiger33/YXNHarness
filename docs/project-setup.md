@@ -1,9 +1,10 @@
 # Inspecting and setting up a project
 
 The host (the person who starts or owns the project) decides what gets configured.
-Their trusted coding agent may execute the steps after explaining them. Nothing
-should be opaque: every command either explains itself or asks before changing
-the machine.
+Their trusted coding agent executes the steps after explaining them — including
+attaching to repos that never started as harness projects (see
+[`attach-existing.md`](attach-existing.md)). Nothing should be opaque: every
+command either explains itself or asks before changing the machine.
 
 ## 1. Inspect (read-only)
 

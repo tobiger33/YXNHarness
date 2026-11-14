@@ -288,8 +288,17 @@ export async function inspectProject(rootPath) {
       startupTimeoutMs: 20000,
     },
   } : null;
-  if (setupConfig && !selectedFramework) warnings.push("No web framework was identified; the suggested port 4173 is a placeholder and must be checked.");
+  if (setupConfig && !selectedFramework) warnings.push("No web framework was identified; the suggested port 4173 is a placeholder and must be checked by the agent against the real start command.");
   if (setupConfig && selectedFramework) warnings.push(`The suggested URL uses ${selectedFramework.name}'s default port; verify it against the project's dev-server configuration.`);
+
+  const entrypoints = await detectEntrypoints(root);
+  const platform = frameworks.some(({ name }) => name === "React Native" || name === "Expo")
+    ? "mobile"
+    : frameworks.length || entrypoints.includes("index.html") || Boolean(command.start)
+      ? "web"
+      : languageMarkers.length
+        ? "non-web-or-undetected"
+        : "unknown";
 
   return {
     version: 1,
@@ -298,15 +307,9 @@ export async function inspectProject(rootPath) {
       name: packageJson?.name || path.basename(root),
       packageManager: manager,
       frameworks,
-      platform: frameworks.some(({ name }) => name === "React Native" || name === "Expo")
-        ? "mobile"
-        : frameworks.length
-          ? "web"
-          : languageMarkers.length
-            ? "non-web-or-undetected"
-            : "unknown",
+      platform,
       languageMarkers,
-      entrypoints: await detectEntrypoints(root),
+      entrypoints,
       commands: {
         start: configuredStart || command.start,
         configuredStart: Boolean(configuredStart),
@@ -333,6 +336,25 @@ export async function inspectProject(rootPath) {
         truncated: sourceEvidence.truncated,
       },
       suggestedConfig: rootFiles.has("harness.config.json") ? null : setupConfig,
+    },
+    agentAttach: {
+      mode: "existing-project",
+      runner: "web-browser",
+      attachable: platform === "web" && Boolean(configuredStart || command.start),
+      controlSurfaceRequired: sourceEvidence.matches.length === 0,
+      forbidden: [
+        "MutationObserver UI rewrites",
+        "DOM/text scraping for product state",
+        "monkeypatching browser APIs for production behavior",
+        "string-replacing another project's templates",
+      ],
+      docs: [
+        "docs/attach-existing.md",
+        "docs/control-convention.md",
+        "docs/project-setup.md",
+      ],
+      exampleAdapter: "examples/foreign-booking/harness-adapter.js",
+      note: "The coding agent performs attach. YXNHarness only supplies doctor/setup/probe/run tools and the control contract — no prescribed app folder layout.",
     },
     warnings,
   };

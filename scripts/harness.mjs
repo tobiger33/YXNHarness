@@ -293,7 +293,14 @@ function explainNextSteps(report) {
     steps.push({
       id: "control-surface",
       command: null,
-      why: "The trusted coding agent must add opt-in window.__harness using the app's own actions/state (see docs/control-convention.md). The harness never rewrites the UI.",
+      why: "AGENT TASK: Inspect the target app's native store/actions, then implement opt-in window.__harness that wraps those APIs (docs/control-convention.md, docs/attach-existing.md). Do not scrape the DOM, patch the renderer, or invent product behavior. Example shape: examples/foreign-booking/harness-adapter.js.",
+      agentChecklist: [
+        "Find the app's real state/actions (store, hooks, reducers, controllers).",
+        "Add an opt-in adapter gated by ?harness=1 or __HARNESS_ENABLED__.",
+        "Expose state(), commands() with payloadSchema, command(), on/off, clock.",
+        "Map only real product operations — never MutationObserver / text scraping.",
+        "Ask the host before large product refactors; keep the adapter thin.",
+      ],
     });
   }
   steps.push({

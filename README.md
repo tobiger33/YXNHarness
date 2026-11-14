@@ -124,6 +124,12 @@ npm run harness -- serve
 
 Open `http://127.0.0.1:8787/` for the UI. See [`docs/cockpit-api.md`](docs/cockpit-api.md).
 
+## Attach to an existing repo
+
+Coding agents attach YXNHarness to arbitrary existing projects (no required
+app layout). See [`docs/attach-existing.md`](docs/attach-existing.md) and the
+stand-in fixture [`examples/foreign-booking`](examples/foreign-booking).
+
 ## Principles
 
 - The user's chosen coding agent remains in control; the harness is the
