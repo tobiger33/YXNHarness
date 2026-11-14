@@ -9,6 +9,7 @@ import {
   collectWorkspace,
   planWorkspaceAdopt,
 } from "./workspace.mjs";
+import { compareRuns } from "./compare-runs.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -139,6 +140,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/workspace/adopt",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
+        "GET /api/v1/compare",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
         "GET /api/v1/artifacts/*",
@@ -297,6 +299,7 @@ function apiIndexPayload(projectRoot) {
       review: "/api/v1/workspace/review?ref=",
       adopt: "/api/v1/workspace/adopt",
       runs: "/api/v1/runs",
+      compare: "/api/v1/compare?baseline=last-green&against=last-run",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
@@ -419,6 +422,15 @@ function createCockpitApi({
           pointers: index.pointers,
           runs: index.runs,
         });
+        return;
+      }
+
+      if (pathname === "/api/v1/compare") {
+        const report = await compareRuns(projectRoot, {
+          baseline: searchParams.get("baseline") || "last-green",
+          against: searchParams.get("against") || "last-run",
+        });
+        sendJson(response, report.status === "blocked" ? 400 : 200, report);
         return;
       }
 
