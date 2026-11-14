@@ -30,6 +30,9 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
 | POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
+| POST | `/api/v1/workspace/fetch` | `{ "apply"?, "remote"?, "prune"? }` — on-demand `git fetch` (remote-tracking only) |
+| GET | `/api/v1/share` | List local share invites |
+| POST | `/api/v1/share` | `{ "apply"?, "force"?, "note"? }` — create view/comment share invite |
 | GET | `/api/v1/runs` | Run index (`?refresh=0` to skip rebuild) |
 | GET | `/api/v1/runs/:runId` | One run + `result.json` |
 | GET | `/api/v1/compare` | `?baseline=&against=` — state + screenshot diff |
@@ -59,4 +62,5 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 agent adapter is connected. Preview/Compare demos are layout examples only.
 
 See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
-[`cockpit-foundation.md`](cockpit-foundation.md), and [`handoff.md`](handoff.md).
+[`share.md`](share.md), [`cockpit-foundation.md`](cockpit-foundation.md), and
+[`handoff.md`](handoff.md).

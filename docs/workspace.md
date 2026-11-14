@@ -130,6 +130,7 @@ npm run harness -- serve
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
 | POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — loopback only |
+| POST | `/api/v1/workspace/fetch` | `{ apply?, remote?, prune? }` — on-demand remote refresh |
 | GET | `/api/v1/overview` | Includes a short `workspace` summary |
 
 Adopt body modes:
@@ -138,13 +139,26 @@ Adopt body modes:
 - `paths: ["a.js"]` (or `path`) → file adopt into the index
 - `path` + `hunks: [1,3]` → hunk adopt into the index
 
-Adopt is the only write route on `serve` for git. Checkout/create stay on the CLI.
+## Fetch (refresh remotes)
+
+```sh
+npm run harness -- workspace --fetch --dry-run
+npm run harness -- workspace --fetch --apply
+npm run harness -- workspace --fetch --remote origin --apply
+```
+
+Updates remote-tracking refs only (optional prune). No checkout, merge, or push.
+Prefer on-demand fetch after a known push — see [`share.md`](share.md).
+
+Adopt and fetch are the git write routes on `serve`. Checkout/create stay on the CLI.
 
 ## What this is not
 
-- Not fetch / push / upstream setup
+- Not push / upstream setup (fetch is supported; push stays plain git)
 - Not hosted preview binding
 - Not interactive `git checkout -p` / conflict auto-resolve
 - Not a substitute for the coding agent's own Git UI
+- Not a background poller
 
-See also [`vision.md`](vision.md) and [`cockpit-foundation.md`](cockpit-foundation.md).
+See also [`vision.md`](vision.md), [`share.md`](share.md), and
+[`cockpit-foundation.md`](cockpit-foundation.md).
