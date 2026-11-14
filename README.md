@@ -142,7 +142,7 @@ npm run harness -- feedback --bundle <threadId> --from last-green --apply
 
 See [`docs/feedback.md`](docs/feedback.md).
 
-Serve the local cockpit shell plus a loopback-only API:
+Serve the local workbench cockpit (Preview / Compare / Changes + Agent panel):
 
 ```sh
 npm run harness -- serve
