@@ -55,6 +55,10 @@ test("preview preserves native multi-page navigation and only selects on explici
     assert.equal(await page.locator('input[value="overview"]').isChecked(), true, "selection must not change the radio choice");
     await page.locator("#selection-context-clear").click();
     await page.keyboard.press("Escape");
+    // Explicit Interact — Escape alone can race on CI and leave Select armed,
+    // so Continue would select instead of navigating to details.
+    await page.locator("#interact-tool").click();
+    assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
     await page.locator("#inspect-target").click();
     await page.locator('[data-demo-step="details"]').waitFor();
     assert.equal(await page.locator("#context-chips .chip").count(), 0);
