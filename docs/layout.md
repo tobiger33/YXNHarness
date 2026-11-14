@@ -170,3 +170,27 @@ Existing-image upload through Screenshot remains a separate, user-chosen action.
 
 Platform reference: [Chrome Region Capture](https://developer.chrome.com/docs/web-platform/region-capture).
 Actual capture regression: `HARNESS_BROWSER_CHANNEL=chrome node --test tests/cockpit-capture.test.mjs`.
+
+## Screenshot dimensions in agent context
+
+Every image retains its decoded raster width/height in pixels. Project captures
+also retain the actual project surface/iframe client width/height in CSS pixels,
+DPR, captured visible rectangle/offset, timestamp and known route. Capture
+scaling is independent of DPR, so the agent must design against the CSS viewport
+when provided, not the potentially upscaled image dimensions. Uploaded images
+have no invented viewport or DPR. Old attachments remain readable with unknown
+capture metadata.
+
+These values survive reload in IndexedDB, appear in the thumbnail/viewer, and
+are included per attachment in External task text and saved feedback
+`identity.appState.screenshotAttachments`. Element-adaptation requests include
+the same dimensions in their shared task body. Metadata contains no Blob, object
+URL. After upload it uses the server attachment ID and content URL; `localOnly`
+reflects whether upload actually completed. Both raster dimensions and CSS
+capture context remain linked to that attachment in the task and feedback.
+
+Capture consumes the media stream offscreen before committing a region crop,
+then obtains a fresh cropped frame with ImageCapture.grabFrame(). It does not
+wait for unrelated page animation to generate another video callback. Crop/frame
+waits have deadlines, and late ImageBitmaps are closed after timeout. No pixels
+are drawn to the exported canvas before crop success.

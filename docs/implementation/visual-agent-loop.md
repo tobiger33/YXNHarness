@@ -31,8 +31,9 @@ opt-in adapter. Do not replace it with the PULS example or assume a frontend sta
 7. The future real agent reports activity and proposed files. The user reviews
    Changes and the running Preview before accepting an implementation.
 
-Screenshots appear as thumbnails and reopen from composer/message. Local Blob
-storage is already implemented; it is not server storage or a model upload.
+Screenshots appear as thumbnails and reopen from composer/message. Drafts retain
+local Blob storage and upload to the attachment API before sending. Server
+storage alone does not send pixels to a model; that requires an image-capable adapter.
 
 ## Already implemented: reuse these
 
@@ -136,3 +137,14 @@ the current single-route backend endpoint. Group comments currently retain membe
 `identity.appState.selectedElements` alongside the primary element identity.
 The live inspector contract must support equivalent multi-selection payloads
 rather than reducing a dragged group to a single element.
+
+## UI update: screenshot sizing contract
+
+Local attachment metadata now includes `image.{width,height,unit:"px"}` plus,
+for native project captures, `viewport.{width,height,unit:"css-px",kind}`,
+`devicePixelRatio`, `captureRect` (CSS pixels and offset), `imageToCssScale`,
+`capturedAt`, and `route`. Uploaded images report unknown viewport/DPR; never
+infer CSS size from raster dimensions. External task text and feedback
+`identity.appState.screenshotAttachments` already carry this context. Preserve
+these fields alongside server attachment IDs and content URLs. The agent
+should target the recorded CSS viewport and use image pixels as visual evidence.

@@ -265,3 +265,4 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench.is-capturing-project #demo-preview .demo-hover,
 #yxn-workbench.is-capturing-project #demo-preview .demo-selected,
 #yxn-workbench.is-capturing-project #demo-preview .demo-candidate { outline: none; }
+#yxn-workbench .attachment-resolution { display: block; width: 100%; padding: 0 6px 4px; color: var(--faint); font-size: 10px; }

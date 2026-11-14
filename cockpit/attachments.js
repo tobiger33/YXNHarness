@@ -48,7 +48,7 @@ export function mountAttachments(root, notify) {
       ? Math.max(1, Math.round(item.byteSize / 1024))
       : Math.max(1, Math.round((item.blob?.size || 0) / 1024));
     const place = item.serverId ? "Stored attachment" : "Local draft";
-    details.textContent = `${item.width} × ${item.height} · ${sizeLabel} KB · ${place}`;
+    details.textContent = `Image: ${item.width} × ${item.height} px · ${item.capture?.viewport ? `Project: ${item.capture.viewport.width} × ${item.capture.viewport.height} CSS px · DPR ${item.capture.devicePixelRatio} · ` : "Project viewport unknown · "}${sizeLabel} KB · ${place}`;
     viewerImage.src = item.contentUrl || item.url;
     viewerImage.alt = item.name;
     if (!dialog.open) dialog.showModal();
@@ -72,7 +72,10 @@ export function mountAttachments(root, notify) {
       : item.uploadStatus === "error"
         ? "Upload failed"
         : item.name;
-    preview.append(image, caption);
+    const resolution = document.createElement("small");
+    resolution.className = "attachment-resolution";
+    resolution.textContent = `${item.width} × ${item.height} px`;
+    preview.append(image, caption, resolution);
     preview.onclick = () => open(item);
     card.append(preview);
     if (item.uploadStatus === "error") {
@@ -160,6 +163,7 @@ export function mountAttachments(root, notify) {
           serverId: item.serverId,
           contentUrl: item.contentUrl,
           byteSize: item.byteSize,
+          capture: item.capture || null,
           uploadStatus: "ready",
         }));
       } catch {
@@ -185,12 +189,12 @@ export function mountAttachments(root, notify) {
     render();
   }).catch(() => notify("Saved image attachments could not be restored."));
 
-  function addFiles(files) {
+  function addFiles(files, capture = null) {
     const generation = revision;
-    ingestion = ingestion.then(() => readFiles([...files], generation));
+    ingestion = ingestion.then(() => readFiles([...files], generation, capture));
     return ingestion;
   }
-  async function readFiles(files, generation) {
+  async function readFiles(files, generation, capture) {
     await ready;
     for (const file of files) {
       if (generation !== revision) return;
@@ -207,6 +211,7 @@ export function mountAttachments(root, notify) {
           width: bitmap.width,
           height: bitmap.height,
           uploadStatus: "pending",
+          capture,
         };
         bitmap.close();
         if (generation !== revision) return;
@@ -255,7 +260,7 @@ export function mountAttachments(root, notify) {
     if (captureBusy) return;
     const target = projectTarget();
     if (!target) { notify("Open the project Preview before capturing an image."); return; }
-    if (!navigator.mediaDevices?.getDisplayMedia || typeof globalThis.CropTarget?.fromElement !== "function") {
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof globalThis.CropTarget?.fromElement !== "function" || typeof globalThis.ImageCapture !== "function") {
       notify("Project-only capture is unavailable in this browser. Use a supporting browser or attach an already cropped project image.");
       return;
     }
@@ -265,6 +270,7 @@ export function mountAttachments(root, notify) {
     const generation = revision;
     let stream;
     let video;
+    let frame;
     try {
       const cropPromise = CropTarget.fromElement(target).then((value) => ({ value }), (error) => ({ error }));
       // The native picker is invoked in the user's click gesture. No uncropped image is ever saved.
@@ -276,29 +282,57 @@ export function mountAttachments(root, notify) {
       if (!track || typeof track.cropTo !== "function" || track.getSettings().displaySurface !== "browser") throw new Error("Select the current browser tab for project-only capture.");
       if (projectTarget() !== target || generation !== revision) throw new Error("The project changed during capture. Try again in the current Preview.");
       root.classList.add("is-capturing-project");
-      await track.cropTo(cropTarget);
+      // Consume the stream offscreen so cropTo can commit on an active frame pipeline.
+      // Never draw or persist a frame before cropping has succeeded.
       video = document.createElement("video");
       video.muted = true;
       video.srcObject = stream;
       await video.play();
-      if (video.requestVideoFrameCallback) await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("No project image received. Try again.")), 5000);
-        video.requestVideoFrameCallback(() => { clearTimeout(timer); resolve(); });
+      let cropTimeout;
+      try {
+        await Promise.race([track.cropTo(cropTarget), new Promise((_, reject) => {
+          cropTimeout = setTimeout(() => reject(new Error("Project cropping did not finish. No image was attached.")), 5000);
+        })]);
+      } finally { clearTimeout(cropTimeout); }
+      // Static pages may not produce another video callback; grab a fresh cropped track frame.
+      let frameExpired = false;
+      let frameTimeout;
+      const pendingFrame = new ImageCapture(track).grabFrame().then((bitmap) => {
+        if (frameExpired) { bitmap.close(); return null; }
+        return bitmap;
       });
+      try {
+        frame = await Promise.race([pendingFrame, new Promise((_, reject) => {
+          frameTimeout = setTimeout(() => { frameExpired = true; reject(new Error("No cropped project image received. Try again.")); }, 5000);
+        })]);
+      } finally { clearTimeout(frameTimeout); }
+      if (!frame) throw new Error("No cropped project image received.");
       if (projectTarget() !== target || generation !== revision) throw new Error("The project changed during capture. No image was attached.");
       const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      canvas.width = frame.width;
+      canvas.height = frame.height;
       if (!canvas.width || !canvas.height) throw new Error("No project image received.");
-      canvas.getContext("2d").drawImage(video, 0, 0);
+      const bounds = target.getBoundingClientRect();
+      const clip = root.querySelector("#screen-preview").getBoundingClientRect();
+      const left = Math.max(bounds.left, clip.left, 0), top = Math.max(bounds.top, clip.top, 0);
+      const right = Math.min(bounds.right, clip.right, innerWidth), bottom = Math.min(bounds.bottom, clip.bottom, innerHeight);
+      const capture = {
+        capturedAt: new Date().toISOString(), route: root.dataset.previewRoute || null,
+        viewport: { width: target.clientWidth, height: target.clientHeight, unit: "css-px", kind: target.id === "live-preview" ? "app-iframe" : "example-surface" },
+        devicePixelRatio: window.devicePixelRatio,
+        rect: { x: Math.max(0, left - bounds.left), y: Math.max(0, top - bounds.top), width: Math.max(0, right - left), height: Math.max(0, bottom - top), unit: "css-px" },
+      };
+      canvas.getContext("2d").drawImage(frame, 0, 0);
+      frame.close(); frame = null;
       stream.getTracks().forEach((track) => track.stop());
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!blob) throw new Error("Project image could not be created.");
       if (generation !== revision) return;
-      await addFiles([new File([blob], `Project-${new Date().toISOString().replaceAll(":", "-")}.png`, { type: "image/png" })]);
+      await addFiles([new File([blob], `Project-${new Date().toISOString().replaceAll(":", "-")}.png`, { type: "image/png" })], capture);
     } catch (error) {
       if (error.name !== "NotAllowedError" && error.name !== "AbortError") notify(error.message || "Project-only capture failed. No full workspace screenshot was attached.");
     } finally {
+      frame?.close();
       stream?.getTracks().forEach((track) => track.stop());
       if (video) video.srcObject = null;
       root.classList.remove("is-capturing-project");
@@ -343,6 +377,18 @@ export function mountAttachments(root, notify) {
       }
       return items.map((item) => item.serverId);
     },
+    metadata: () => items.map((item) => ({
+      id: item.serverId || item.id, name: item.name, mimeType: item.blob.type, sizeBytes: item.blob.size,
+      image: { width: item.width, height: item.height, unit: "px" },
+      viewport: item.capture?.viewport || null,
+      devicePixelRatio: item.capture?.devicePixelRatio ?? null,
+      captureRect: item.capture?.rect || null,
+      imageToCssScale: item.capture?.rect?.width && item.capture?.rect?.height ? { x: item.width / item.capture.rect.width, y: item.height / item.capture.rect.height } : null,
+      capturedAt: item.capture?.capturedAt || null,
+      route: item.capture?.route || null,
+      localOnly: !item.serverId,
+      contentUrl: item.contentUrl || null,
+    })),
     async clear() {
       revision += 1;
       await ready;

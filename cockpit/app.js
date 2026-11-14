@@ -754,6 +754,19 @@ async function sendMessage() {
       thought.textContent = "Uploading images…";
       attachmentIds = await attachments.ensureUploaded();
     }
+    const imageAttachments = attachments.metadata();
+    const imageContext = imageAttachments.map((image) => {
+      const fields = [`${image.name}: image ${image.image.width} × ${image.image.height} px`];
+      if (image.viewport) {
+        fields.push(`project viewport ${image.viewport.width} × ${image.viewport.height} CSS px (${image.viewport.kind})`);
+        fields.push(`DPR ${image.devicePixelRatio ?? "unknown"}`);
+        if (image.captureRect) fields.push(`captured region ${Math.round(image.captureRect.width)} × ${Math.round(image.captureRect.height)} CSS px at ${Math.round(image.captureRect.x)},${Math.round(image.captureRect.y)}`);
+        fields.push(`route ${image.route || "unknown"}`, "design against the CSS viewport, not scaled image pixels");
+      } else fields.push("original project viewport unknown (uploaded image)", "do not assume image pixels equal CSS pixels");
+      fields.push(image.localOnly ? "local attachment; attach the image separately if using an external agent" : `stored attachment ${image.id}; image access depends on the agent adapter`);
+      return fields.join("; ");
+    }).join("\n");
+    const requestBody = [value, imageContext ? `Screenshot context:\n${imageContext}` : ""].filter(Boolean).join("\n\n");
     if (state.mode === "external") {
       const payload = document.createElement("textarea");
       payload.rows = 6;
@@ -778,6 +791,7 @@ async function sendMessage() {
             "Images are stored under /api/v1/attachments/:id/content. An agent receives pixels only when its adapter supports images — do not treat filenames as transmitted images.",
           ]
           : (attachments.names().length ? [`Local images (upload failed or pending): ${attachments.names().join(", ")}`] : [])),
+        ...(imageContext ? [`Screenshot dimensions:\n${imageContext}`] : []),
         `Model preference: ${state.model} / ${state.reasoning}`,
         "",
         value,
@@ -807,7 +821,7 @@ async function sendMessage() {
       for (const element of selection.elements || [selection]) {
         const source = element.source || selection.source;
         const identity = JSON.stringify([element.route, source.branch, source.commit]);
-        if (!groups.has(identity)) groups.set(identity, { elements: [], body: value, route: element.route, viewport: q("#device").value, sourceBranch: source.branch, sourceCommit: source.commit, withHandoff: false, attachmentIds });
+        if (!groups.has(identity)) groups.set(identity, { elements: [], body: requestBody, route: element.route, viewport: q("#device").value, sourceBranch: source.branch, sourceCommit: source.commit, withHandoff: false, attachmentIds });
         groups.get(identity).elements.push({ id: element.id, kind: element.kind, label: element.label, source: { ...source, elementId: element.id } });
       }
       for (const payload of groups.values()) {
@@ -833,12 +847,15 @@ async function sendMessage() {
       await refreshFeedbackOnly();
     } else {
       const plan = await apiPost("/api/v1/feedback", {
-        body: value,
+        body: requestBody,
         apply: true,
         route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
         element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
         source: selection?.source || null,
-        appState: selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : null,
+        appState: selection?.elements?.length || imageAttachments.length ? {
+          ...(selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : {}),
+          ...(imageAttachments.length ? { screenshotAttachments: imageAttachments } : {}),
+        } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
