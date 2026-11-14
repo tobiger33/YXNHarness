@@ -1,8 +1,12 @@
 # Control convention
 
-`window.__harness` is the explicit, framework-neutral control surface that lets
-a runner or coding agent observe and operate an app without reverse-engineering
-its DOM.
+`window.__harness` is the **web binding** of the language-neutral harness
+control surface. It lets a runner or coding agent observe and operate an app
+without reverse-engineering its DOM.
+
+The same semantic contract (state / commands / command / events / clock) applies
+to Swift, Kotlin, Dart, and other languages — see [`platforms.md`](platforms.md).
+Only the web binding is runnable with the shipped browser runner today.
 
 ## Opt-in
 

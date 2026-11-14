@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  detectLanguages,
+  detectPlatformHints,
+  recommendRunners,
+  summarizeAttach,
+} from "./platforms.mjs";
 
 const IGNORED_DIRECTORIES = new Set([
   ".git", ".harness", ".next", ".nuxt", ".svelte-kit", ".turbo",
@@ -8,13 +14,20 @@ const IGNORED_DIRECTORIES = new Set([
   "scripts", "test", "tests", "vendor",
 ]);
 const SOURCE_EXTENSIONS = new Set([
-  ".astro", ".cjs", ".css", ".dart", ".html", ".js", ".jsx", ".kt",
-  ".mjs", ".py", ".svelte", ".swift", ".ts", ".tsx", ".vue",
+  ".astro", ".cjs", ".cs", ".css", ".dart", ".go", ".html", ".java", ".js",
+  ".jsx", ".kt", ".kts", ".m", ".mjs", ".mm", ".py", ".rs", ".svelte",
+  ".swift", ".ts", ".tsx", ".vue",
 ]);
 const CONTROL_SURFACE_PATTERNS = [
   /window\s*\.\s*__harness\b/,
   /__HARNESS_ENABLED__/,
   /exposeHarness\s*\(/,
+  /protocol\s+HarnessControlling\b/,
+  /interface\s+HarnessControlling\b/,
+  /struct\s+HarnessBridge\b/,
+  /class\s+HarnessBridge\b/,
+  /yxnHarnessEnabled\b/,
+  /HarnessControlSurface\b/,
 ];
 const FRAMEWORKS = [
   { packageName: "next", name: "Next.js", port: 3000 },
@@ -156,6 +169,9 @@ function detectEntrypoints(rootPath) {
     "src/index.tsx", "src/index.ts", "src/index.jsx", "src/index.js",
     "src/App.tsx", "src/App.jsx", "app/page.tsx", "app/page.jsx",
     "pages/_app.tsx", "pages/_app.jsx", "public/index.html",
+    "Package.swift", "App.swift", "ContentView.swift",
+    "android/app/src/main/AndroidManifest.xml",
+    "pubspec.yaml",
   ];
   return Promise.all(candidates.map(async (candidate) => {
     try {
@@ -164,16 +180,6 @@ function detectEntrypoints(rootPath) {
       return null;
     }
   })).then((found) => found.filter(Boolean));
-}
-
-function detectLanguageMarkers(fileNames) {
-  return [
-    ...(fileNames.some((file) => file.endsWith(".py") || file === "pyproject.toml") ? ["Python"] : []),
-    ...(fileNames.some((file) => file.endsWith(".swift") || file.endsWith(".xcodeproj")) ? ["Swift"] : []),
-    ...(fileNames.some((file) => file.endsWith(".dart") || file === "pubspec.yaml") ? ["Dart/Flutter"] : []),
-    ...(fileNames.some((file) => file.endsWith(".csproj")) ? [".NET"] : []),
-    ...(fileNames.some((file) => file.includes("build.gradle") || file.includes("settings.gradle")) ? ["Android/Gradle"] : []),
-  ];
 }
 
 function frameworkCandidates(packageJson) {
@@ -259,8 +265,23 @@ export async function inspectProject(rootPath) {
   const branch = gitRoot ? runGit(root, ["branch", "--show-current"]) : null;
   const gitStatus = gitRoot ? runGit(root, ["status", "--porcelain=v1"]) : null;
   const sourceEvidence = await findSourceEvidence(root);
-  const languageMarkers = detectLanguageMarkers(rootEntries);
+  const entrypoints = await detectEntrypoints(root);
+  const languageMarkers = detectLanguages(rootEntries);
   const configExists = rootFiles.has("harness.config.json");
+  const platformInfo = detectPlatformHints({
+    frameworks,
+    languages: languageMarkers,
+    entrypoints,
+    fileNames: rootEntries,
+    hasNodeStart: Boolean(command.start || configuredStart),
+  });
+  const runners = recommendRunners(platformInfo);
+  const agentAttach = summarizeAttach({
+    platformInfo,
+    runners,
+    controlSurfaceFound: sourceEvidence.matches.length > 0,
+    hasStartCommand: Boolean(configuredStart || command.start),
+  });
 
   const warnings = [];
   if (packageJsonError) warnings.push(`package.json could not be parsed: ${packageJsonError}`);
@@ -272,15 +293,24 @@ export async function inspectProject(rootPath) {
   if (rootFiles.has("harness.config.json") && !configValid && !configError) {
     warnings.push("harness.config.json is missing a valid version, loopback URL, or app.start argument array.");
   }
-  if (!command.start && !configuredStart) warnings.push("No supported Node.js development script was detected; app startup needs a project-specific command.");
+  if (!command.start && !configuredStart) {
+    warnings.push(platformInfo.primary === "web"
+      ? "No supported Node.js development script was detected; app startup needs a project-specific command."
+      : "No start command was inferred for this platform; native/desktop launchers need an explicit harness config once their runner ships.");
+  }
   const isMobile = frameworks.some(({ name }) => name === "React Native" || name === "Expo");
   if (isMobile) warnings.push("The browser runner does not yet support native/mobile app launchers; no automatic app config was suggested.");
+  if (agentAttach.plannedOnly) {
+    warnings.push(`Recommended runner "${agentAttach.runner}" is planned — implement the semantic control contract in the app language, but do not claim browser attach for this surface yet.`);
+  }
   if (sourceEvidence.truncated) warnings.push("Control-surface source scan reached its safety limit; results may be incomplete.");
-  if (sourceEvidence.matches.length === 0) warnings.push("No explicit __harness control surface was found in the scanned source.");
+  if (sourceEvidence.matches.length === 0) {
+    warnings.push("No explicit harness control surface was found in the scanned source (web: window.__harness; Swift: HarnessControlling / HarnessBridge).");
+  }
   if (!gitRoot) warnings.push("This directory is not inside a Git repository.");
 
   const selectedFramework = frameworks.find(({ name }) => name !== "React Native" && name !== "Expo") || null;
-  const setupConfig = command.start && !isMobile ? {
+  const setupConfig = command.start && !isMobile && platformInfo.hints.hasWeb ? {
     version: 1,
     app: {
       start: command.start,
@@ -291,15 +321,6 @@ export async function inspectProject(rootPath) {
   if (setupConfig && !selectedFramework) warnings.push("No web framework was identified; the suggested port 4173 is a placeholder and must be checked by the agent against the real start command.");
   if (setupConfig && selectedFramework) warnings.push(`The suggested URL uses ${selectedFramework.name}'s default port; verify it against the project's dev-server configuration.`);
 
-  const entrypoints = await detectEntrypoints(root);
-  const platform = frameworks.some(({ name }) => name === "React Native" || name === "Expo")
-    ? "mobile"
-    : frameworks.length || entrypoints.includes("index.html") || Boolean(command.start)
-      ? "web"
-      : languageMarkers.length
-        ? "non-web-or-undetected"
-        : "unknown";
-
   return {
     version: 1,
     root,
@@ -307,7 +328,8 @@ export async function inspectProject(rootPath) {
       name: packageJson?.name || path.basename(root),
       packageManager: manager,
       frameworks,
-      platform,
+      platform: platformInfo.primary,
+      platforms: platformInfo.platforms,
       languageMarkers,
       entrypoints,
       commands: {
@@ -337,25 +359,7 @@ export async function inspectProject(rootPath) {
       },
       suggestedConfig: rootFiles.has("harness.config.json") ? null : setupConfig,
     },
-    agentAttach: {
-      mode: "existing-project",
-      runner: "web-browser",
-      attachable: platform === "web" && Boolean(configuredStart || command.start),
-      controlSurfaceRequired: sourceEvidence.matches.length === 0,
-      forbidden: [
-        "MutationObserver UI rewrites",
-        "DOM/text scraping for product state",
-        "monkeypatching browser APIs for production behavior",
-        "string-replacing another project's templates",
-      ],
-      docs: [
-        "docs/attach-existing.md",
-        "docs/control-convention.md",
-        "docs/project-setup.md",
-      ],
-      exampleAdapter: "examples/foreign-booking/harness-adapter.js",
-      note: "The coding agent performs attach. YXNHarness only supplies doctor/setup/probe/run tools and the control contract — no prescribed app folder layout.",
-    },
+    agentAttach,
     warnings,
   };
 }
@@ -374,11 +378,11 @@ export async function setupProject(rootPath, { apply = false } = {}) {
     writes: [],
     config: configExists ? null : diagnosis.harness.suggestedConfig,
     requiredAgentWork: diagnosis.harness.controlSurface.status === "reference-found"
-      ? ["Review the detected source references and verify the full documented control contract."]
+      ? ["Review the detected source references and verify the full documented control contract (docs/platforms.md)."]
       : [
-        "Add an opt-in window.__harness adapter using the target app's own actions and state.",
+        "Add an opt-in harness control surface in the app's language using its own actions and state (web: window.__harness; Swift: HarnessControlling).",
         "Expose serializable state(), discoverable commands(), structured command results, events, and clock methods.",
-        "Add a scenario that exercises the real user flow; do not infer app state from rendered DOM.",
+        "Add a scenario that exercises the real user flow; do not infer app state from rendered UI trees.",
       ],
     warnings: [...diagnosis.warnings],
   };
@@ -422,7 +426,9 @@ export function formatDoctorReport(report) {
   const lines = [
     `Project: ${report.project.name}`,
     `Root: ${report.root}`,
-    `Platform: ${report.project.platform}`,
+    `Platform: ${report.project.platform}${report.project.platforms?.length ? ` (${report.project.platforms.join(", ")})` : ""}`,
+    `Languages: ${report.project.languageMarkers.join(", ") || "not detected"}`,
+    `Runner: ${report.agentAttach?.runner || "none"}${report.agentAttach?.attachable ? " · attachable" : report.agentAttach?.plannedOnly ? " · planned" : ""}`,
     `Frameworks: ${report.project.frameworks.map(({ name }) => name).join(", ") || "not detected"}`,
     `Package manager: ${report.project.packageManager.name || "not detected"}`,
     `Git: ${report.project.git.available ? `${report.project.git.branch || "(detached)"}${report.project.git.dirty ? ` · ${report.project.git.changedFiles} changed files` : " · clean"}` : "not detected"}`,

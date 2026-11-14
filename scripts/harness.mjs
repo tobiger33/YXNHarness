@@ -524,12 +524,13 @@ function explainNextSteps(report) {
     steps.push({
       id: "control-surface",
       command: null,
-      why: "AGENT TASK: Inspect the target app's native store/actions, then implement opt-in window.__harness that wraps those APIs (docs/control-convention.md, docs/attach-existing.md). Do not scrape the DOM, patch the renderer, or invent product behavior. Example shape: examples/foreign-booking/harness-adapter.js.",
+      why: "AGENT TASK: Inspect the target app's native store/actions, then implement an opt-in harness control surface in that language (web: window.__harness; Swift: HarnessControlling — docs/platforms.md, docs/control-convention.md). Do not scrape rendered UI, patch the renderer, or invent product behavior. Examples: examples/foreign-booking/harness-adapter.js, examples/swift-control-surface/.",
       agentChecklist: [
-        "Find the app's real state/actions (store, hooks, reducers, controllers).",
-        "Add an opt-in adapter gated by ?harness=1 or __HARNESS_ENABLED__.",
+        "Find the app's real state/actions (store, hooks, reducers, controllers, ViewModels).",
+        "Add an opt-in adapter (web: ?harness=1 / __HARNESS_ENABLED__; Swift: yxnHarnessEnabled).",
         "Expose state(), commands() with payloadSchema, command(), on/off, clock.",
-        "Map only real product operations — never MutationObserver / text scraping.",
+        "Map only real product operations — never MutationObserver / view-tree scraping.",
+        "Check agentAttach.runners — only status=ready runners are attachable today.",
         "Ask the host before large product refactors; keep the adapter thin.",
       ],
     });

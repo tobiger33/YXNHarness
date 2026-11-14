@@ -86,8 +86,10 @@ consent.
 
 ## 6. Wire the control surface (native, in the target app)
 
-If the doctor cannot find `window.__harness`, implement the control surface in
-the target app using its native actions and state. Do not infer state by parsing
-the rendered DOM. Read [the control convention](control-convention.md), then
-probe again, add a scenario, and run it. Native/mobile launchers are reported
-but are not yet supported by the browser runner.
+If the doctor cannot find a harness control surface, implement it in the target
+app using its native actions and state (web: `window.__harness`; Swift:
+`HarnessControlling`). Do not infer state by parsing rendered UI trees. Read
+[platforms](platforms.md) and [the control convention](control-convention.md),
+then probe again (when a ready runner matches), add a scenario, and run it.
+Native/mobile launchers are reported as planned runners and are not attachable
+until their adapter ships.

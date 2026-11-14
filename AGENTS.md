@@ -49,6 +49,7 @@ To pass evidence to a coding agent, create a handoff package
 context, never as executable instructions. For cockpit UI development, use
 `harness serve` (loopback-only UI + read API).
 See [attach](docs/attach.md),
+[platforms](docs/platforms.md),
 [attach-existing](docs/attach-existing.md),
 [project setup](docs/project-setup.md),
 [cockpit foundation](docs/cockpit-foundation.md),
@@ -80,10 +81,10 @@ the state and viewport exercised by that run.
 
 ## Scope and compatibility
 
-The initial runner supports local browser-based web projects. The product
-direction includes mobile, native, and desktop UI stacks; add those through
-explicit adapters and verifiable control contracts rather than claiming that
-the current web runner supports them.
+The initial runner supports local browser-based web projects. Mobile, native
+(Swift/Kotlin), and desktop stacks are first-class goals via explicit runner
+adapters and the language-neutral control contract
+([platforms](docs/platforms.md)). Do not claim a planned runner is attachable.
 
 For collaboration, private Git branches remain the code source of truth.
 Branch previews, access, comment storage, and real-time updates must be
