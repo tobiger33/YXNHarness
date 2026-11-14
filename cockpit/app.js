@@ -194,7 +194,11 @@ qa(".panel-splitter").forEach((handle) => {
   handle.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    drag = { start: event.clientX, width: Number(handle.getAttribute("aria-valuenow")) };
+    const current = Number(handle.getAttribute("aria-valuenow"));
+    drag = {
+      start: event.clientX,
+      width: Number.isFinite(current) ? current : (Number(panels[key]) || (side === "left" ? 175 : 315)),
+    };
     handle.setPointerCapture(event.pointerId);
     handle.classList.add("dragging");
     root.classList.add("resizing");
@@ -219,7 +223,8 @@ qa(".panel-splitter").forEach((handle) => {
   handle.addEventListener("pointerup", finish);
   handle.addEventListener("pointercancel", finish);
   handle.addEventListener("lostpointercapture", finish);
-  handle.addEventListener("dblclick", () => {
+  handle.addEventListener("dblclick", (event) => {
+    event.preventDefault();
     panels[key] = side === "left" ? 175 : 315;
     renderPanels();
     persistLayout();
@@ -229,13 +234,14 @@ qa(".panel-splitter").forEach((handle) => {
     event.preventDefault();
     if (event.key === "Enter") return togglePanel(side);
     const limits = panelLimits(side);
-    const current = Number(handle.getAttribute("aria-valuenow"));
-    const step = (event.shiftKey ? 30 : 10) * (side === "left" ? 1 : -1);
+    const current = Number(handle.getAttribute("aria-valuenow")) || Number(panels[key]) || limits.min;
+    // ArrowRight grows the panel under the splitter (left pane / right pane).
+    const delta = (event.shiftKey ? 30 : 10) * (event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0);
     panels[key] = event.key === "Home"
       ? limits.min
       : event.key === "End"
         ? limits.max
-        : clamp(current + (event.key === "ArrowRight" ? step : -step), limits.min, limits.max);
+        : clamp(current + delta, limits.min, limits.max);
     renderPanels();
     persistLayout();
   });

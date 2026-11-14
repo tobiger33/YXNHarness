@@ -10,7 +10,7 @@ The local cockpit follows the accepted workbench design:
 
 ## Layout controls
 
-- Drag the vertical splitters to resize either sidebar
+- Drag the vertical splitters to resize either sidebar (8px hit track, full height)
 - Double-click a splitter to reset (175px left / 315px right)
 - Arrow keys (±10px, Shift ±30px), Home/End, Enter to collapse
 - Top-bar panel buttons always reopen a collapsed pane
