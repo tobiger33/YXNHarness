@@ -53,11 +53,16 @@
       <button class="nav-item" data-nav="feedback"><i data-lucide="messages-square" aria-hidden="true"></i>Feedback<span class="count" id="feedback-count">0</span></button>
       <button class="nav-item" data-nav="reviews"><i data-lucide="git-pull-request" aria-hidden="true"></i>Reviews</button>
       <button class="nav-item" data-nav="runs"><i data-lucide="circle-play" aria-hidden="true"></i>Runs<span class="count" id="runs-count">0</span></button>
-      <div class="section-name branch-label">Branches<span class="count" id="branch-count">0</span></div>
+      <div class="section-name branch-label">Branches
+        <span class="count" id="branch-count">0</span>
+        <span class="grow"></span>
+        <button type="button" class="icon-button" id="workspace-fetch" title="Remotes aktualisieren" aria-label="Remotes aktualisieren"><i data-lucide="refresh-cw" aria-hidden="true"></i></button>
+        <button type="button" class="icon-button" id="workspace-create" title="Neuer Branch" aria-label="Neuer Branch"><i data-lucide="plus" aria-hidden="true"></i></button>
+      </div>
       <div id="branches-list"></div>
       <div class="section-name activity-label">Recent activity</div>
       <div id="recent-activity"></div>
-      <footer class="side-footer"><span class="avatar" id="avatar">YX</span><div>Local workspace<small>Solo mode</small></div><i data-lucide="chevrons-up-down" aria-hidden="true"></i></footer>
+      <footer class="side-footer"><span class="avatar" id="avatar">YX</span><div>YXN workspace<small id="workspace-mode-label">Native Git loop</small></div><i data-lucide="chevrons-up-down" aria-hidden="true"></i></footer>
     </aside>
     <button type="button" class="panel-splitter splitter-left" data-resize-panel="left" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Workspace Breite ändern" aria-controls="workspace-sidebar" title="Ziehen zum Vergrößern · Doppelklick zum Zurücksetzen"></button>
     <main class="stage">
@@ -158,6 +163,7 @@
           <p class="view-note" id="commit-attribution">YXN adds “Summary written by YXN.” to the commit message.</p>
           <div class="change-actions">
             <button class="button primary" type="button" id="commit-apply">Commit</button>
+            <button class="button" type="button" id="commit-push">Commit &amp; Push</button>
           </div>
         </div>
         <div class="merge-proposals-panel" id="merge-proposals-panel" hidden>

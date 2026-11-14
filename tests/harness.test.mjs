@@ -992,6 +992,8 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.deepEqual(overview.api.localWrites, [
       "POST /api/v1/workspace/adopt",
       "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/checkout",
+      "POST /api/v1/workspace/create",
       "POST /api/v1/workspace/commit",
       "POST /api/v1/workspace/push",
       "POST /api/v1/workspace/fetch",
@@ -1506,6 +1508,51 @@ test("design approve merges branch with Design approved note and next steps", as
     assert.match(await readFile(path.join(root, "app.js"), "utf8"), /v2/);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("remote-tracking branches review and checkout stay inside YXN", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-remote-"));
+  const bare = await mkdtemp(path.join(os.tmpdir(), "yxnh-remote-bare-"));
+  try {
+    const run = (cwd, args) => {
+      const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    };
+    run(root, ["init", "-b", "main"]);
+    run(root, ["config", "user.email", "test@example.com"]);
+    run(root, ["config", "user.name", "Test"]);
+    await writeFile(path.join(root, "app.js"), "v1\n");
+    run(root, ["add", "app.js"]);
+    run(root, ["commit", "-m", "base"]);
+    run(bare, ["init", "--bare"]);
+    run(root, ["remote", "add", "origin", bare]);
+    run(root, ["push", "-u", "origin", "main"]);
+
+    run(root, ["checkout", "-b", "alice/hero"]);
+    await writeFile(path.join(root, "app.js"), "hero\n");
+    run(root, ["add", "app.js"]);
+    run(root, ["commit", "-m", "alice hero"]);
+    run(root, ["push", "-u", "origin", "alice/hero"]);
+    run(root, ["checkout", "main"]);
+    run(root, ["branch", "-D", "alice/hero"]);
+
+    const fetch = planWorkspaceFetch(root, { apply: true });
+    assert.equal(fetch.status, "applied", fetch.blockedReasons?.join("; "));
+    const inventory = collectWorkspace(root);
+    assert.ok(inventory.remoteBranches.some((entry) => entry.name === "origin/alice/hero"));
+
+    const review = buildWorkspaceReview(root, { theirs: "origin/alice/hero" });
+    assert.equal(review.status, "ready", review.blockedReasons?.join("; "));
+    assert.equal(review.theirs.kind, "remote");
+
+    const checkout = planWorkspaceCheckout(root, { branch: "origin/alice/hero", apply: true });
+    assert.equal(checkout.status, "applied", checkout.blockedReasons?.join("; "));
+    assert.equal(collectWorkspace(root).branch, "alice/hero");
+    assert.match(await readFile(path.join(root, "app.js"), "utf8"), /hero/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(bare, { recursive: true, force: true });
   }
 });
 

@@ -641,28 +641,125 @@ function setMode(mode, save = true) {
 function renderBranches() {
   const list = q("#branches-list");
   const workspace = state.workspace;
+  const modeLabel = q("#workspace-mode-label");
   if (!workspace?.available) {
     list.innerHTML = `<p class="view-note">Not a Git workspace.</p>`;
     q("#branch-count").textContent = "0";
+    if (modeLabel) modeLabel.textContent = "No Git yet";
     return;
   }
   const branches = workspace.branches || [];
-  q("#branch-count").textContent = String(branches.length);
-  list.innerHTML = branches.map((entry) => {
+  const remotes = (workspace.remoteBranches || []).filter((entry) => {
+    const localName = String(entry.name || "").split("/").slice(1).join("/");
+    return localName && !branches.some((branch) => branch.name === localName);
+  });
+  q("#branch-count").textContent = String(branches.length + remotes.length);
+  if (modeLabel) {
+    modeLabel.textContent = (workspace.remotes || []).length
+      ? "Multi-branch · YXN"
+      : "Local · YXN";
+  }
+  const localHtml = branches.map((entry) => {
     const selected = state.reviewBranch === entry.name || (!state.reviewBranch && entry.current);
     const meta = entry.current ? "current" : (entry.shortCommit || "");
     return `
-      <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}">
+      <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}" data-kind="local" title="Review · double-click to checkout">
         <i data-lucide="git-branch" aria-hidden="true"></i>
         <span>${escapeHtml(entry.name)}</span>
         ${meta ? `<small>${escapeHtml(meta)}</small>` : ""}
       </button>
     `;
   }).join("");
+  const remoteHtml = remotes.length
+    ? `<div class="section-name" style="padding-top:10px">Remote</div>${remotes.map((entry) => {
+      const selected = state.reviewBranch === entry.name;
+      return `
+        <button class="branch${selected ? " selected" : ""}" data-branch="${escapeHtml(entry.name)}" data-kind="remote" title="Review remote · double-click to track locally">
+          <i data-lucide="cloud" aria-hidden="true"></i>
+          <span>${escapeHtml(entry.name)}</span>
+          ${entry.shortCommit ? `<small>${escapeHtml(entry.shortCommit)}</small>` : ""}
+        </button>
+      `;
+    }).join("")}`
+    : "";
+  list.innerHTML = (localHtml + remoteHtml) || `<p class="view-note">No branches yet.</p>`;
   list.querySelectorAll("[data-branch]").forEach((button) => {
     button.addEventListener("click", () => selectBranch(button.dataset.branch));
+    button.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      checkoutBranch(button.dataset.branch);
+    });
   });
   icons();
+}
+
+async function checkoutBranch(name) {
+  if (!name) return;
+  try {
+    const preview = await apiPost("/api/v1/workspace/checkout", { ref: name, apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Checkout blocked");
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Already on that branch.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/checkout", { ref: name, apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Checkout failed");
+    toast(applied.explanation || `Checked out ${name}.`);
+    pushActivity(`Checkout · ${applied.to?.branch || name}`);
+    state.reviewBranch = null;
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function createBranch() {
+  const name = window.prompt("New branch name");
+  if (!name?.trim()) return;
+  try {
+    const preview = await apiPost("/api/v1/workspace/create", { branch: name.trim(), apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Create blocked");
+    const applied = await apiPost("/api/v1/workspace/create", { branch: name.trim(), apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Create failed");
+    toast(applied.explanation || `Created ${name.trim()}.`);
+    pushActivity(`Created branch · ${name.trim()}`);
+    state.reviewBranch = null;
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function fetchRemotes() {
+  const button = q("#workspace-fetch");
+  if (button) button.disabled = true;
+  try {
+    const preview = await apiPost("/api/v1/workspace/fetch", { apply: false });
+    if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Fetch blocked");
+    const applied = await apiPost("/api/v1/workspace/fetch", { apply: true });
+    if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Fetch failed");
+    toast(applied.explanation || "Remotes refreshed.");
+    pushActivity("Fetched remotes");
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function pushCurrentBranch() {
+  const preview = await apiPost("/api/v1/workspace/push", { apply: false });
+  if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
+  if (preview.status === "noop") {
+    toast(preview.explanation || "Nothing to push.");
+    return preview;
+  }
+  const applied = await apiPost("/api/v1/workspace/push", { apply: true });
+  if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
+  toast(applied.explanation || "Pushed current branch.");
+  pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+  return applied;
 }
 
 function renderRecent() {
@@ -853,7 +950,7 @@ async function loadChanges() {
 }
 
 function setChangesBusy(busy) {
-  for (const id of ["#apply", "#approve-design", "#propose-merge", "#discard", "#commit-apply"]) {
+  for (const id of ["#apply", "#approve-design", "#propose-merge", "#discard", "#commit-apply", "#commit-push"]) {
     const button = q(id);
     if (button) button.disabled = busy;
   }
@@ -964,7 +1061,7 @@ async function proposeMerge() {
   }
 }
 
-async function commitWorkspace() {
+async function commitWorkspace({ push = false } = {}) {
   const message = q("#commit-summary")?.value?.trim();
   if (!message) {
     toast("Write a short commit summary first.");
@@ -988,6 +1085,7 @@ async function commitWorkspace() {
     pushActivity(`Committed · ${applied.workspace?.shortCommit || "ok"}`);
     const summary = q("#commit-summary");
     if (summary) summary.value = "";
+    if (push) await pushCurrentBranch();
     await refresh();
   } catch (error) {
     toast(error.message);
@@ -1704,6 +1802,9 @@ q("#apply").addEventListener("click", () => adoptSelected());
 q("#approve-design")?.addEventListener("click", () => approveDesign());
 q("#propose-merge")?.addEventListener("click", () => proposeMerge());
 q("#commit-apply")?.addEventListener("click", () => commitWorkspace());
+q("#commit-push")?.addEventListener("click", () => commitWorkspace({ push: true }));
+q("#workspace-fetch")?.addEventListener("click", () => fetchRemotes());
+q("#workspace-create")?.addEventListener("click", () => createBranch());
 q("#approve-next-dismiss")?.addEventListener("click", () => {
   const panel = q("#approve-next");
   if (panel) panel.hidden = true;
@@ -1712,20 +1813,7 @@ q("#approve-push")?.addEventListener("click", async () => {
   const button = q("#approve-push");
   if (button) button.disabled = true;
   try {
-    const preview = await apiPost("/api/v1/workspace/push", { apply: false });
-    if (preview.status === "blocked") {
-      throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
-    }
-    if (preview.status === "noop") {
-      toast(preview.explanation || "Nothing to push.");
-      return;
-    }
-    const applied = await apiPost("/api/v1/workspace/push", { apply: true });
-    if (applied.status === "blocked") {
-      throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
-    }
-    toast(applied.explanation || "Pushed current branch.");
-    pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+    await pushCurrentBranch();
     await refresh();
   } catch (error) {
     toast(error.message);
@@ -1733,27 +1821,7 @@ q("#approve-push")?.addEventListener("click", async () => {
     if (button) button.disabled = false;
   }
 });
-q("#approve-fetch")?.addEventListener("click", async () => {
-  const button = q("#approve-fetch");
-  if (button) button.disabled = true;
-  try {
-    const preview = await apiPost("/api/v1/workspace/fetch", { apply: false });
-    if (preview.status === "blocked") {
-      throw new Error(preview.blockedReasons?.join("; ") || "Fetch blocked");
-    }
-    const applied = await apiPost("/api/v1/workspace/fetch", { apply: true });
-    if (applied.status === "blocked") {
-      throw new Error(applied.blockedReasons?.join("; ") || "Fetch failed");
-    }
-    toast(applied.explanation || "Remotes refreshed.");
-    pushActivity("Fetched remotes after design approve");
-    await refresh();
-  } catch (error) {
-    toast(error.message);
-  } finally {
-    if (button) button.disabled = false;
-  }
-});
+q("#approve-fetch")?.addEventListener("click", () => fetchRemotes());
 q("#discard").addEventListener("click", () => {
   state.reviewBranch = null;
   const next = q("#approve-next");

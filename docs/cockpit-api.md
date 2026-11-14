@@ -29,7 +29,9 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/host-config` | `harness.host.json` (or missing) |
 | GET | `/api/v1/workspace` | Current branch/revision + local branches |
 | GET | `/api/v1/workspace/review` | `?ref=<branch>&path=<file>` — PR-style diff |
-| POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — branch merge or file/hunk adopt |
+| POST | `/api/v1/workspace/adopt` | `{ "ref", "apply"?, "force"?, "comment"?, "paths"\|"path"?, "hunks"? }` — local or remote-tracking merge / file / hunk |
+| POST | `/api/v1/workspace/checkout` | `{ "ref"\|"branch", "apply"?, "force"? }` — switch local or track remote |
+| POST | `/api/v1/workspace/create` | `{ "branch", "from"?, "apply"?, "force"? }` — create + switch |
 | POST | `/api/v1/workspace/approve` | `{ "ref", "apply"?, "force"?, "note"?, "role"? }` — design approve (propose+Accept; YXN summary) |
 | POST | `/api/v1/workspace/commit` | `{ "message"\|"summary", "apply"?, "paths"? }` — commit; appends `Summary written by YXN.` |
 | GET | `/api/v1/workspace/merge-proposals` | `?status=` — pending merge proposals + host/leader policy |
@@ -78,13 +80,14 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 - Right Agent: Connected/External, chat/feedback, model + reasoning, composer
 - Panel widths persist in `localStorage`; double-click a splitter to reset
 
-**Changes** loads a real 3-dot branch review; **Übernehmen** POSTs
-`/api/v1/workspace/adopt`; **Merge vorschlagen** queues
+**Changes** loads a real 3-dot branch review (local or remote-tracking).
+Sidebar **Fetch** / **New branch**, double-click to checkout/track. **Übernehmen**
+POSTs `/api/v1/workspace/adopt`; **Merge vorschlagen** queues
 `/api/v1/workspace/merge-proposals`; **Design passt** POSTs
 `/api/v1/workspace/approve` (propose + host/leader Accept) then offers **Push**
-(`/workspace/push`) and **Remotes aktualisieren** (`/workspace/fetch`). Dirty
-trees show a **Commit** panel (`/workspace/commit`) that always attributes the
-summary to YXN. Pending merges wait for host or configured leader Accept.
+and **Remotes aktualisieren**. Dirty trees show **Commit** / **Commit & Push**
+with YXN summary attribution. Pending merges wait for host or leader Accept.
+Multi-person branch work stays inside this native YXN loop.
 Composer messages become local
 feedback when no agent adapter is connected; with `agent.adapter` set they POST
 `/api/v1/agent/turns`. File-change adapters (`workspace-edit`) return proposals

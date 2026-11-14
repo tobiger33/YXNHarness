@@ -8,6 +8,8 @@ import {
   buildWorkspaceReview,
   collectWorkspace,
   planWorkspaceAdopt,
+  planWorkspaceCheckout,
+  planWorkspaceCreate,
   planWorkspaceFetch,
   planWorkspacePush,
 } from "./workspace.mjs";
@@ -172,6 +174,8 @@ async function buildOverview(root, { refresh = true } = {}) {
       localWrites: [
         "POST /api/v1/workspace/adopt",
         "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/checkout",
+        "POST /api/v1/workspace/create",
         "POST /api/v1/workspace/commit",
         "POST /api/v1/workspace/push",
         "POST /api/v1/workspace/fetch",
@@ -199,6 +203,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/workspace/review",
         "POST /api/v1/workspace/adopt",
         "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/checkout",
+        "POST /api/v1/workspace/create",
         "POST /api/v1/workspace/commit",
         "POST /api/v1/workspace/push",
         "POST /api/v1/workspace/fetch",
@@ -386,6 +392,8 @@ function apiIndexPayload(projectRoot) {
     localWrites: [
       "POST /api/v1/workspace/adopt",
       "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/checkout",
+      "POST /api/v1/workspace/create",
       "POST /api/v1/workspace/commit",
       "POST /api/v1/workspace/push",
       "POST /api/v1/workspace/fetch",
@@ -413,6 +421,8 @@ function apiIndexPayload(projectRoot) {
       review: "/api/v1/workspace/review?ref=",
       adopt: "/api/v1/workspace/adopt",
       approve: "/api/v1/workspace/approve",
+      checkout: "/api/v1/workspace/checkout",
+      create: "/api/v1/workspace/create",
       commit: "/api/v1/workspace/commit",
       push: "/api/v1/workspace/push",
       fetch: "/api/v1/workspace/fetch",
@@ -541,6 +551,29 @@ function createCockpitApi({
           comment: body.comment ?? body.note ?? null,
           paths,
           hunks: body.hunks ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/checkout" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = planWorkspaceCheckout(projectRoot, {
+          branch: body.ref || body.branch || body.theirs,
+          apply: body.apply === true,
+          force: body.force === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/create" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = planWorkspaceCreate(projectRoot, {
+          branch: body.branch || body.ref || body.name,
+          from: body.from || body.start || null,
+          apply: body.apply === true,
+          force: body.force === true,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;

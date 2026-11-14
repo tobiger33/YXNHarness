@@ -27,9 +27,16 @@ function isSafeBranchName(name) {
   if (name === "-" || name.startsWith("-")) return false;
   if (name.includes("..") || name.includes("\\") || name.includes("//")) return false;
   if (name.startsWith("/") || name.endsWith("/") || name.endsWith(".lock")) return false;
-  // Local branch names only — no remote-ish paths like origin/foo via this API.
+  // Allows local names and remote-tracking refs like origin/feature (no colon / absolute).
   if (name.includes(":")) return false;
   return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(name);
+}
+
+function localNameFromRemoteRef(remoteRef) {
+  const parts = String(remoteRef || "").split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  if (parts[1] === "HEAD") return null;
+  return parts.slice(1).join("/");
 }
 
 /** Compact git stamp for runs / handoffs (stable shape). */
@@ -86,6 +93,8 @@ function collectWorkspace(root) {
       upstream: null,
       ahead: null,
       behind: null,
+      remotes: [],
+      remoteBranches: [],
       branches: [],
       readOnly: true,
       note: "Not a Git repository. Branches stay the code source of truth once Git is present.",
@@ -111,6 +120,9 @@ function collectWorkspace(root) {
   }
 
   const branches = listLocalBranches(projectRoot);
+  const remotes = listRemotes(projectRoot);
+  const remoteBranches = listRemoteTrackingBranches(projectRoot)
+    .filter((entry) => entry.name && !/(^|\/)HEAD$/.test(entry.name));
   const changedFiles = status === null ? null : status.split("\n").filter(Boolean).length;
 
   return {
@@ -127,9 +139,11 @@ function collectWorkspace(root) {
     upstream: upstream || null,
     ahead,
     behind,
+    remotes,
+    remoteBranches,
     branches,
     readOnly: true,
-    note: "Local branches: --checkout|--create|--review|--adopt/--approve; remotes via --fetch/--push --apply.",
+    note: "Native YXN loop: create/checkout/review/commit/merge-propose/accept/push/fetch. Remote branches appear after fetch.",
   };
 }
 
@@ -529,33 +543,34 @@ function buildWorkspaceReview(root, { theirs, path: filePath = null } = {}) {
     return { ...base, status: "blocked", blockedReasons: ["Not a Git repository."] };
   }
   if (!targetName || !isSafeBranchName(targetName)) {
-    return { ...base, status: "blocked", blockedReasons: ["--review requires an existing local branch name."] };
+    return { ...base, status: "blocked", blockedReasons: ["--review requires a local branch or remote-tracking ref."] };
   }
-  const target = resolveLocalBranch(projectRoot, targetName);
+  const target = resolveGitRef(projectRoot, targetName);
   if (!target) {
     return {
       ...base,
       status: "blocked",
-      blockedReasons: [`Local branch "${targetName}" not found.`],
+      blockedReasons: [`Branch "${targetName}" not found. Fetch remotes in YXN if it lives on a remote.`],
       availableBranches: before.branches.map((entry) => entry.name),
+      availableRemoteBranches: (before.remoteBranches || []).map((entry) => entry.name),
     };
   }
-  if (before.branch === target.name) {
+  if (before.branch === target.localName || before.branch === target.name) {
     return {
       ...base,
       status: "noop",
-      theirs: { branch: target.name, commit: target.commit, shortCommit: target.shortCommit },
+      theirs: { branch: target.ref, commit: target.commit, shortCommit: target.shortCommit, kind: target.kind },
       explanation: "Already on that branch — nothing to review.",
     };
   }
 
-  base.theirs = { branch: target.name, commit: target.commit, shortCommit: target.shortCommit };
-  const mergeBase = runGit(projectRoot, ["merge-base", "HEAD", target.name]);
+  base.theirs = { branch: target.ref, commit: target.commit, shortCommit: target.shortCommit, kind: target.kind };
+  const mergeBase = runGit(projectRoot, ["merge-base", "HEAD", target.ref]);
   base.mergeBase = mergeBase
     ? { commit: mergeBase, shortCommit: runGit(projectRoot, ["rev-parse", "--short", mergeBase]) }
     : null;
 
-  const range = `HEAD...${target.name}`;
+  const range = `HEAD...${target.ref}`;
   const nameStatus = parseNameStatus(runGit(projectRoot, ["diff", "--name-status", "-M", range]) || "");
   const numstat = parseNumstat(runGit(projectRoot, ["diff", "--numstat", "-M", range]) || "");
   const byPath = new Map(numstat.map((entry) => [entry.path, entry]));
@@ -602,8 +617,8 @@ function buildWorkspaceReview(root, { theirs, path: filePath = null } = {}) {
     ...base,
     status: "ready",
     explanation: files.length
-      ? `Review ${before.branch || "HEAD"} ← ${target.name}: ${files.length} file(s), +${base.summary.additions}/-${base.summary.deletions}.`
-      : `${target.name} has no unique changes since the merge-base.`,
+      ? `Review ${before.branch || "HEAD"} ← ${target.ref}: ${files.length} file(s), +${base.summary.additions}/-${base.summary.deletions}.`
+      : `${target.ref} has no unique changes since the merge-base.`,
   };
 }
 
@@ -1103,42 +1118,46 @@ function planWorkspaceAdopt(root, {
     return {
       ...base,
       status: "blocked",
-      blockedReasons: ["--adopt requires an existing local branch name."],
+      blockedReasons: ["--adopt requires a local branch or remote-tracking ref."],
       workspace: before,
     };
   }
-  const target = resolveLocalBranch(projectRoot, targetName);
+  const target = resolveGitRef(projectRoot, targetName);
   if (!target) {
     return {
       ...base,
       status: "blocked",
-      blockedReasons: [`Local branch "${targetName}" not found.`],
+      blockedReasons: [`Branch "${targetName}" not found. Fetch remotes in YXN if it lives on a remote.`],
       workspace: before,
       availableBranches: before.branches.map((entry) => entry.name),
+      availableRemoteBranches: (before.remoteBranches || []).map((entry) => entry.name),
     };
   }
-  if (before.branch === target.name) {
+  if (before.branch === target.localName || before.branch === target.name) {
     return {
       ...base,
       status: "noop",
-      theirs: { branch: target.name, commit: target.commit, shortCommit: target.shortCommit },
+      theirs: { branch: target.ref, commit: target.commit, shortCommit: target.shortCommit, kind: target.kind },
       explanation: "Already on that branch.",
       workspace: before,
     };
   }
 
-  base.theirs = { branch: target.name, commit: target.commit, shortCommit: target.shortCommit };
-  const review = buildWorkspaceReview(projectRoot, { theirs: target.name });
+  base.theirs = { branch: target.ref, commit: target.commit, shortCommit: target.shortCommit, kind: target.kind };
+  const review = buildWorkspaceReview(projectRoot, { theirs: target.ref });
   base.review = {
     status: review.status,
     summary: review.summary,
     files: review.files?.slice(0, 50) || [],
   };
 
+  // Partial adopt expects a localish name for checkout paths; pass ref for remote.
+  const adoptTarget = { ...target, name: target.ref };
+
   if (selectedPaths.length || selectedHunks) {
     return planPartialAdopt(projectRoot, {
       before,
-      target,
+      target: adoptTarget,
       review,
       apply,
       force,
@@ -1162,7 +1181,7 @@ function planWorkspaceAdopt(root, {
 
   const mergeMessage = buildAdoptMergeMessage({
     yours: before.branch,
-    theirs: target.name,
+    theirs: target.ref,
     comment: adoptComment,
   });
   base.mergeMessage = mergeMessage;
@@ -1171,7 +1190,7 @@ function planWorkspaceAdopt(root, {
     return {
       ...base,
       status: "ready",
-      explanation: `Ready to merge ${target.name} into ${before.branch}` +
+      explanation: `Ready to merge ${target.ref} into ${before.branch}` +
         (review.summary?.filesChanged
           ? ` (${review.summary.filesChanged} files, +${review.summary.additions}/-${review.summary.deletions})`
           : " (no unique file changes — may still fast-forward/record merge)") +
@@ -1183,9 +1202,9 @@ function planWorkspaceAdopt(root, {
   try {
     // A comment must land on a merge commit, so force --no-ff when one is provided.
     const mergeArgs = adoptComment
-      ? ["merge", "--no-ff", "-m", mergeMessage, "--", target.name]
-      : ["merge", "--no-edit", "--", target.name];
-    runGit(projectRoot, mergeArgs, { allowFailure: false });
+      ? ["merge", "--no-ff", "-m", mergeMessage, "--", target.ref]
+      : ["merge", "--no-edit", "--", target.ref];
+    runGit(projectRoot, mergeArgs, { allowFailure: false, timeoutMs: 30000 });
   } catch (error) {
     // Leave conflict state visible; agent/host must resolve with plain git.
     return {
@@ -1203,7 +1222,7 @@ function planWorkspaceAdopt(root, {
   return {
     ...base,
     status: "applied",
-    explanation: `Adopted ${target.name} into ${after.branch} @ ${after.shortCommit || after.commit}` +
+    explanation: `Adopted ${target.ref} into ${after.branch} @ ${after.shortCommit || after.commit}` +
       (adoptComment ? " (merge note recorded)." : "."),
     workspace: after,
   };
@@ -1253,8 +1272,32 @@ function resolveLocalBranch(root, branchName) {
 }
 
 /**
- * Host-controlled local branch switch. Preview by default; --apply performs git switch.
- * Never creates branches, never fetches/pushes, never touches remotes.
+ * Resolve a local branch or remote-tracking ref (e.g. origin/feature) for review/adopt/checkout.
+ */
+function resolveGitRef(root, refName) {
+  if (!isSafeBranchName(refName)) return null;
+  const local = resolveLocalBranch(root, refName);
+  if (local) {
+    return { ...local, kind: "local", ref: local.name, localName: local.name };
+  }
+  const remotes = listRemoteTrackingBranches(root);
+  const remote = remotes.find((entry) => entry.name === refName);
+  if (!remote?.name || /(^|\/)HEAD$/.test(remote.name)) return null;
+  const localName = localNameFromRemoteRef(remote.name);
+  if (!localName || !isSafeBranchName(localName)) return null;
+  return {
+    name: remote.name,
+    ref: remote.name,
+    commit: remote.commit,
+    shortCommit: remote.shortCommit,
+    kind: "remote",
+    localName,
+  };
+}
+
+/**
+ * Host-controlled branch switch. Local branches use git switch; remote-tracking
+ * refs create/track a local branch (native multi-person YXN loop).
  */
 function planWorkspaceCheckout(root, { branch, apply = false, force = false } = {}) {
   const projectRoot = path.resolve(root);
@@ -1293,7 +1336,7 @@ function planWorkspaceCheckout(root, { branch, apply = false, force = false } = 
     return {
       ...base,
       status: "blocked",
-      blockedReasons: ["--checkout requires a local branch name."],
+      blockedReasons: ["--checkout requires a branch or remote-tracking ref."],
       workspace: before,
     };
   }
@@ -1307,30 +1350,34 @@ function planWorkspaceCheckout(root, { branch, apply = false, force = false } = 
     };
   }
 
-  const target = resolveLocalBranch(projectRoot, targetName);
+  const target = resolveGitRef(projectRoot, targetName);
   if (!target) {
     return {
       ...base,
       status: "blocked",
       blockedReasons: [
-        `Local branch "${targetName}" not found. Create it outside the harness (or fetch) before switching.`,
+        `Branch "${targetName}" not found. Fetch remotes in YXN, then checkout or review.`,
       ],
       workspace: before,
       availableBranches: before.branches.map((entry) => entry.name),
+      availableRemoteBranches: (before.remoteBranches || []).map((entry) => entry.name),
     };
   }
 
+  const switchName = target.kind === "remote" ? target.localName : target.name;
   base.to = {
-    branch: target.name,
+    branch: switchName,
     commit: target.commit,
     shortCommit: target.shortCommit,
+    fromRef: target.kind === "remote" ? target.ref : null,
+    kind: target.kind,
   };
 
-  if (before.branch === target.name) {
+  if (before.branch === switchName) {
     return {
       ...base,
       status: "noop",
-      explanation: `Already on ${target.name}.`,
+      explanation: `Already on ${switchName}.`,
       workspace: before,
     };
   }
@@ -1350,15 +1397,29 @@ function planWorkspaceCheckout(root, { branch, apply = false, force = false } = 
     return {
       ...base,
       status: "ready",
-      explanation: force && before.dirty
-        ? `Ready to switch ${before.branch || "(detached)"} → ${target.name} with --force (dirty tree).`
-        : `Ready to switch ${before.branch || "(detached)"} → ${target.name}.`,
+      explanation: target.kind === "remote"
+        ? `Ready to create/track local ${switchName} from ${target.ref}${force && before.dirty ? " with --force" : ""}.`
+        : force && before.dirty
+          ? `Ready to switch ${before.branch || "(detached)"} → ${switchName} with --force (dirty tree).`
+          : `Ready to switch ${before.branch || "(detached)"} → ${switchName}.`,
       workspace: before,
     };
   }
 
   try {
-    runGit(projectRoot, ["switch", "--", target.name], { allowFailure: false });
+    if (target.kind === "remote") {
+      const existingLocal = resolveLocalBranch(projectRoot, switchName);
+      if (existingLocal) {
+        runGit(projectRoot, ["switch", "--", switchName], { allowFailure: false, timeoutMs: 30000 });
+      } else {
+        runGit(projectRoot, ["switch", "-c", switchName, "--track", target.ref], {
+          allowFailure: false,
+          timeoutMs: 30000,
+        });
+      }
+    } else {
+      runGit(projectRoot, ["switch", "--", target.name], { allowFailure: false, timeoutMs: 30000 });
+    }
   } catch (error) {
     return {
       ...base,
@@ -1372,7 +1433,9 @@ function planWorkspaceCheckout(root, { branch, apply = false, force = false } = 
   return {
     ...base,
     status: "applied",
-    explanation: `Switched to ${after.branch || target.name} @ ${after.shortCommit || after.commit}.`,
+    explanation: target.kind === "remote"
+      ? `Tracking ${after.branch || switchName} ← ${target.ref} @ ${after.shortCommit || after.commit}.`
+      : `Switched to ${after.branch || switchName} @ ${after.shortCommit || after.commit}.`,
     workspace: after,
   };
 }
@@ -1643,6 +1706,7 @@ export {
   planWorkspaceCreate,
   planWorkspaceFetch,
   planWorkspacePush,
+  resolveGitRef,
   resolveLocalBranch,
   runGit,
 };

@@ -89,18 +89,18 @@ async function planWorkspaceCommit(root, {
   try {
     if (plan.paths?.length) {
       for (const filePath of plan.paths) {
-        runGit(root, ["add", "--", filePath], { allowFailure: false });
+        runGit(root, ["add", "--", filePath], { allowFailure: false, timeoutMs: 30000 });
       }
     } else {
-      runGit(root, ["add", "-A"], { allowFailure: false });
+      runGit(root, ["add", "-A"], { allowFailure: false, timeoutMs: 30000 });
     }
-    const staged = runGit(root, ["diff", "--cached", "--name-only"]) || "";
+    const staged = runGit(root, ["diff", "--cached", "--name-only"], { timeoutMs: 30000 }) || "";
     if (!staged.trim() && !allowEmpty) {
       plan.status = "noop";
       plan.explanation = "Nothing staged after add — nothing to commit.";
       return plan;
     }
-    runGit(root, ["commit", "-m", finalMessage], { allowFailure: false });
+    runGit(root, ["commit", "-m", finalMessage], { allowFailure: false, timeoutMs: 30000 });
     const after = collectWorkspace(root);
     plan.status = "applied";
     plan.ok = true;
