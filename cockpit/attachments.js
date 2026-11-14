@@ -144,38 +144,71 @@ export function mountAttachments(root, notify) {
     (returnFocus?.isConnected ? returnFocus : root.querySelector("#chat-input")).focus();
   });
 
-  root.querySelector("#capture").addEventListener("click", async () => {
+  const captureButton = root.querySelector("#capture");
+  function projectTarget() {
+    if (root.querySelector(".workspace").hidden || root.querySelector("#screen-preview").hidden) return null;
+    const live = root.querySelector("#live-preview");
+    const element = !live.hidden ? live : root.querySelector("#demo-preview");
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight ? element : null;
+  }
+  captureButton.addEventListener("click", async () => {
     if (captureBusy) return;
-    if (!navigator.mediaDevices?.getDisplayMedia) { picker.click(); return; }
+    const target = projectTarget();
+    if (!target) { notify("Open the project Preview before capturing an image."); return; }
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof globalThis.CropTarget?.fromElement !== "function") {
+      notify("Project-only capture is unavailable in this browser. Use a supporting browser or attach an already cropped project image.");
+      return;
+    }
     captureBusy = true;
+    captureButton.disabled = true;
+    captureButton.setAttribute("aria-busy", "true");
     const generation = revision;
     let stream;
     let video;
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false, preferCurrentTab: true });
+      const cropPromise = CropTarget.fromElement(target).then((value) => ({ value }), (error) => ({ error }));
+      // The native picker is invoked in the user's click gesture. No uncropped image is ever saved.
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false, preferCurrentTab: true, selfBrowserSurface: "include", surfaceSwitching: "exclude", monitorTypeSurfaces: "exclude" });
+      const crop = await cropPromise;
+      if (crop.error) throw crop.error;
+      const cropTarget = crop.value;
+      const track = stream.getVideoTracks()[0];
+      if (!track || typeof track.cropTo !== "function" || track.getSettings().displaySurface !== "browser") throw new Error("Select the current browser tab for project-only capture.");
+      if (projectTarget() !== target || generation !== revision) throw new Error("The project changed during capture. Try again in the current Preview.");
+      root.classList.add("is-capturing-project");
+      await track.cropTo(cropTarget);
       video = document.createElement("video");
       video.muted = true;
       video.srcObject = stream;
       await video.play();
+      if (video.requestVideoFrameCallback) await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("No project image received. Try again.")), 5000);
+        video.requestVideoFrameCallback(() => { clearTimeout(timer); resolve(); });
+      });
+      if (projectTarget() !== target || generation !== revision) throw new Error("The project changed during capture. No image was attached.");
       const canvas = document.createElement("canvas");
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      if (!canvas.width || !canvas.height) throw new Error("No frame");
+      if (!canvas.width || !canvas.height) throw new Error("No project image received.");
       canvas.getContext("2d").drawImage(video, 0, 0);
-      // Stop screen sharing immediately after the still frame is captured.
       stream.getTracks().forEach((track) => track.stop());
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-      if (!blob) throw new Error("No image");
+      if (!blob) throw new Error("Project image could not be created.");
       if (generation !== revision) return;
-      await addFiles([new File([blob], `Screenshot-${new Date().toISOString().replaceAll(":", "-")}.png`, { type: "image/png" })]);
+      await addFiles([new File([blob], `Project-${new Date().toISOString().replaceAll(":", "-")}.png`, { type: "image/png" })]);
     } catch (error) {
-      if (error.name !== "NotAllowedError" && error.name !== "AbortError") notify("Capture unavailable. Use Screenshot to choose an image instead.");
+      if (error.name !== "NotAllowedError" && error.name !== "AbortError") notify(error.message || "Project-only capture failed. No full workspace screenshot was attached.");
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
       if (video) video.srcObject = null;
+      root.classList.remove("is-capturing-project");
       captureBusy = false;
+      captureButton.disabled = false;
+      captureButton.setAttribute("aria-busy", "false");
     }
   });
+
   return {
     appendToMessage(message) {
       if (!items.length) return;

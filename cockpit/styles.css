@@ -257,3 +257,8 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .element-detail-preview h2 { font-size: 27px; line-height: 1.13; }
 #yxn-workbench .element-detail-preview button:disabled { opacity: 1; }
 #yxn-workbench .saved-feedback-open { display: block; width: 100%; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; }
+
+/* Export the project appearance without harness selection decorations. */
+#yxn-workbench.is-capturing-project #demo-preview .demo-hover,
+#yxn-workbench.is-capturing-project #demo-preview .demo-selected,
+#yxn-workbench.is-capturing-project #demo-preview .demo-candidate { outline: none; }

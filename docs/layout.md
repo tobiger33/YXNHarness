@@ -46,8 +46,9 @@ The loader SVG respects reduced-motion preferences.
 ## Image attachments
 
 Screenshot opens a local image picker; images can also be pasted into the
-composer. Capture uses the browser's native screen/tab chooser and stops the
-stream after capturing a still frame. PNG, JPEG, WebP and GIF images are
+composer. Capture uses the browser's native tab chooser, crops the track to the project
+with Region Capture, and stops the stream after capturing a still frame. It
+never attaches an uncropped screen/window/workbench image. PNG, JPEG, WebP and GIF images are
 supported (up to 6 images, 12 MB per image).
 
 Thumbnails open a keyboard-accessible image dialog. Escape, Close or a click
@@ -154,3 +155,17 @@ snapshots are labelled explicitly rather than fabricated.
 Selection gestures must start and end inside the visible project preview.
 Targets are validated as project-owned registered elements; shell controls,
 sidebar, chat and outer canvas margins cannot become selection/comment targets.
+
+## Project-only capture
+
+The capture target is `#demo-preview` or the live application iframe, never the
+whole workbench. The current browser tab must be selected. After native
+`CropTarget.fromElement()` / `track.cropTo()` succeeds, the UI waits for a cropped
+video frame before creating the PNG. Harness selection decorations are hidden
+for that frame. All tracks stop on success, failure or cancellation. A changed
+or hidden project cancels the attachment. Unsupported cropping, an incorrect
+source or a failed crop never falls back to recording the full workspace.
+Existing-image upload through Screenshot remains a separate, user-chosen action.
+
+Platform reference: [Chrome Region Capture](https://developer.chrome.com/docs/web-platform/region-capture).
+Actual capture regression: `HARNESS_BROWSER_CHANNEL=chrome node --test tests/cockpit-capture.test.mjs`.
