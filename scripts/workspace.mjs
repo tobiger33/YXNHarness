@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-function runGit(root, args, { allowFailure = true } = {}) {
+function runGit(root, args, { allowFailure = true, timeoutMs = 8000 } = {}) {
   const result = spawnSync("git", args, {
     cwd: root,
     encoding: "utf8",
-    timeout: 8000,
+    timeout: timeoutMs,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
   });
@@ -129,8 +129,343 @@ function collectWorkspace(root) {
     behind,
     branches,
     readOnly: true,
-    note: "Local branches: --checkout|--create|--review|--adopt [--path|--hunks]. Push/fetch stay out of scope.",
+    note: "Local branches: --checkout|--create|--review|--adopt/--approve; remotes via --fetch/--push --apply.",
   };
+}
+
+function isSafeRemoteName(name) {
+  if (!name || typeof name !== "string") return false;
+  if (name.length > 100) return false;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name);
+}
+
+function listRemotes(root) {
+  const raw = runGit(root, ["remote", "-v"]);
+  if (raw === null) return [];
+  if (!raw) return [];
+  const byName = new Map();
+  for (const line of raw.split("\n").filter(Boolean)) {
+    const match = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    if (!match) continue;
+    const [, name, url, mode] = match;
+    const entry = byName.get(name) || { name, fetchUrl: null, pushUrl: null };
+    if (mode === "fetch") entry.fetchUrl = url;
+    if (mode === "push") entry.pushUrl = url;
+    byName.set(name, entry);
+  }
+  return [...byName.values()];
+}
+
+function listRemoteTrackingBranches(root) {
+  const raw = runGit(root, [
+    "for-each-ref",
+    "--format=%(refname:short)\t%(objectname)\t%(objectname:short)",
+    "refs/remotes",
+  ]);
+  if (raw === null) return [];
+  if (!raw) return [];
+  return raw.split("\n").filter(Boolean).map((line) => {
+    const [name, commit, shortCommit] = line.split("\t");
+    return {
+      name: name || null,
+      commit: commit || null,
+      shortCommit: shortCommit || null,
+    };
+  });
+}
+
+/**
+ * Host-controlled remote refresh. No checkout, no merge, no push.
+ * Prefer on-demand fetch after a known push — do not background-poll.
+ */
+function planWorkspaceFetch(root, {
+  remote = null,
+  prune = true,
+  apply = false,
+} = {}) {
+  const projectRoot = path.resolve(root);
+  const plan = {
+    version: 1,
+    action: "fetch",
+    mode: apply ? "apply" : "dry-run",
+    status: "ready",
+    ok: true,
+    remote: remote || null,
+    prune: prune !== false,
+    remotes: [],
+    before: { remoteTrackingCount: 0 },
+    after: null,
+    blockedReasons: [],
+    warnings: [],
+    explanation: null,
+    next: [],
+  };
+
+  const gitRoot = runGit(projectRoot, ["rev-parse", "--show-toplevel"]);
+  if (!gitRoot) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("Not a Git repository.");
+    plan.explanation = "Fetch needs a Git workspace.";
+    return plan;
+  }
+
+  if (remote != null && !isSafeRemoteName(remote)) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push(`Unsafe remote name "${remote}".`);
+    return plan;
+  }
+
+  plan.remotes = listRemotes(projectRoot);
+  if (!plan.remotes.length) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("No remotes configured. Add one with plain git remote add, then fetch.");
+    plan.explanation = "Nothing to fetch until a remote exists.";
+    return plan;
+  }
+
+  if (remote && !plan.remotes.some((entry) => entry.name === remote)) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push(`Remote "${remote}" was not found.`);
+    return plan;
+  }
+
+  const beforeRefs = listRemoteTrackingBranches(projectRoot);
+  plan.before.remoteTrackingCount = beforeRefs.length;
+  plan.explanation = apply
+    ? `Fetching ${remote || "all remotes"}${plan.prune ? " (prune)" : ""}. Updates remote-tracking refs only.`
+    : `Preview: would fetch ${remote || "all remotes"}${plan.prune ? " with prune" : ""}. No network call until --apply.`;
+  plan.next = apply
+    ? [
+        "Review updated remote-tracking branches (git branch -r).",
+        "Checkout or create a local branch when you want to work on one.",
+        "Merge/adopt stays host-controlled: workspace --adopt <branch> --apply",
+      ]
+    : [
+        "npm run harness -- workspace --fetch --apply",
+        remote ? `Or target one remote: --fetch --remote ${remote} --apply` : null,
+      ].filter(Boolean);
+  plan.warnings.push(
+    "Fetch is on-demand for efficiency — not a background poller. Run after a known push, or when the host asks collaborators to refresh.",
+  );
+
+  if (!apply) {
+    plan.warnings.push("Preview only. Re-run with --apply to contact remotes.");
+    return plan;
+  }
+
+  const args = ["fetch"];
+  if (plan.prune) args.push("--prune");
+  if (remote) args.push(remote);
+  else args.push("--all");
+
+  const stdout = runGit(projectRoot, args, { allowFailure: false, timeoutMs: 60000 });
+  const afterRefs = listRemoteTrackingBranches(projectRoot);
+  plan.after = {
+    remoteTrackingCount: afterRefs.length,
+    sample: afterRefs.slice(0, 20),
+  };
+  plan.status = "applied";
+  plan.stdout = stdout || "";
+  plan.workspace = collectWorkspace(projectRoot);
+  return plan;
+}
+
+function formatFetchPlan(plan) {
+  const lines = [
+    `Workspace fetch: ${plan.status}`,
+    `Mode: ${plan.mode}`,
+    `Remote: ${plan.remote || "(all)"}`,
+    `Prune: ${plan.prune ? "yes" : "no"}`,
+    `Remotes: ${plan.remotes.map((entry) => entry.name).join(", ") || "none"}`,
+    `Remote-tracking refs before: ${plan.before?.remoteTrackingCount ?? 0}`,
+  ];
+  if (plan.after) {
+    lines.push(`Remote-tracking refs after: ${plan.after.remoteTrackingCount}`);
+  }
+  if (plan.explanation) lines.push(plan.explanation);
+  for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  for (const warning of plan.warnings || []) lines.push(`Note: ${warning}`);
+  for (const step of plan.next || []) lines.push(`Next: ${step}`);
+  return lines.join("\n");
+}
+
+function resolvePushRemote(workspace, remotes, remote) {
+  if (remote) {
+    if (!isSafeRemoteName(remote)) return { error: `Unsafe remote name "${remote}".` };
+    if (!remotes.some((entry) => entry.name === remote)) {
+      return { error: `Remote "${remote}" was not found.` };
+    }
+    return { remote };
+  }
+  if (workspace.upstream && workspace.upstream.includes("/")) {
+    const upstreamRemote = workspace.upstream.split("/")[0];
+    if (remotes.some((entry) => entry.name === upstreamRemote)) {
+      return { remote: upstreamRemote, fromUpstream: true };
+    }
+  }
+  if (remotes.some((entry) => entry.name === "origin")) {
+    return { remote: "origin" };
+  }
+  if (remotes.length === 1) {
+    return { remote: remotes[0].name };
+  }
+  return {
+    error: "Multiple remotes and no upstream — pass --remote <name>.",
+  };
+}
+
+/**
+ * Host-controlled push of the current branch. No force by default;
+ * --force uses --force-with-lease only (never plain --force / --delete).
+ */
+function planWorkspacePush(root, {
+  remote = null,
+  force = false,
+  apply = false,
+} = {}) {
+  const projectRoot = path.resolve(root);
+  const plan = {
+    version: 1,
+    action: "push",
+    mode: apply ? "apply" : "dry-run",
+    status: "ready",
+    ok: true,
+    remote: null,
+    branch: null,
+    upstream: null,
+    setUpstream: false,
+    forceWithLease: Boolean(force),
+    ahead: null,
+    behind: null,
+    remotes: [],
+    blockedReasons: [],
+    warnings: [],
+    explanation: null,
+    next: [],
+    args: [],
+  };
+
+  const before = collectWorkspace(projectRoot);
+  plan.workspace = before;
+  if (!before.available) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("Not a Git repository.");
+    plan.explanation = "Push needs a Git workspace.";
+    return plan;
+  }
+  if (!before.branch) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("Detached HEAD — checkout a branch before pushing.");
+    return plan;
+  }
+
+  plan.branch = before.branch;
+  plan.upstream = before.upstream;
+  plan.ahead = before.ahead;
+  plan.behind = before.behind;
+  plan.remotes = listRemotes(projectRoot);
+
+  if (!plan.remotes.length) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push("No remotes configured. Add one with plain git remote add, then push.");
+    return plan;
+  }
+
+  const resolved = resolvePushRemote(before, plan.remotes, remote);
+  if (resolved.error) {
+    plan.status = "blocked";
+    plan.ok = false;
+    plan.blockedReasons.push(resolved.error);
+    return plan;
+  }
+  plan.remote = resolved.remote;
+  plan.setUpstream = !before.upstream;
+
+  if (before.ahead === 0 && before.upstream) {
+    plan.status = "noop";
+    plan.ok = true;
+    plan.explanation = `Nothing to push — ${before.branch} is not ahead of ${before.upstream}.`;
+    plan.next = [
+      "Collaborators can refresh with: npm run harness -- workspace --fetch --apply",
+    ];
+    return plan;
+  }
+
+  if (before.behind > 0 && !force) {
+    plan.warnings.push(
+      `Branch is behind upstream by ${before.behind} commit(s). Push may be rejected; fetch/rebase first, or re-run with --force for --force-with-lease after host consent.`,
+    );
+  }
+  if (force) {
+    plan.warnings.push(
+      "Force uses git push --force-with-lease only (never plain --force, never --delete).",
+    );
+  }
+
+  const args = ["push"];
+  if (force) args.push("--force-with-lease");
+  if (plan.setUpstream) args.push("-u");
+  args.push(plan.remote, before.branch);
+  plan.args = args;
+
+  plan.explanation = apply
+    ? `Pushing ${before.branch} to ${plan.remote}${plan.setUpstream ? " (setting upstream)" : ""}${force ? " with --force-with-lease" : ""}.`
+    : `Preview: would run git ${args.join(" ")}. No network call until --apply.`;
+  plan.next = apply
+    ? [
+        "Tell collaborators to refresh: npm run harness -- workspace --fetch --apply",
+        "Or POST /api/v1/workspace/fetch with { apply: true }",
+      ]
+    : [
+        "npm run harness -- workspace --push --apply",
+        plan.remote !== "origin" ? `Or: --push --remote ${plan.remote} --apply` : null,
+      ].filter(Boolean);
+  plan.warnings.push(
+    "Push is on-demand and host-controlled — not automatic after design approve.",
+  );
+
+  if (!apply) {
+    plan.warnings.push("Preview only. Re-run with --apply to contact the remote.");
+    return plan;
+  }
+
+  const stdout = runGit(projectRoot, args, { allowFailure: false, timeoutMs: 60000 });
+  const after = collectWorkspace(projectRoot);
+  plan.status = "applied";
+  plan.stdout = stdout || "";
+  plan.workspace = after;
+  plan.upstream = after.upstream;
+  plan.ahead = after.ahead;
+  plan.behind = after.behind;
+  plan.explanation = `Pushed ${before.branch} to ${plan.remote}` +
+    (after.upstream ? ` (upstream ${after.upstream})` : "") + ".";
+  return plan;
+}
+
+function formatPushPlan(plan) {
+  const lines = [
+    `Workspace push: ${plan.status}`,
+    `Mode: ${plan.mode}`,
+    `Branch: ${plan.branch || "—"}`,
+    `Remote: ${plan.remote || "—"}`,
+    `Upstream: ${plan.upstream || "(none)"}`,
+    `Ahead/behind: ${plan.ahead ?? "—"} / ${plan.behind ?? "—"}`,
+    `Force-with-lease: ${plan.forceWithLease ? "yes" : "no"}`,
+    `Set upstream: ${plan.setUpstream ? "yes" : "no"}`,
+  ];
+  if (plan.args?.length) lines.push(`Command: git ${plan.args.join(" ")}`);
+  if (plan.explanation) lines.push(plan.explanation);
+  for (const reason of plan.blockedReasons || []) lines.push(`Blocked: ${reason}`);
+  for (const warning of plan.warnings || []) lines.push(`Note: ${warning}`);
+  for (const step of plan.next || []) lines.push(`Next: ${step}`);
+  return lines.join("\n");
 }
 
 function isSafeRelPath(relPath) {
@@ -1290,10 +1625,15 @@ export {
   formatAdoptPlan,
   formatCheckoutPlan,
   formatCreatePlan,
+  formatFetchPlan,
+  formatPushPlan,
   formatWorkspace,
   formatWorkspaceReview,
   isSafeBranchName,
+  isSafeRemoteName,
   listLocalBranches,
+  listRemoteTrackingBranches,
+  listRemotes,
   normalizeAdoptComment,
   normalizeAdoptHunks,
   normalizeAdoptPaths,
@@ -1301,6 +1641,8 @@ export {
   planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
+  planWorkspaceFetch,
+  planWorkspacePush,
   resolveLocalBranch,
   runGit,
 };

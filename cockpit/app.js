@@ -552,7 +552,9 @@ async function loadChanges() {
     `;
     state.review = review;
     actions.hidden = false;
-    q("#changes-note").textContent = "Real git review · Übernehmen = whole branch · Datei übernehmen = one path into the index.";
+    q("#changes-note").textContent = "Real git review · Design passt = approve+merge · Übernehmen = merge · Datei = one path.";
+    const next = q("#approve-next");
+    if (next) next.hidden = true;
     qa("[data-adopt-path]").forEach((button) => {
       button.addEventListener("click", (event) => {
         event.preventDefault();
@@ -572,11 +574,32 @@ async function loadChanges() {
   }
 }
 
+function setChangesBusy(busy) {
+  for (const id of ["#apply", "#approve-design", "#discard"]) {
+    const button = q(id);
+    if (button) button.disabled = busy;
+  }
+  qa("[data-adopt-path]").forEach((button) => { button.disabled = busy; });
+}
+
+function showApproveNext(plan) {
+  const panel = q("#approve-next");
+  const text = q("#approve-next-text");
+  if (!panel || !text) return;
+  const steps = (plan.next || []).slice(0, 3);
+  text.textContent = [
+    plan.explanation || "Design approved.",
+    ...steps,
+  ].filter(Boolean).join(" · ");
+  panel.hidden = false;
+}
+
 async function adoptSelected({ paths = null } = {}) {
   const theirs = state.reviewBranch;
-  if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true" || q("#apply").disabled) return;
+  if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true") return;
+  if (q("#apply")?.disabled) return;
   const note = q("#adopt-note")?.value?.trim() || null;
-  q("#apply").disabled = true;
+  setChangesBusy(true);
   try {
     const payload = { ref: theirs, apply: false, comment: note };
     if (paths?.length) payload.paths = paths;
@@ -601,7 +624,47 @@ async function adoptSelected({ paths = null } = {}) {
   } catch (error) {
     toast(error.message);
   } finally {
-    q("#apply").disabled = false;
+    setChangesBusy(false);
+  }
+}
+
+async function approveDesign() {
+  const theirs = state.reviewBranch;
+  if (!theirs || !state.review || q("#changes-body").getAttribute("aria-busy") === "true") return;
+  if (q("#approve-design")?.disabled) return;
+  const note = q("#adopt-note")?.value?.trim() || "Design approved";
+  setChangesBusy(true);
+  try {
+    const preview = await apiPost("/api/v1/workspace/approve", {
+      ref: theirs,
+      apply: false,
+      note,
+    });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Design approve blocked");
+    }
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Nothing to approve.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/approve", {
+      ref: theirs,
+      apply: true,
+      note,
+    });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Design approve failed");
+    }
+    toast(applied.explanation || `Design approved · ${theirs}`);
+    pushActivity(`Design approved · ${theirs}`);
+    showApproveNext(applied);
+    state.reviewBranch = null;
+    await refresh();
+    setView("changes");
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    setChangesBusy(false);
   }
 }
 
@@ -1121,8 +1184,61 @@ q("#activity-toggle").addEventListener("click", () => {
   q("#activity-toggle").setAttribute("aria-expanded", String(!panel.hidden));
 });
 q("#apply").addEventListener("click", () => adoptSelected());
+q("#approve-design")?.addEventListener("click", () => approveDesign());
+q("#approve-next-dismiss")?.addEventListener("click", () => {
+  const panel = q("#approve-next");
+  if (panel) panel.hidden = true;
+});
+q("#approve-push")?.addEventListener("click", async () => {
+  const button = q("#approve-push");
+  if (button) button.disabled = true;
+  try {
+    const preview = await apiPost("/api/v1/workspace/push", { apply: false });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Push blocked");
+    }
+    if (preview.status === "noop") {
+      toast(preview.explanation || "Nothing to push.");
+      return;
+    }
+    const applied = await apiPost("/api/v1/workspace/push", { apply: true });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Push failed");
+    }
+    toast(applied.explanation || "Pushed current branch.");
+    pushActivity(`Pushed ${applied.branch || "branch"} → ${applied.remote || "remote"}`);
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+q("#approve-fetch")?.addEventListener("click", async () => {
+  const button = q("#approve-fetch");
+  if (button) button.disabled = true;
+  try {
+    const preview = await apiPost("/api/v1/workspace/fetch", { apply: false });
+    if (preview.status === "blocked") {
+      throw new Error(preview.blockedReasons?.join("; ") || "Fetch blocked");
+    }
+    const applied = await apiPost("/api/v1/workspace/fetch", { apply: true });
+    if (applied.status === "blocked") {
+      throw new Error(applied.blockedReasons?.join("; ") || "Fetch failed");
+    }
+    toast(applied.explanation || "Remotes refreshed.");
+    pushActivity("Fetched remotes after design approve");
+    await refresh();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
 q("#discard").addEventListener("click", () => {
   state.reviewBranch = null;
+  const next = q("#approve-next");
+  if (next) next.hidden = true;
   renderBranches();
   loadChanges();
   toast("Selection cleared.");
@@ -1171,6 +1287,42 @@ q("#attach-preview")?.addEventListener("click", async () => {
     toast(plan.ok === false
       ? (plan.blockedReasons?.[0] || "Attach blocked")
       : `Attach dry-run: ${plan.stoppedAt || plan.until || "probe"}`);
+    icons();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+q("#share-preview")?.addEventListener("click", async () => {
+  const button = q("#share-preview");
+  if (button) button.disabled = true;
+  try {
+    const plan = await apiPost("/api/v1/share", { apply: false, note: "Cockpit share preview" });
+    const feed = q("#chat-feed");
+    const card = document.createElement("div");
+    card.className = "agent-response";
+    const title = document.createElement("div");
+    title.className = "thought";
+    title.textContent = `Share ${plan.status || "preview"} · grant ${plan.access?.grant || "view"}`;
+    card.append(title);
+    const body = document.createElement("p");
+    body.textContent = plan.explanation
+      || plan.blockedReasons?.join("; ")
+      || "Share invite dry-run complete.";
+    card.append(body);
+    if (plan.manifest?.designApproval?.hostSaysYesMeans) {
+      const next = document.createElement("div");
+      next.className = "agent-event";
+      next.textContent = plan.manifest.designApproval.hostSaysYesMeans;
+      card.append(next);
+    }
+    feed.append(card);
+    feed.scrollTop = feed.scrollHeight;
+    pushActivity(`Share preview · ${plan.status || "ready"}`);
+    toast(plan.status === "blocked"
+      ? (plan.blockedReasons?.[0] || "Share blocked")
+      : `Share dry-run: ${plan.access?.grant || "view"} only`);
     icons();
   } catch (error) {
     toast(error.message);

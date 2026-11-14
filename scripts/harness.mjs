@@ -82,7 +82,20 @@ import {
   planWorkspaceAdopt,
   planWorkspaceCheckout,
   planWorkspaceCreate,
+  planWorkspaceFetch,
+  planWorkspacePush,
+  formatFetchPlan,
+  formatPushPlan,
 } from "./workspace.mjs";
+import {
+  createShareInvite,
+  formatSharePlan,
+  listShares,
+} from "./share.mjs";
+import {
+  formatDesignApprovePlan,
+  planDesignApprove,
+} from "./design-approve.mjs";
 
 const require = createRequire(import.meta.url);
 const scenarioSchema = require("../schema/scenario.schema.json");
@@ -99,7 +112,8 @@ const USAGE = `Usage:
   npm run harness -- scaffold [--root path] [--name smoke] [--out scenarios/smoke.yaml] [--dry-run|--apply] [--force] [--yes] [--json]
   npm run harness -- host-config [--root path] [--init] [--dry-run|--apply] [--force] [--json]
   npm run harness -- status [--root path] [--json]
-  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch] [--path file] [--hunks 1,3] [--start branch] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt|--approve branch|--fetch|--push] [--remote name] [--path file] [--hunks 1,3] [--start branch] [--note text] [--dry-run|--apply] [--force] [--json]
+  npm run harness -- share [--root path] [--note text] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
   npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
@@ -121,7 +135,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "elements", "attach", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "feedback", "elements", "attach", "share", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -144,6 +158,10 @@ function parseArgs(argv) {
     start: null,
     review: null,
     adopt: null,
+    approve: null,
+    fetch: false,
+    push: false,
+    remote: null,
     path: null,
     paths: [],
     hunks: null,
@@ -213,6 +231,20 @@ function parseArgs(argv) {
         options.adopt = adopt;
         index += 1;
       }
+    } else if (argument === "--approve") {
+      const approve = rest[index + 1];
+      if (!approve || approve.startsWith("--")) throw new Error("--approve requires an existing local branch name.");
+      options.approve = approve;
+      index += 1;
+    } else if (argument === "--fetch") {
+      options.fetch = true;
+    } else if (argument === "--push") {
+      options.push = true;
+    } else if (argument === "--remote") {
+      const remote = rest[index + 1];
+      if (!remote || remote.startsWith("--")) throw new Error("--remote requires a remote name.");
+      options.remote = remote;
+      index += 1;
     } else if (argument === "--path") {
       const filePath = rest[index + 1];
       if (!filePath || filePath.startsWith("--")) throw new Error("--path requires a repository-relative file path.");
@@ -385,21 +417,32 @@ function parseArgs(argv) {
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
       options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
-    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
+    throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--approve/--fetch/--push/--remote/--path/--hunks/--start/--note/--dry-run/--apply/--force only.");
   }
-  if (action === "workspace" && options.note && !options.adopt) {
-    throw new Error("--note is only valid with workspace --adopt (or handoff).");
+  if (action === "workspace" && options.note && !options.adopt && !options.approve) {
+    throw new Error("--note is only valid with workspace --adopt/--approve (or handoff / share).");
   }
-  const workspaceMutators = [options.checkout, options.create, options.review, options.adopt].filter(Boolean);
+  const workspaceMutators = [
+    options.checkout,
+    options.create,
+    options.review,
+    options.adopt,
+    options.approve,
+    options.fetch ? "fetch" : null,
+    options.push ? "push" : null,
+  ].filter(Boolean);
   if (action === "workspace" && workspaceMutators.length > 1) {
-    throw new Error("Use only one of --checkout, --create, --review, or --adopt.");
+    throw new Error("Use only one of --checkout, --create, --review, --adopt, --approve, --fetch, or --push.");
   }
   if (action === "workspace" && (options.apply || options.dryRun || options.force) &&
-      !options.checkout && !options.create && !options.adopt) {
-    throw new Error("--apply, --dry-run, and --force require --checkout, --create, or --adopt for workspace.");
+      !options.checkout && !options.create && !options.adopt && !options.approve && !options.fetch && !options.push) {
+    throw new Error("--apply, --dry-run, and --force require --checkout, --create, --adopt, --approve, --fetch, or --push for workspace.");
   }
   if (action === "workspace" && options.start && !options.create) {
     throw new Error("--start is only valid with workspace --create.");
+  }
+  if (action === "workspace" && options.approve && (options.path || options.hunks || options.paths.length)) {
+    throw new Error("Design approve is whole-branch only (no --path / --hunks).");
   }
   if (action === "workspace" && options.path && !options.review && !options.adopt) {
     throw new Error("--path is only valid with workspace --review or --adopt.");
@@ -410,8 +453,20 @@ function parseArgs(argv) {
   if (action === "workspace" && options.hunks && options.paths.length !== 1) {
     throw new Error("--hunks requires exactly one --path.");
   }
+  if (action === "workspace" && options.remote && !options.fetch && !options.push) {
+    throw new Error("--remote is only valid with workspace --fetch or --push.");
+  }
   if (options.hunks && action !== "workspace") {
     throw new Error("--hunks is only valid with workspace --adopt.");
+  }
+  if (options.fetch && action !== "workspace") {
+    throw new Error("--fetch is only valid with workspace.");
+  }
+  if (options.push && action !== "workspace") {
+    throw new Error("--push is only valid with workspace.");
+  }
+  if (options.remote && action !== "workspace") {
+    throw new Error("--remote is only valid with workspace --fetch or --push.");
   }
   if (options.checkout && action !== "workspace") {
     throw new Error("--checkout is only valid with workspace.");
@@ -424,6 +479,9 @@ function parseArgs(argv) {
   }
   if (options.adopt && action !== "workspace") {
     throw new Error("--adopt is only valid with workspace.");
+  }
+  if (options.approve && action !== "workspace") {
+    throw new Error("--approve is only valid with workspace.");
   }
   if (options.path && action !== "workspace") {
     throw new Error("--path is only valid with workspace.");
@@ -443,8 +501,17 @@ function parseArgs(argv) {
   if (options.out && !["scaffold", "handoff", "promote", "attach"].includes(action)) {
     throw new Error("--out is only valid with scaffold, handoff, promote, or attach.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback", "elements", "attach"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, or attach.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote", "feedback", "elements", "attach", "share"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, attach, or share.");
+  }
+  if (action === "share" && (options.installBrowser || options.yes || options.init || options.name || options.out ||
+      options.from || options.baseline || options.against || options.strict || options.port !== null ||
+      options.checkout || options.create || options.review || options.adopt || options.fetch || options.push ||
+      options.remote || options.path || options.hunks || options.list || options.createFeedback || options.elementsAdopt)) {
+    throw new Error("share accepts --root/--json/--note/--dry-run/--apply/--force only.");
+  }
+  if (action === "share" && options.apply && options.dryRun) {
+    throw new Error("Choose either --dry-run or --apply for share, not both.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
@@ -461,8 +528,8 @@ function parseArgs(argv) {
   if (options.skipDoctor && action !== "attach") {
     throw new Error("--skip-doctor is only valid with attach.");
   }
-  if (options.note && !["handoff", "workspace", "feedback", "elements"].includes(action)) {
-    throw new Error("--note is only valid with handoff, workspace --adopt, feedback --bundle, or elements --adopt.");
+  if (options.note && !["handoff", "workspace", "feedback", "elements", "share"].includes(action)) {
+    throw new Error("--note is only valid with handoff, workspace --adopt/--approve, feedback --bundle, elements --adopt, or share.");
   }
   if (options.sourceBranch && action !== "elements") {
     throw new Error("--source-branch is only valid with elements --adopt.");
@@ -1729,7 +1796,50 @@ async function main(argv = process.argv.slice(2)) {
     }
     return report;
   }
+  if (options.action === "share") {
+    const plan = await createShareInvite(root, {
+      apply: options.apply,
+      force: options.force,
+      note: options.note,
+    });
+    plan.ok = plan.status !== "blocked";
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatSharePlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   if (options.action === "workspace") {
+    if (options.fetch) {
+      const plan = planWorkspaceFetch(root, {
+        remote: options.remote,
+        apply: options.apply,
+      });
+      plan.ok = plan.status === "ready" || plan.status === "applied";
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatFetchPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
+    if (options.push) {
+      const plan = planWorkspacePush(root, {
+        remote: options.remote,
+        force: options.force,
+        apply: options.apply,
+      });
+      plan.ok = plan.status === "ready" || plan.status === "applied" || plan.status === "noop";
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatPushPlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
+    if (options.approve) {
+      const plan = await planDesignApprove(root, {
+        theirs: options.approve,
+        apply: options.apply,
+        force: options.force,
+        note: options.note,
+      });
+      console.log(options.json ? JSON.stringify(plan, null, 2) : formatDesignApprovePlan(plan));
+      if (!plan.ok) process.exitCode = 1;
+      return plan;
+    }
     if (options.review) {
       const review = buildWorkspaceReview(root, { theirs: options.review, path: options.path });
       review.ok = review.status === "ready" || review.status === "noop";
@@ -2013,13 +2123,16 @@ export {
   compareRuns,
   createCockpitApi,
   createHandoffPackage,
+  createShareInvite,
   ensureChromium,
   explainNextSteps,
   formatBrowserPlan,
   formatCompareReport,
   formatDoctorReport,
+  formatFetchPlan,
   formatHandoffPlan,
   formatHostConfigPlan,
+  formatSharePlan,
   formatHostConfigSummary,
   formatProbeReport,
   formatPromotePlan,
@@ -2044,6 +2157,12 @@ export {
   runAttach,
   planElementAdopt,
   formatElementAdoptPlan,
+  planWorkspaceFetch,
+  planWorkspacePush,
+  formatPushPlan,
+  planDesignApprove,
+  formatDesignApprovePlan,
+  listShares,
   probeApp,
   runScenario,
   setupProject,

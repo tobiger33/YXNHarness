@@ -8,11 +8,15 @@ import {
   buildWorkspaceReview,
   collectWorkspace,
   planWorkspaceAdopt,
+  planWorkspaceFetch,
+  planWorkspacePush,
 } from "./workspace.mjs";
 import { compareRuns } from "./compare-runs.mjs";
 import { promoteExpectsFromRun } from "./promote.mjs";
 import { planElementAdopt } from "./element-adopt.mjs";
 import { PHASES as ATTACH_PHASES } from "./attach.mjs";
+import { createShareInvite, listShares } from "./share.mjs";
+import { planDesignApprove } from "./design-approve.mjs";
 import {
   agentPanelState,
   bundleFeedback,
@@ -143,11 +147,15 @@ async function buildOverview(root, { refresh = true } = {}) {
       loopbackOnly: true,
       localWrites: [
         "POST /api/v1/workspace/adopt",
+        "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/push",
+        "POST /api/v1/workspace/fetch",
         "POST /api/v1/feedback",
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
         "POST /api/v1/elements/adopt",
         "POST /api/v1/attach",
+        "POST /api/v1/share",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -156,6 +164,9 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/workspace",
         "GET /api/v1/workspace/review",
         "POST /api/v1/workspace/adopt",
+        "POST /api/v1/workspace/approve",
+        "POST /api/v1/workspace/push",
+        "POST /api/v1/workspace/fetch",
         "GET /api/v1/runs",
         "GET /api/v1/runs/:runId",
         "GET /api/v1/compare",
@@ -168,6 +179,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/elements/adopt",
         "GET /api/v1/attach",
         "POST /api/v1/attach",
+        "GET /api/v1/share",
+        "POST /api/v1/share",
         "GET /api/v1/agent",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
@@ -318,11 +331,15 @@ function apiIndexPayload(projectRoot) {
     loopbackOnly: true,
     localWrites: [
       "POST /api/v1/workspace/adopt",
+      "POST /api/v1/workspace/approve",
+      "POST /api/v1/workspace/push",
+      "POST /api/v1/workspace/fetch",
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
       "POST /api/v1/elements/adopt",
       "POST /api/v1/attach",
+      "POST /api/v1/share",
     ],
     root: projectRoot,
     links: {
@@ -333,17 +350,21 @@ function apiIndexPayload(projectRoot) {
       workspace: "/api/v1/workspace",
       review: "/api/v1/workspace/review?ref=",
       adopt: "/api/v1/workspace/adopt",
+      approve: "/api/v1/workspace/approve",
+      push: "/api/v1/workspace/push",
+      fetch: "/api/v1/workspace/fetch",
       runs: "/api/v1/runs",
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
       promote: "/api/v1/promote?from=last-green",
       feedback: "/api/v1/feedback",
       elementsAdopt: "/api/v1/elements/adopt",
       attach: "/api/v1/attach",
+      share: "/api/v1/share",
       agent: "/api/v1/agent",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: workspace/file adopt, feedback, element adopt, attach. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite. No remote agent required.",
   };
 }
 
@@ -436,6 +457,52 @@ function createCockpitApi({
           comment: body.comment ?? body.note ?? null,
           paths,
           hunks: body.hunks ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/fetch" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = planWorkspaceFetch(projectRoot, {
+          remote: body.remote ?? null,
+          prune: body.prune !== false,
+          apply: body.apply === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/push" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = planWorkspacePush(projectRoot, {
+          remote: body.remote ?? null,
+          force: body.force === true,
+          apply: body.apply === true,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/workspace/approve" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await planDesignApprove(projectRoot, {
+          theirs: body.ref || body.theirs || body.branch,
+          apply: body.apply === true,
+          force: body.force === true,
+          note: body.note ?? body.comment ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/share" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await createShareInvite(projectRoot, {
+          apply: body.apply === true,
+          force: body.force === true,
+          note: body.note ?? body.comment ?? null,
+          shareId: body.shareId ?? body.id ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;
@@ -587,6 +654,11 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/workspace") {
         sendJson(response, 200, collectWorkspace(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/share") {
+        sendJson(response, 200, await listShares(projectRoot));
         return;
       }
 

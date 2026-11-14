@@ -130,6 +130,9 @@ npm run harness -- serve
 | GET | `/api/v1/workspace` | Full workspace snapshot + local branches |
 | GET | `/api/v1/workspace/review?ref=&path=` | Review file list (+ optional patch) |
 | POST | `/api/v1/workspace/adopt` | `{ ref, apply?, force?, paths?, path?, hunks?, comment? }` — loopback only |
+| POST | `/api/v1/workspace/approve` | `{ ref, apply?, force?, note? }` — design approve (whole-branch adopt) |
+| POST | `/api/v1/workspace/push` | `{ apply?, remote?, force? }` — push current branch (force = force-with-lease) |
+| POST | `/api/v1/workspace/fetch` | `{ apply?, remote?, prune? }` — on-demand remote refresh |
 | GET | `/api/v1/overview` | Includes a short `workspace` summary |
 
 Adopt body modes:
@@ -138,14 +141,54 @@ Adopt body modes:
 - `paths: ["a.js"]` (or `path`) → file adopt into the index
 - `path` + `hunks: [1,3]` → hunk adopt into the index
 
-Adopt is the only git write route on `serve`. Checkout/create stay on the CLI.
-Other local writes (feedback, element adopt, attach) are documented in [`cockpit-api.md`](cockpit-api.md).
+## Design approve
+
+Whole-branch host approval with a fixed semantic note. No push.
+
+```sh
+npm run harness -- workspace --approve feature/demo --dry-run
+npm run harness -- workspace --approve feature/demo --apply
+npm run harness -- workspace --approve feature/demo --apply --note "Design approved · keep copy"
+```
+
+Cockpit Changes: **Design passt** → `POST /api/v1/workspace/approve`. After apply,
+the UI offers **Push** then **Remotes aktualisieren**.
+
+## Push (publish current branch)
+
+Host-controlled push of the current branch. No network until `--apply`.
+Never plain `--force` or `--delete` — `--force` maps to `--force-with-lease`.
+
+```sh
+npm run harness -- workspace --push --dry-run
+npm run harness -- workspace --push --apply
+npm run harness -- workspace --push --remote origin --apply
+npm run harness -- workspace --push --force --apply   # force-with-lease only
+```
+
+If there is no upstream yet, push sets `-u <remote> <branch>`.
+
+## Fetch (refresh remotes)
+
+```sh
+npm run harness -- workspace --fetch --dry-run
+npm run harness -- workspace --fetch --apply
+npm run harness -- workspace --fetch --remote origin --apply
+```
+
+Updates remote-tracking refs only (optional prune). No checkout, merge, or push.
+Prefer on-demand fetch after a known push — see [`share.md`](share.md).
+
+Adopt, approve, push, and fetch are the git write routes on `serve`. Checkout/create stay on the CLI.
+Other local writes (feedback, element adopt, attach, share) are documented in [`cockpit-api.md`](cockpit-api.md).
 
 ## What this is not
 
-- Not fetch / push / upstream setup
+- Not remote create / delete / plain `--force` (push uses force-with-lease only)
 - Not hosted preview binding
 - Not interactive `git checkout -p` / conflict auto-resolve
 - Not a substitute for the coding agent's own Git UI
+- Not a background poller
 
-See also [`vision.md`](vision.md) and [`cockpit-foundation.md`](cockpit-foundation.md).
+See also [`vision.md`](vision.md), [`share.md`](share.md), and
+[`cockpit-foundation.md`](cockpit-foundation.md).

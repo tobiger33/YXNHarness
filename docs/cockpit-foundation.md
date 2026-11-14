@@ -79,9 +79,14 @@ npm run harness -- compare --json
 Diffs state and screenshots between `last-green` and `last-run` (or explicit
 run ids). See [`compare.md`](compare.md).
 
+## Share invites
+
+Local view/comment packages under `artifacts/shares/` — see [`share.md`](share.md).
+A future web link can carry the same JSON; grants never silently become write/merge.
+
 ## What this is not
 
-- Not collaboration hosting
-- Not share-link enforcement (policy data only for now)
-- Not Git fetch / push (local create/checkout only; remotes stay outside)
+- Not collaboration hosting (share invites are local files / policy JSON for now)
+- Not share-link enforcement on a public CDN
+- Not remote admin (create/delete remotes); push/fetch are host-controlled on-demand only
 - Not the designer UI — that comes later on top of this data
