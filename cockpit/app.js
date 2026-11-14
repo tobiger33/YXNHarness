@@ -307,7 +307,7 @@ function renderChips() {
     button.setAttribute("aria-label", `${label} entfernen`);
     button.innerHTML = '<i data-lucide="x" aria-hidden="true"></i>';
     button.onclick = () => {
-      if (state.selection && label === `${state.selection.id} · ${state.selection.route}`) { clearElementSelection(); return; }
+      if (state.selection && label === `${state.selection.label} · ${state.selection.route}`) { clearElementSelection(); return; }
       state.contexts = state.contexts.filter((entry) => entry !== label);
       renderChips();
       persistUi();
@@ -669,7 +669,7 @@ async function sendMessage() {
         `Context: ${state.contexts.join(", ") || "(none)"}`,
         ...(selection ? [
           `Intent: ${selection.intent === "adopt" ? "adapt selected element into target branch" : "comment on selected element"}`,
-          `Element: ${selection.id}`,
+          `Elements: ${(selection.elements || [selection]).map((element) => element.id).join(", ")}`,
           `Route: ${selection.route}`,
           `Source: ${selection.source.branch || "—"} @ ${selection.source.commit || "—"}`,
           `Target: ${state.workspace?.branch || "—"}`,
@@ -700,7 +700,7 @@ async function sendMessage() {
       answer.append(p);
     } else if (selection?.intent === "adopt") {
       const payload = {
-        elements: [{ id: selection.id, kind: selection.kind, label: selection.label, source: selection.source }],
+        elements: (selection.elements || [selection]).map((element) => ({ id: element.id, kind: element.kind, label: element.label, source: { ...selection.source, elementId: element.id } })),
         body: value,
         route: selection.route,
         viewport: q("#device").value,
@@ -725,6 +725,7 @@ async function sendMessage() {
         route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
         element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
         source: selection?.source || null,
+        appState: selection?.elements?.length > 1 ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, source: { ...selection.source, elementId: element.id } })) } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
@@ -935,23 +936,30 @@ function renderElementSelection() {
   q("#selection-context-name").textContent = selected.label;
   q("#selection-context-branches").textContent = `${selected.source.branch || "Current preview"} → ${state.workspace?.branch || "Current branch"}`;
   q("#selection-context-route").textContent = `${selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
+  q("#selection-context-elements").textContent = (selected.elements || []).length > 1 ? selected.elements.map((element) => element.label).join(" · ") : "";
+  q("#selection-context-elements").hidden = (selected.elements || []).length < 2;
   q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
 
 }
 function selectElement(element, anchor) {
-  if (state.selection) state.contexts = state.contexts.filter((entry) => entry !== `${state.selection.id} · ${state.selection.route}`);
+  const elements = Array.isArray(element) ? element : [element];
+  if (!elements.length) { clearElementSelection(); return; }
+  element = elements[0];
+  if (state.selection) state.contexts = state.contexts.filter((entry) => entry !== `${state.selection.label} · ${state.selection.route}`);
   selectedAnchor = anchor;
   state.selection = {
     ...element,
+    elements,
+    label: elements.length > 1 ? `${elements.length} elements` : element.label,
     intent: "comment",
     source: { branch: state.workspace?.branch || null, commit: state.workspace?.commit || null, elementId: element.id },
   };
-  addContext(`${element.id} · ${element.route}`);
+  addContext(`${state.selection.label} · ${element.route}`);
   renderElementSelection();
 }
 function clearElementSelection() {
   if (state.selection) {
-    const label = `${state.selection.id} · ${state.selection.route}`;
+    const label = `${state.selection.label} · ${state.selection.route}`;
     state.contexts = state.contexts.filter((entry) => entry !== label);
   }
   state.selection = null;

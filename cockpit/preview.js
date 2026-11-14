@@ -121,29 +121,93 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     hovered = element;
     hovered?.classList.add("demo-hover");
   }
-  function choose(element) {
+  function chooseMany(elements) {
+    const unique = [...new Set(elements)];
     for (const selected of demo.querySelectorAll(".demo-selected")) selected.classList.remove("demo-selected");
-    element.classList.add("demo-selected");
-    select({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }, element);
+    unique.forEach((element) => element.classList.add("demo-selected"));
+    if (!unique.length) { select([], null); return; }
+    const entries = unique.map((element) => ({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }));
+    select(entries.length === 1 ? entries[0] : entries, unique[0]);
   }
+  function choose(element) { chooseMany([element]); }
+  const marquee = document.createElement("div");
+  marquee.className = "selection-marquee";
+  marquee.setAttribute("aria-hidden", "true");
+  marquee.hidden = true;
+  surface.append(marquee);
+  let drag = null;
+  let suppressClick = false;
+  window.addEventListener("pointerup", () => { setTimeout(() => { suppressClick = false; }, 0); });
+  function boxAt(event) {
+    const rect = surface.getBoundingClientRect();
+    const x = Math.max(rect.left, Math.min(event.clientX, rect.right));
+    const y = Math.max(rect.top, Math.min(event.clientY, rect.bottom));
+    return { left: Math.min(drag.x, x), top: Math.min(drag.y, y), right: Math.max(drag.x, x), bottom: Math.max(drag.y, y) };
+  }
+  function inside(box) {
+    return [...demo.querySelectorAll("[data-demo-element]")].filter((element) => {
+      if (!element.getClientRects().length) return false;
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && rect.left >= box.left - 1 && rect.top >= box.top - 1 && rect.right <= box.right + 1 && rect.bottom <= box.bottom + 1;
+    });
+  }
+  function cancelDrag() {
+    if (drag && surface.hasPointerCapture(drag.pointerId)) surface.releasePointerCapture(drag.pointerId);
+    drag = null;
+    marquee.hidden = true;
+    root.classList.remove("is-marquee-dragging");
+    for (const element of demo.querySelectorAll(".demo-candidate")) element.classList.remove("demo-candidate");
+  }
+  surface.addEventListener("pointerdown", (event) => {
+    if (!selecting() || previewUrl || event.button !== 0 || event.target.closest(".region-status")) return;
+    event.preventDefault();
+    suppressClick = true;
+    hover(null);
+    drag = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, target: event.target.closest("[data-demo-element]"), additive: event.shiftKey, previous: [...demo.querySelectorAll(".demo-selected")] };
+    surface.setPointerCapture(event.pointerId);
+  });
+  surface.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const box = boxAt(event);
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
+    drag.moved = true;
+    root.classList.add("is-marquee-dragging");
+    const rect = surface.getBoundingClientRect();
+    marquee.hidden = false;
+    Object.assign(marquee.style, { left: `${box.left - rect.left}px`, top: `${box.top - rect.top}px`, width: `${box.right - box.left}px`, height: `${box.bottom - box.top}px` });
+    const matched = new Set(inside(box));
+    for (const element of demo.querySelectorAll("[data-demo-element]")) element.classList.toggle("demo-candidate", matched.has(element));
+  });
+  surface.addEventListener("pointerup", (event) => {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const matched = drag.moved ? inside(boxAt(event)) : drag.target ? [drag.target] : [];
+    const result = drag.additive ? [...drag.previous, ...matched] : matched;
+    cancelDrag();
+    chooseMany(result);
+  });
+  surface.addEventListener("pointercancel", () => { suppressClick = false; cancelDrag(); });
+  surface.addEventListener("lostpointercapture", () => { if (drag) cancelDrag(); });
+  surface.addEventListener("click", (event) => {
+    if (suppressClick) { suppressClick = false; event.preventDefault(); event.stopPropagation(); return; }
+    if (!selecting() || previewUrl) return;
+    event.preventDefault(); event.stopPropagation();
+    // Keyboard/assistive activation has no preceding pointer gesture.
+    if (event.detail === 0) {
+      const element = event.target.closest("[data-demo-element]");
+      if (element) choose(element);
+    }
+  }, true);
   demo.addEventListener("pointerover", (event) => {
-    if (selecting()) hover(event.target.closest("[data-demo-element]"));
+    if (selecting() && !drag) hover(event.target.closest("[data-demo-element]"));
   });
   demo.addEventListener("pointerleave", () => hover(null));
-  demo.addEventListener("click", (event) => {
-    if (!selecting()) return;
-    const element = event.target.closest("[data-demo-element]");
-    if (!element || !demo.contains(element)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    choose(element);
-  }, true);
   root.addEventListener("yxn:selection-clear", () => {
-    hover(null);
+    cancelDrag(); hover(null);
     for (const element of demo.querySelectorAll(".demo-selected")) element.classList.remove("demo-selected");
   });
   const tabIndices = new Map();
   root.addEventListener("yxn:selection-mode", () => {
+    cancelDrag();
     hover(null);
     for (const element of demo.querySelectorAll("[data-demo-element]")) {
       if (selecting()) {

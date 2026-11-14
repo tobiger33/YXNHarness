@@ -110,3 +110,13 @@ Select highlights the hovered/chosen element; nested clicks choose the closest
 registered element. Enter/Space also select focused example elements. Interact
 restores normal controls and navigation. This does not implement an inspector
 for arbitrary embedded third-party apps; those still require their opt-in adapter.
+
+In example Select mode, dragging a rectangle selects all fully enclosed,
+registered visible elements. It works in either direction; Shift adds to the
+existing selection. A short click still selects one element. Pointer cancellation
+or Escape cancels the gesture without activating app controls. Group identity,
+route and revision persist in the composer. Adaptation requests pass the complete
+elements array; grouped comments preserve all members in feedback appState.
+The rectangle is a thin, non-interactive outline with a very light fill; actions
+and metadata stay above the preview and in the composer. The composer uses a
+neutral outer focus treatment instead of a blue outline around its textarea.

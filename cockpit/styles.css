@@ -203,3 +203,14 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
 #yxn-workbench .selection-context>span { display: block; font-size: 10px; margin-top: 6px; color: var(--faint); }
 #yxn-workbench .selection-context .icon-button { padding: 1px 4px; }
 #yxn-workbench .sent-selection-context { margin-top: 6px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+
+/* The composer owns its focus treatment; no blue box inside the text field. */
+#yxn-workbench #composer #chat-input:focus,
+#yxn-workbench #composer #chat-input:focus-visible { outline: none; }
+#yxn-workbench #composer:has(#chat-input:focus-visible) { outline: 1px solid var(--muted); outline-offset: 1px; }
+
+#yxn-workbench .selection-marquee { position: absolute; border: 1px solid var(--inspect); background: color-mix(in srgb,var(--inspect) 8%,transparent); pointer-events: none; z-index: 3; }
+#yxn-workbench.is-selecting .demo-candidate { outline: 1px solid var(--inspect); outline-offset: 2px; }
+#yxn-workbench.is-selecting #app-preview { touch-action: none; }
+#yxn-workbench.is-marquee-dragging #demo-preview { user-select: none; }
+#yxn-workbench #selection-context-elements { max-height: 70px; overflow: auto; }

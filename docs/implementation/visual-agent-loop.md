@@ -126,3 +126,12 @@ UI regression test already available:
 `HARNESS_BROWSER_CHANNEL=chrome node --test tests/cockpit-preview.test.mjs`
 Omit HARNESS_BROWSER_CHANNEL where the installed Playwright Chromium is used.
 Do not claim the inspector/upload/agent steps passed until their real integrations exist.
+
+## UI update: rectangle groups
+
+Example Select now supports drag rectangles and Shift-additive groups. The
+composer retains every member ID, route and source identity; adaptation uses
+an elements array. Group comments currently retain members under
+`identity.appState.selectedElements` alongside the primary element identity.
+The live inspector contract must support equivalent multi-selection payloads
+rather than reducing a dragged group to a single element.

@@ -53,6 +53,19 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.locator('[data-demo-element="SubmitButton"]').click();
     await page.locator('[data-demo-step="complete"]').waitFor();
     assert.equal(await page.locator("#demo-complete-name").innerText(), "Alex");
+    assert.equal(await page.locator("#chat-input").evaluate((element) => getComputedStyle(element).outlineStyle), "none");
+
+    await page.locator("#select-tool").click();
+    const title = await page.locator('[data-demo-element="CompleteHeading"]').boundingBox();
+    const description = await page.locator('[data-demo-element="CompleteDescription"]').boundingBox();
+    await page.mouse.move(title.x - 4, title.y - 4);
+    await page.mouse.down();
+    await page.mouse.move(description.x + description.width + 4, description.y + description.height + 4, { steps: 8 });
+    await page.mouse.up();
+    assert.equal(await page.locator("#selection-context-name").innerText(), "2 elements");
+    assert.match(await page.locator("#selection-context-elements").innerText(), /CompleteHeading/);
+    assert.match(await page.locator("#selection-context-elements").innerText(), /CompleteDescription/);
+    await page.keyboard.press("Escape");
 
     await page.locator("#open-preview").click();
     await page.locator("#connect-preview-dialog input").fill("http://127.0.0.1:4189/");
