@@ -1,3 +1,5 @@
+import { mountAttachments } from "/cockpit/attachments.js";
+
 const root = document.getElementById("yxn-workbench");
 const q = (s) => root.querySelector(s);
 const qa = (s) => [...root.querySelectorAll(s)];
@@ -627,6 +629,7 @@ async function sendMessage() {
   const user = document.createElement("div");
   user.className = "user-message";
   user.textContent = value;
+  attachments.appendToMessage(user);
   feed.append(user);
   q("#chat-input").value = "";
 
@@ -649,6 +652,7 @@ async function sendMessage() {
         `Commit: ${state.workspace?.commit || "—"}`,
         `Review branch: ${state.reviewBranch || "—"}`,
         `Context: ${state.contexts.join(", ") || "(none)"}`,
+        ...(attachments.names().length ? [`Local images (attach separately): ${attachments.names().join(", ")}`] : []),
         `Model preference: ${state.model} / ${state.reasoning}`,
         "",
         value,
@@ -834,14 +838,7 @@ function setTool(on) {
 }
 q("#select-tool").addEventListener("click", () => setTool(true));
 q("#interact-tool").addEventListener("click", () => setTool(false));
-q("#capture").addEventListener("click", () => {
-  addContext(`Screenshot · ${state.view}`);
-  toast("Screenshot reference added to context (local chip only).");
-});
-q("#screenshot").addEventListener("click", () => {
-  addContext(`Screenshot · ${state.view}`);
-  toast("Screenshot reference added to context (local chip only).");
-});
+const attachments = mountAttachments(root, toast);
 q("#add-context").addEventListener("click", () => addContext(state.workspace?.branch || "branch"));
 q("#device").addEventListener("change", (event) => {
   q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";
@@ -878,6 +875,7 @@ qa("[data-nav]").forEach((item) => {
 q("#back-workbench").addEventListener("click", () => setView(state.view));
 q("#new-chat").addEventListener("click", () => {
   state.contexts = [];
+  void attachments.clear();
   renderChips();
   renderChatSeed();
   persistUi();

@@ -104,11 +104,15 @@
       </div>
       <div class="composer-area">
         <div class="context-controls"><button id="add-context"><i data-lucide="plus" aria-hidden="true"></i>Add context</button><button id="screenshot"><i data-lucide="image" aria-hidden="true"></i>Screenshot</button></div>
-        <div class="composer" id="composer" role="group" aria-label="Agent composer"><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
+        <div class="composer" id="composer" role="group" aria-label="Agent composer"><input type="file" id="attachment-picker" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><div class="attachment-tray" id="attachment-tray" aria-label="Local image attachments — click to preview" hidden></div><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
         <div class="composer-footnote"><span id="composer-note">No agent adapter connected</span><span>↵ to send</span></div>
       </div>
     </aside>
   </div>
+  <dialog class="attachment-viewer" id="attachment-viewer" aria-labelledby="attachment-title">
+    <header class="attachment-viewer-head"><div><h2 id="attachment-title">Screenshot</h2><p class="attachment-details"></p></div><button type="button" class="icon-button attachment-close" aria-label="Close image preview">×</button></header>
+    <div class="attachment-image-area"><img alt=""></div>
+  </dialog>
   <div class="notice" id="notice" role="status" hidden></div>
 </div>
 <script src="https://unpkg.com/lucide@1.17.0/dist/umd/lucide.min.js"></script>
