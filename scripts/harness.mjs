@@ -45,6 +45,10 @@ import {
   formatCompareReport,
 } from "./compare-runs.mjs";
 import {
+  formatPromotePlan,
+  promoteExpectsFromRun,
+} from "./promote.mjs";
+import {
   DEFAULT_PORT as COCKPIT_DEFAULT_PORT,
   createCockpitApi,
 } from "./cockpit-api.mjs";
@@ -80,6 +84,7 @@ const USAGE = `Usage:
   npm run harness -- workspace [--root path] [--checkout|--create|--review|--adopt branch] [--path file] [--start branch] [--dry-run|--apply] [--force] [--json]
   npm run harness -- handoff [--root path] [--from last-green|last-run|<runId>] [--note text] [--out path] [--dry-run|--apply] [--force] [--json]
   npm run harness -- compare [--root path] [--baseline last-green|last-run|<runId>] [--against last-run|last-green|<runId>] [--json]
+  npm run harness -- promote [--root path] [--from last-green|last-run|<runId>] [--out path] [--name name] [--dry-run|--apply] [--force] [--strict] [--json]
   npm run harness -- serve [--root path] [--port ${COCKPIT_DEFAULT_PORT}] [--json]
   npm run harness -- run <scenario.yaml> [--root path] [--dry-run]
   npm run harness -- --help`;
@@ -95,7 +100,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10000;
 function parseArgs(argv) {
   const [action, ...rest] = argv;
   if (action === "--help" || action === "-h" || action === "help") return { help: true };
-  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "serve"].includes(action)) {
+  if (!["run", "doctor", "setup", "probe", "scaffold", "host-config", "status", "workspace", "handoff", "compare", "promote", "serve"].includes(action)) {
     throw new Error(USAGE);
   }
 
@@ -121,6 +126,7 @@ function parseArgs(argv) {
     path: null,
     baseline: null,
     against: null,
+    strict: false,
   };
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
@@ -193,6 +199,8 @@ function parseArgs(argv) {
       if (!against || against.startsWith("--")) throw new Error("--against requires last-run, last-green, or a runId.");
       options.against = against;
       index += 1;
+    } else if (argument === "--strict") {
+      options.strict = true;
     } else if (argument === "--note") {
       const note = rest[index + 1];
       if (note === undefined || note.startsWith("--")) throw new Error("--note requires text.");
@@ -228,26 +236,26 @@ function parseArgs(argv) {
   if (action !== "run" && options.scenario) throw new Error(`${action} does not accept a scenario path.`);
   if (action === "run" && (options.apply || options.json || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.baseline || options.against || options.port !== null)) {
+      options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("run does not support setup/scaffold/host-config/handoff/serve flags.");
   }
   if (action === "doctor" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.baseline || options.against || options.port !== null)) {
+      options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("doctor is read-only and does not accept mutating flags.");
   }
   if (action === "probe" && (options.apply || options.dryRun || options.installBrowser || options.force ||
       options.init || options.name || options.out || options.from || options.note ||
-      options.baseline || options.against || options.port !== null)) {
+      options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("probe does not accept mutating/scaffold/handoff/serve flags. Use --yes only for Chromium consent.");
   }
   if (action === "status" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.baseline || options.against || options.port !== null)) {
+      options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("status only accepts --root and --json.");
   }
   if (action === "workspace" && (options.installBrowser || options.yes || options.init || options.name ||
-      options.out || options.from || options.baseline || options.against || options.port !== null)) {
+      options.out || options.from || options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("workspace accepts --root/--json/--checkout/--create/--review/--adopt/--path/--start/--note/--dry-run/--apply/--force only.");
   }
   if (action === "workspace" && options.note && !options.adopt) {
@@ -291,20 +299,20 @@ function parseArgs(argv) {
   if (options.installBrowser && action !== "setup") {
     throw new Error("--install-browser is only valid with setup.");
   }
-  if (options.name && action !== "scaffold") {
-    throw new Error("--name is only valid with scaffold.");
+  if (options.name && !["scaffold", "promote"].includes(action)) {
+    throw new Error("--name is only valid with scaffold or promote.");
   }
-  if (options.out && !["scaffold", "handoff"].includes(action)) {
-    throw new Error("--out is only valid with scaffold or handoff.");
+  if (options.out && !["scaffold", "handoff", "promote"].includes(action)) {
+    throw new Error("--out is only valid with scaffold, handoff, or promote.");
   }
-  if (options.force && !["scaffold", "host-config", "handoff", "workspace"].includes(action)) {
-    throw new Error("--force is only valid with scaffold, host-config, handoff, or workspace.");
+  if (options.force && !["scaffold", "host-config", "handoff", "workspace", "promote"].includes(action)) {
+    throw new Error("--force is only valid with scaffold, host-config, handoff, workspace, or promote.");
   }
   if (options.init && action !== "host-config") {
     throw new Error("--init is only valid with host-config.");
   }
-  if (options.from && action !== "handoff") {
-    throw new Error("--from is only valid with handoff.");
+  if (options.from && !["handoff", "promote"].includes(action)) {
+    throw new Error("--from is only valid with handoff or promote.");
   }
   if (options.note && !["handoff", "workspace"].includes(action)) {
     throw new Error("--note is only valid with handoff or workspace --adopt.");
@@ -312,11 +320,14 @@ function parseArgs(argv) {
   if ((options.baseline || options.against) && action !== "compare") {
     throw new Error("--baseline and --against are only valid with compare.");
   }
+  if (options.strict && action !== "promote") {
+    throw new Error("--strict is only valid with promote.");
+  }
   if (options.port !== null && action !== "serve") {
     throw new Error("--port is only valid with serve.");
   }
   if (action === "host-config" && (options.installBrowser || options.yes || options.name || options.out ||
-      options.from || options.note || options.baseline || options.against || options.port !== null)) {
+      options.from || options.note || options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("host-config accepts --init/--dry-run/--apply/--force/--json/--root only.");
   }
   if (action === "host-config" && (options.apply || options.force) && !options.init) {
@@ -326,17 +337,25 @@ function parseArgs(argv) {
     throw new Error("scaffold does not accept --install-browser. Use --yes only to consent to a missing Chromium install.");
   }
   if (action === "handoff" && (options.installBrowser || options.yes || options.init || options.name ||
-      options.baseline || options.against || options.port !== null)) {
+      options.baseline || options.against || options.strict || options.port !== null)) {
     throw new Error("handoff accepts --from/--note/--out/--dry-run/--apply/--force/--json/--root only.");
   }
   if (action === "compare" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.port !== null)) {
+      options.strict || options.port !== null)) {
     throw new Error("compare accepts --root/--json/--baseline/--against only.");
+  }
+  if (action === "promote" && (options.installBrowser || options.yes || options.init || options.note ||
+      options.baseline || options.against || options.port !== null || options.checkout || options.create ||
+      options.review || options.adopt || options.path || options.start)) {
+    throw new Error("promote accepts --root/--json/--from/--out/--name/--dry-run/--apply/--force/--strict only.");
+  }
+  if (action === "promote" && options.apply && options.dryRun) {
+    throw new Error("--dry-run and --apply cannot be used together.");
   }
   if (action === "serve" && (options.apply || options.dryRun || options.installBrowser || options.yes ||
       options.force || options.init || options.name || options.out || options.from || options.note ||
-      options.baseline || options.against)) {
+      options.baseline || options.against || options.strict)) {
     throw new Error("serve accepts --root/--port/--json only. It binds loopback and is read-only.");
   }
   return options;
@@ -416,6 +435,12 @@ function explainNextSteps(report) {
     command: "npm run harness -- compare --json",
     then: "npm run harness -- compare --baseline last-green --against last-run --json",
     why: "Diffs state + screenshots between a baseline run and a candidate (evidence for visual claims).",
+  });
+  steps.push({
+    id: "promote",
+    command: "npm run harness -- promote --from last-green --dry-run",
+    then: "npm run harness -- promote --from last-green --apply",
+    why: "Copies after-state from a green run into scenario expects — durable checks without hand-writing YAML.",
   });
   steps.push({
     id: "serve",
@@ -1342,6 +1367,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log("workspace: --create/--checkout/--review/--adopt <branch> (adopt merges theirs into yours; dirty trees need --force).");
     console.log("handoff bundles one run into artifacts/handoffs/<id> for a trusted coding agent (preview with --dry-run).");
     console.log("compare diffs last-green vs last-run (or explicit run ids) — state + screenshot evidence.");
+    console.log("promote copies after-state from a green run into scenario expects (--dry-run, then --apply).");
     console.log(`serve starts the cockpit UI + read API on 127.0.0.1:${COCKPIT_DEFAULT_PORT} (open / for the shell).`);
     return null;
   }
@@ -1550,6 +1576,20 @@ async function main(argv = process.argv.slice(2)) {
     if (!report.ok) process.exitCode = 1;
     return report;
   }
+  if (options.action === "promote") {
+    const plan = await promoteExpectsFromRun(root, {
+      from: options.from || "last-green",
+      out: options.out,
+      apply: options.apply,
+      force: options.force,
+      strict: options.strict,
+      name: options.name,
+    });
+    plan.ok = plan.ok === true || plan.status === "ready" || plan.status === "written";
+    console.log(options.json ? JSON.stringify(plan, null, 2) : formatPromotePlan(plan));
+    if (!plan.ok) process.exitCode = 1;
+    return plan;
+  }
   if (options.action === "serve") {
     const api = createCockpitApi({
       root,
@@ -1652,6 +1692,7 @@ export {
   formatHostConfigPlan,
   formatHostConfigSummary,
   formatProbeReport,
+  formatPromotePlan,
   formatRunIndex,
   formatScaffoldPlan,
   formatSetupPlan,
@@ -1661,6 +1702,7 @@ export {
   loadHostConfig,
   matchesExpected,
   parseArgs,
+  promoteExpectsFromRun,
   probeApp,
   runScenario,
   setupProject,
