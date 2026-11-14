@@ -51,6 +51,16 @@ capabilities (models, streaming, file changes, …). Unsupported UI is not shown
 Activity (reads, diffs, previews) will land in the Agent panel when an adapter
 is connected.
 
+## Element adopt
+
+To take Compare/Preview picks into your branch as element-scoped threads:
+
+```sh
+npm run harness -- elements --adopt --element ContinueButton --source-branch feature/x --apply
+```
+
+See [`elements.md`](elements.md).
+
 ## API
 
 | Method | Path | Notes |
@@ -60,6 +70,7 @@ is connected.
 | POST | `/api/v1/feedback` | Create (`apply` default true) |
 | PATCH | `/api/v1/feedback/:id` | Append body / set `open`\|`done` |
 | POST | `/api/v1/feedback/bundle` | Bundle into handoff |
+| POST | `/api/v1/elements/adopt` | Visual element adopt → feedback (+ optional handoff) |
 | GET | `/api/v1/agent` | Honest connection stub |
 
-See also [`handoff.md`](handoff.md) and [`vision.md`](vision.md).
+See also [`handoff.md`](handoff.md), [`elements.md`](elements.md), and [`vision.md`](vision.md).

@@ -27,6 +27,7 @@ import {
   agentPanelState,
   runAttach,
   formatAttachPlan,
+  planElementAdopt,
   setupProject,
   stopChild,
   validateConfig,
@@ -238,6 +239,10 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     route: null,
     viewport: null,
     element: null,
+    elements: [],
+    elementsAdopt: false,
+    sourceBranch: null,
+    withHandoff: false,
     runId: null,
     id: null,
     bundle: null,
@@ -366,6 +371,17 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     route: "/",
     apply: true,
   });
+  assert.deepEqual(parseArgs(["elements", "--adopt", "--element", "ContinueButton", "--element", "WealthWidget", "--source-branch", "feature/x", "--with-handoff"]), {
+    ...base,
+    action: "elements",
+    elementsAdopt: true,
+    element: "ContinueButton",
+    elements: ["ContinueButton", "WealthWidget"],
+    sourceBranch: "feature/x",
+    withHandoff: true,
+  });
+  assert.throws(() => parseArgs(["elements", "--element", "x"]), /requires --adopt/);
+  assert.throws(() => parseArgs(["elements", "--adopt"]), /at least one --element/);
   assert.deepEqual(parseArgs(["feedback", "--bundle", "fb_1,fb_2", "--from", "last-green", "--force"]), {
     ...base,
     action: "feedback",
@@ -400,7 +416,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, feedback, or attach/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, feedback, elements, or attach/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
@@ -470,6 +486,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "compare"));
     assert.ok(steps.some((step) => step.id === "promote"));
     assert.ok(steps.some((step) => step.id === "feedback"));
+    assert.ok(steps.some((step) => step.id === "elements"));
     assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
@@ -882,6 +899,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
+      "POST /api/v1/elements/adopt",
     ]);
     assert.equal(overview.workspace.available, false);
 
@@ -1168,6 +1186,39 @@ test("feedback threads persist, resolve, and bundle into handoffs", async () => 
     const agent = agentPanelState();
     assert.equal(agent.connected, false);
     assert.equal(agent.capabilities.streaming, false);
+
+    const elementPreview = await planElementAdopt(root, {
+      elements: [{ id: "WealthWidget", label: "Wealth score", source: { branch: "feature/dashboard" } }],
+      sourceBranch: "feature/dashboard",
+      body: "Bring wealth widget into my branch",
+      apply: false,
+    });
+    assert.equal(elementPreview.status, "ready");
+    assert.equal(elementPreview.mode, "dry-run");
+    assert.equal(elementPreview.elements[0].id, "WealthWidget");
+
+    const elementApplied = await planElementAdopt(root, {
+      elements: [
+        { id: "WealthWidget", label: "Wealth score", source: { branch: "feature/dashboard" } },
+        "ContinueButton",
+      ],
+      sourceBranch: "feature/dashboard",
+      apply: true,
+    });
+    assert.equal(elementApplied.status, "applied");
+    assert.equal(elementApplied.threads.length, 2);
+    assert.equal(elementApplied.threads[0].elementId, "WealthWidget");
+    assert.ok(elementApplied.manifestPath);
+    const adoptManifest = JSON.parse(await readFile(path.join(root, elementApplied.manifestPath), "utf8"));
+    assert.equal(adoptManifest.elements[0].id, "WealthWidget");
+    assert.equal(adoptManifest.sourceBranch, "feature/dashboard");
+    const wealthThread = JSON.parse(await readFile(
+      path.join(root, "artifacts", "feedback", "threads", `${elementApplied.threads[0].threadId}.json`),
+      "utf8",
+    ));
+    assert.equal(wealthThread.scope, "element");
+    assert.equal(wealthThread.identity.source.branch, "feature/dashboard");
+    assert.equal(wealthThread.identity.element.id, "WealthWidget");
 
     const bundled = await bundleFeedback(root, {
       threadIds: [created.thread.threadId],

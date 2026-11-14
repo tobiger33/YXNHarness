@@ -157,7 +157,13 @@ npm run harness -- feedback --create --body "Tighten the primary CTA" --route / 
 npm run harness -- feedback --bundle <threadId> --from last-green --apply
 ```
 
-See [`docs/feedback.md`](docs/feedback.md).
+Adopt visual elements from a source branch into your branch as element-scoped feedback:
+
+```sh
+npm run harness -- elements --adopt --element ContinueButton --source-branch feature/onboarding --apply
+```
+
+See [`docs/feedback.md`](docs/feedback.md) and [`docs/elements.md`](docs/elements.md).
 
 Serve the local workbench cockpit (Preview / Compare / Changes + Agent panel):
 

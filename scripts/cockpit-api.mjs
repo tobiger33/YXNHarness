@@ -11,6 +11,7 @@ import {
 } from "./workspace.mjs";
 import { compareRuns } from "./compare-runs.mjs";
 import { promoteExpectsFromRun } from "./promote.mjs";
+import { planElementAdopt } from "./element-adopt.mjs";
 import {
   agentPanelState,
   bundleFeedback,
@@ -144,6 +145,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/feedback",
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
+        "POST /api/v1/elements/adopt",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -161,6 +163,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/feedback",
         "PATCH /api/v1/feedback/:id",
         "POST /api/v1/feedback/bundle",
+        "POST /api/v1/elements/adopt",
         "GET /api/v1/agent",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
@@ -314,6 +317,7 @@ function apiIndexPayload(projectRoot) {
       "POST /api/v1/feedback",
       "PATCH /api/v1/feedback/:id",
       "POST /api/v1/feedback/bundle",
+      "POST /api/v1/elements/adopt",
     ],
     root: projectRoot,
     links: {
@@ -328,11 +332,12 @@ function apiIndexPayload(projectRoot) {
       compare: "/api/v1/compare?baseline=last-green&against=last-run",
       promote: "/api/v1/promote?from=last-green",
       feedback: "/api/v1/feedback",
+      elementsAdopt: "/api/v1/elements/adopt",
       agent: "/api/v1/agent",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt + feedback. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: workspace/file adopt, feedback, element adopt. No remote agent required.",
   };
 }
 
@@ -404,6 +409,25 @@ function createCockpitApi({
           appState: body.appState ?? null,
           element: body.element ?? null,
           source: body.source ?? null,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/elements/adopt" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await planElementAdopt(projectRoot, {
+          elements: body.elements || body.elementIds || [],
+          body: body.body ?? body.text ?? body.message ?? null,
+          route: body.route ?? null,
+          viewport: body.viewport ?? null,
+          sourceBranch: body.sourceBranch ?? body.source?.branch ?? null,
+          sourceCommit: body.sourceCommit ?? body.source?.commit ?? null,
+          apply: body.apply === true,
+          withHandoff: body.withHandoff === true || body.bundle === true,
+          from: body.from || "last-green",
+          force: body.force === true,
+          note: body.note ?? body.comment ?? null,
         });
         sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
         return;

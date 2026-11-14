@@ -54,6 +54,7 @@ See [attach](docs/attach.md),
 [project setup](docs/project-setup.md),
 [cockpit foundation](docs/cockpit-foundation.md),
 [workspace](docs/workspace.md),
+[elements](docs/elements.md),
 [handoff](docs/handoff.md), and
 [cockpit API](docs/cockpit-api.md).
 
