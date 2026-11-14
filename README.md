@@ -1,4 +1,10 @@
-# YXNHarness
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/yxnharness-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/yxnharness-logo-light.svg">
+    <img src="docs/assets/yxnharness-logo-light.svg" alt="YXNHarness" width="248" height="40">
+  </picture>
+</h1>
 
 An agent-neutral harness for building and validating visual changes in existing
 software projects. The long-term goal is to support UI and animation work
