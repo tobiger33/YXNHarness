@@ -28,7 +28,8 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.locator('[data-demo-element="OnboardingHeading"]').click();
     assert.equal(await page.locator("#selection-context-name").innerText(), "OnboardingHeading");
     await page.locator('[data-demo-element="FuturePlanningCard"]').click();
-    assert.equal(await page.locator("#selection-context-name").innerText(), "FuturePlanningCard");
+    assert.equal(await page.locator("#selection-context-name").innerText(), "2 elements");
+    assert.match(await page.locator("#selection-context-elements").innerText(), /FuturePlanningCard/);
     assert.equal(await page.locator('input[value="overview"]').isChecked(), true, "selection must not change the radio choice");
     await page.locator("#selection-context-clear").click();
     await page.keyboard.press("Escape");
@@ -62,7 +63,8 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.mouse.down();
     await page.mouse.move(description.x + description.width + 4, description.y + description.height + 4, { steps: 8 });
     await page.mouse.up();
-    assert.equal(await page.locator("#selection-context-name").innerText(), "2 elements");
+    assert.equal(await page.locator("#selection-context-name").innerText(), "3 elements");
+    assert.match(await page.locator("#selection-context-elements").innerText(), /SubmitButton \(\/details\)/);
     assert.match(await page.locator("#selection-context-elements").innerText(), /CompleteHeading/);
     assert.match(await page.locator("#selection-context-elements").innerText(), /CompleteDescription/);
     await page.keyboard.press("Escape");

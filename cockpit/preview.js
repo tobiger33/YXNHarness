@@ -113,6 +113,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     for (const element of demo.querySelectorAll("[data-demo-step]")) element.hidden = element.dataset.demoStep !== name;
     q("#route").textContent = `example://puls/${name}`;
     root.dataset.previewRoute = `/${name}`;
+    root.dispatchEvent(new Event("yxn:preview-route"));
   }
   // The example owns these stable IDs; never infer target app identity from DOM text.
   let hovered = null;
@@ -121,15 +122,21 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     hovered = element;
     hovered?.classList.add("demo-hover");
   }
-  function chooseMany(elements) {
+  function chooseMany(elements, mode = "add") {
     const unique = [...new Set(elements)];
-    for (const selected of demo.querySelectorAll(".demo-selected")) selected.classList.remove("demo-selected");
-    unique.forEach((element) => element.classList.add("demo-selected"));
-    if (!unique.length) { select([], null); return; }
+    if (!unique.length) return;
     const entries = unique.map((element) => ({ id: element.dataset.demoElement, label: element.dataset.demoElement, kind: "harness", route: root.dataset.previewRoute, previewUrl: q("#route").textContent }));
-    select(entries.length === 1 ? entries[0] : entries, unique[0]);
+    select(entries, unique[0], { mode });
   }
-  function choose(element) { chooseMany([element]); }
+  function choose(element) { chooseMany([element], "toggle"); }
+  root.addEventListener("yxn:selection-change", (event) => {
+    const selected = event.detail?.elements || [];
+    for (const element of demo.querySelectorAll("[data-demo-element]")) {
+      const screen = element.closest("[data-demo-step]")?.dataset.demoStep;
+      const route = screen ? `/${screen}` : root.dataset.previewRoute;
+      element.classList.toggle("demo-selected", selected.some((entry) => entry.id === element.dataset.demoElement && entry.route === route));
+    }
+  });
   const marquee = document.createElement("div");
   marquee.className = "selection-marquee";
   marquee.setAttribute("aria-hidden", "true");
@@ -163,7 +170,7 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     event.preventDefault();
     suppressClick = true;
     hover(null);
-    drag = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, target: event.target.closest("[data-demo-element]"), additive: event.shiftKey, previous: [...demo.querySelectorAll(".demo-selected")] };
+    drag = { x: event.clientX, y: event.clientY, pointerId: event.pointerId, moved: false, target: event.target.closest("[data-demo-element]") };
     surface.setPointerCapture(event.pointerId);
   });
   surface.addEventListener("pointermove", (event) => {
@@ -181,9 +188,9 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
   surface.addEventListener("pointerup", (event) => {
     if (!drag || drag.pointerId !== event.pointerId) return;
     const matched = drag.moved ? inside(boxAt(event)) : drag.target ? [drag.target] : [];
-    const result = drag.additive ? [...drag.previous, ...matched] : matched;
+    const moved = drag.moved;
     cancelDrag();
-    chooseMany(result);
+    chooseMany(matched, moved ? "add" : "toggle");
   });
   surface.addEventListener("pointercancel", () => { suppressClick = false; cancelDrag(); });
   surface.addEventListener("lostpointercapture", () => { if (drag) cancelDrag(); });

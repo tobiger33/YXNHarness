@@ -669,7 +669,7 @@ async function sendMessage() {
         `Context: ${state.contexts.join(", ") || "(none)"}`,
         ...(selection ? [
           `Intent: ${selection.intent === "adopt" ? "adapt selected element into target branch" : "comment on selected element"}`,
-          `Elements: ${(selection.elements || [selection]).map((element) => element.id).join(", ")}`,
+          `Elements: ${(selection.elements || [selection]).map((element) => `${element.id} on ${element.route} [${element.source?.branch || selection.source.branch || "—"} @ ${element.source?.commit || selection.source.commit || "—"}]`).join("; ")}`,
           `Route: ${selection.route}`,
           `Source: ${selection.source.branch || "—"} @ ${selection.source.commit || "—"}`,
           `Target: ${state.workspace?.branch || "—"}`,
@@ -699,19 +699,27 @@ async function sendMessage() {
       p.textContent = "A connected agent adapter is declared for later. Your message was not sent to a model.";
       answer.append(p);
     } else if (selection?.intent === "adopt") {
-      const payload = {
-        elements: (selection.elements || [selection]).map((element) => ({ id: element.id, kind: element.kind, label: element.label, source: { ...selection.source, elementId: element.id } })),
-        body: value,
-        route: selection.route,
-        viewport: q("#device").value,
-        sourceBranch: selection.source.branch,
-        sourceCommit: selection.source.commit,
-        withHandoff: false,
-      };
-      const preview = await apiPost("/api/v1/elements/adopt", { ...payload, apply: false });
-      if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Element request blocked");
-      const plan = await apiPost("/api/v1/elements/adopt", { ...payload, apply: true });
-      if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Element request failed");
+      const groups = new Map();
+      for (const element of selection.elements || [selection]) {
+        const source = element.source || selection.source;
+        const identity = JSON.stringify([element.route, source.branch, source.commit]);
+        if (!groups.has(identity)) groups.set(identity, { elements: [], body: value, route: element.route, viewport: q("#device").value, sourceBranch: source.branch, sourceCommit: source.commit, withHandoff: false });
+        groups.get(identity).elements.push({ id: element.id, kind: element.kind, label: element.label, source: { ...source, elementId: element.id } });
+      }
+      for (const payload of groups.values()) {
+        const preview = await apiPost("/api/v1/elements/adopt", { ...payload, apply: false });
+        if (preview.status === "blocked") throw new Error(preview.blockedReasons?.join("; ") || "Element request blocked");
+      }
+      let saved = 0;
+      try {
+        for (const payload of groups.values()) {
+          const plan = await apiPost("/api/v1/elements/adopt", { ...payload, apply: true });
+          if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Element request failed");
+          saved += 1;
+        }
+      } catch (error) {
+        throw new Error(`${saved} of ${groups.size} page groups saved. ${error.message}`);
+      }
       const p = document.createElement("p");
       p.textContent = "Element request saved as feedback with its source and target context. No code was merged and no agent has run yet.";
       answer.append(p);
@@ -725,7 +733,7 @@ async function sendMessage() {
         route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
         element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : state.contexts.find((c) => !c.includes("Screenshot") && !c.includes("branch")) || null,
         source: selection?.source || null,
-        appState: selection?.elements?.length > 1 ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, source: { ...selection.source, elementId: element.id } })) } : null,
+        appState: selection?.elements?.length > 1 ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, source: { ...(element.source || selection.source), elementId: element.id } })) } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
         commit: state.workspace?.commit || null,
@@ -935,28 +943,41 @@ function renderElementSelection() {
   q("#selected-element-name").textContent = selected.label;
   q("#selection-context-name").textContent = selected.label;
   q("#selection-context-branches").textContent = `${selected.source.branch || "Current preview"} → ${state.workspace?.branch || "Current branch"}`;
-  q("#selection-context-route").textContent = `${selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
-  q("#selection-context-elements").textContent = (selected.elements || []).length > 1 ? selected.elements.map((element) => element.label).join(" · ") : "";
+  const routes = [...new Set((selected.elements || [selected]).map((element) => element.route))];
+  q("#selection-context-route").textContent = `${routes.length > 1 ? `${routes.length} pages` : selected.route} · ${selected.source.commit?.slice(0, 7) || "Revision unavailable"}`;
+  root.dispatchEvent(new CustomEvent("yxn:selection-change", { detail: { elements: selected.elements || [selected] } }));
+  q("#selection-context-elements").textContent = (selected.elements || []).length > 1 ? selected.elements.map((element) => `${element.label} (${element.route})`).join(" · ") : "";
   q("#selection-context-elements").hidden = (selected.elements || []).length < 2;
   q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
 
 }
-function selectElement(element, anchor) {
-  const elements = Array.isArray(element) ? element : [element];
+function selectElement(element, anchor, { mode = "add" } = {}) {
+  const incoming = Array.isArray(element) ? element : [element];
+  if (!incoming.length) return;
+  const previous = state.selection;
+  const key = (entry) => JSON.stringify([entry.previewUrl || entry.route, entry.id]);
+  const merged = new Map((previous?.elements || (previous ? [previous] : [])).map((entry) => [key(entry), { ...entry, source: entry.source || previous.source }]));
+  for (const entry of incoming) {
+    const identity = key(entry);
+    if (mode === "toggle" && merged.has(identity)) merged.delete(identity);
+    else if (!merged.has(identity)) merged.set(identity, { ...entry, source: { branch: state.workspace?.branch || null, commit: state.workspace?.commit || null, elementId: entry.id } });
+  }
+  const elements = [...merged.values()];
   if (!elements.length) { clearElementSelection(); return; }
-  element = elements[0];
-  if (state.selection) state.contexts = state.contexts.filter((entry) => entry !== `${state.selection.label} · ${state.selection.route}`);
+  if (previous) state.contexts = state.contexts.filter((entry) => entry !== `${previous.label} · ${previous.route}`);
   selectedAnchor = anchor;
+  const first = elements[0];
   state.selection = {
-    ...element,
+    ...first,
     elements,
-    label: elements.length > 1 ? `${elements.length} elements` : element.label,
-    intent: "comment",
-    source: { branch: state.workspace?.branch || null, commit: state.workspace?.commit || null, elementId: element.id },
+    label: elements.length > 1 ? `${elements.length} elements` : first.label,
+    intent: previous?.intent || "comment",
+    source: first.source,
   };
-  addContext(`${state.selection.label} · ${element.route}`);
+  addContext(`${state.selection.label} · ${first.route}`);
   renderElementSelection();
 }
+
 function clearElementSelection() {
   if (state.selection) {
     const label = `${state.selection.label} · ${state.selection.route}`;
@@ -983,6 +1004,7 @@ for (const intent of ["comment", "adopt"]) {
 }
 q("#selection-dismiss").addEventListener("click", clearElementSelection);
 q("#selection-context-clear").addEventListener("click", clearElementSelection);
+root.addEventListener("yxn:preview-route", renderElementSelection);
 window.addEventListener("resize", renderElementSelection);
 q("#screen-preview").addEventListener("scroll", renderElementSelection);
 

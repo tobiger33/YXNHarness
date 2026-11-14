@@ -112,8 +112,10 @@ restores normal controls and navigation. This does not implement an inspector
 for arbitrary embedded third-party apps; those still require their opt-in adapter.
 
 In example Select mode, dragging a rectangle selects all fully enclosed,
-registered visible elements. It works in either direction; Shift adds to the
-existing selection. A short click still selects one element. Pointer cancellation
+registered visible elements. It works in either direction. Clicks and rectangles
+add to the existing selection by default; clicking a selected element again
+removes only that member. Clear removes the full selection. Selection accumulates
+across example screens, preserving each member's original route and revision. Pointer cancellation
 or Escape cancels the gesture without activating app controls. Group identity,
 route and revision persist in the composer. Adaptation requests pass the complete
 elements array; grouped comments preserve all members in feedback appState.

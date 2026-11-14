@@ -129,9 +129,12 @@ Do not claim the inspector/upload/agent steps passed until their real integratio
 
 ## UI update: rectangle groups
 
-Example Select now supports drag rectangles and Shift-additive groups. The
+Example Select supports drag rectangles and additive clicks/groups by default.
+Clicking a selected element toggles only that member. Selections accumulate
+across screens; explicit Clear removes the full group. The
 composer retains every member ID, route and source identity; adaptation uses
-an elements array. Group comments currently retain members under
+an elements array, grouped by original route and source revision when calling
+the current single-route backend endpoint. Group comments currently retain members under
 `identity.appState.selectedElements` alongside the primary element identity.
 The live inspector contract must support equivalent multi-selection payloads
 rather than reducing a dragged group to a single element.
