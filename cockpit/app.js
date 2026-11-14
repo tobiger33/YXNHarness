@@ -367,97 +367,82 @@ function extractCssAccent(cssText) {
   return match ? match[1].trim() : null;
 }
 
+let previewApi = null;
+
 function clearProposalLivePreview() {
-  const frame = q("#live-preview");
-  try {
-    const doc = frame?.contentDocument;
-    doc?.getElementById("yxn-proposal-preview")?.remove();
-  } catch {
-    // Cross-origin preview cannot be patched; mock preview still works.
+  previewApi?.clearPreviewStyle?.();
+  qa(".proposal-card.is-previewing").forEach((card) => {
+    card.classList.remove("is-previewing");
+    const toggle = card.querySelector("[data-proposal-preview]");
+    if (toggle) {
+      toggle.textContent = "Preview";
+      toggle.dataset.active = "0";
+    }
+    const hint = card.querySelector(".proposal-preview-hint");
+    if (hint) hint.hidden = true;
+  });
+}
+
+function ensureProposalHint(card, { beforeAccent = null, afterAccent = null } = {}) {
+  let hint = card.querySelector(".proposal-preview-hint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.className = "proposal-preview-hint";
+    hint.hidden = true;
+    const actions = card.querySelector(".proposal-actions");
+    card.insertBefore(hint, actions || null);
   }
-  q("#proposal-live-hint")?.remove();
+  const swatches = beforeAccent && afterAccent
+    ? `<span class="proposal-swatch" style="background:${escapeHtml(beforeAccent)}"></span><span aria-hidden="true">→</span><span class="proposal-swatch" style="background:${escapeHtml(afterAccent)}"></span>`
+    : "";
+  hint.innerHTML = `${swatches}<span class="proposal-hint-text"></span>`;
+  return hint;
 }
 
 async function showProposalPreview(proposalId, card) {
+  // One live preview at a time — quiet strip, not stacked mock cards.
+  qa(".proposal-card.is-previewing").forEach((other) => {
+    if (other === card) return;
+    other.classList.remove("is-previewing");
+    const otherToggle = other.querySelector("[data-proposal-preview]");
+    if (otherToggle) {
+      otherToggle.textContent = "Preview";
+      otherToggle.dataset.active = "0";
+    }
+    const otherHint = other.querySelector(".proposal-preview-hint");
+    if (otherHint) otherHint.hidden = true;
+  });
+  previewApi?.clearPreviewStyle?.();
+
   const detail = await apiGet(`/api/v1/agent/proposals/${encodeURIComponent(proposalId)}?bodies=1`);
   const proposal = detail.proposal;
   if (!proposal) throw new Error("Proposal not found");
-  let preview = card.querySelector(".proposal-visual-preview");
-  if (!preview) {
-    preview = document.createElement("div");
-    preview.className = "proposal-visual-preview";
-    preview.setAttribute("aria-live", "polite");
-    const actions = card.querySelector(".proposal-actions");
-    card.insertBefore(preview, actions || null);
+  const cssFile = (proposal.files || []).find((file) => /\.css$/i.test(file.path) && file.after);
+  const beforeAccent = cssFile ? extractCssAccent(cssFile.before) : null;
+  const afterAccent = cssFile ? extractCssAccent(cssFile.after) : null;
+  const hint = ensureProposalHint(card, { beforeAccent, afterAccent });
+  const hintText = hint.querySelector(".proposal-hint-text");
+
+  let live = false;
+  if (cssFile && previewApi?.canPreviewStyle?.()) {
+    live = previewApi.previewStyle(cssFile.after);
   }
-  preview.replaceChildren();
-  const files = proposal.files || [];
-  for (const file of files) {
-    const after = file.after || "";
-    const before = file.before || "";
-    if (/\.css$/i.test(file.path) && after) {
-      const beforeAccent = extractCssAccent(before);
-      const afterAccent = extractCssAccent(after);
-      const sample = document.createElement("div");
-      sample.className = "proposal-sample";
-      // Shadow root keeps proposed CSS from leaking into the workbench.
-      const shadow = sample.attachShadow({ mode: "open" });
-      shadow.innerHTML = `
-        <style>
-          :host { display: block; }
-          .shell {
-            padding: 14px;
-            display: grid;
-            gap: 10px;
-            justify-items: start;
-            background: #f7f5f0;
-            color: #1c2430;
-            font: 13px/1.4 "Avenir Next", "Segoe UI", sans-serif;
-          }
-          .brand { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #5d6b7c; }
-          .cta {
-            border: 0; border-radius: 999px; padding: 10px 16px; color: #fff;
-            background: ${afterAccent ? escapeHtml(afterAccent) : "var(--accent, #085c8f)"};
-            font: inherit; font-size: 13px;
-          }
-          .swatches { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #5d6b7c; }
-          .swatch { width: 14px; height: 14px; border-radius: 999px; border: 1px solid rgba(0,0,0,.12); display: inline-block; }
-        </style>
-        <div class="shell">
-          <span class="brand">Harbor Desk</span>
-          <button type="button" class="cta" tabindex="-1">Confirm booking</button>
-          ${beforeAccent && afterAccent ? `<div class="swatches"><span class="swatch" style="background:${escapeHtml(beforeAccent)}"></span><span aria-hidden="true">→</span><span class="swatch" style="background:${escapeHtml(afterAccent)}"></span></div>` : ""}
-        </div>
-      `;
-      preview.append(sample);
-      // Best-effort live iframe inject when same-origin.
-      const frame = q("#live-preview");
-      if (frame && !frame.hidden) {
-        try {
-          const doc = frame.contentDocument;
-          if (doc) {
-            let style = doc.getElementById("yxn-proposal-preview");
-            if (!style) {
-              style = doc.createElement("style");
-              style.id = "yxn-proposal-preview";
-              doc.head.append(style);
-            }
-            style.textContent = after;
-          }
-        } catch {
-          // Cross-origin — card preview is enough.
-        }
-      }
-    } else if (file.diff) {
-      const diff = document.createElement("pre");
-      diff.className = "proposal-diff";
-      diff.textContent = file.diff.length > 2400 ? `${file.diff.slice(0, 2400)}\n…` : file.diff;
-      preview.append(diff);
-    }
+  if (live) {
+    if (state.view !== "preview") setView("preview");
+    hintText.textContent = "Live in Preview";
+    toast("Previewing in the app", { soft: true });
+  } else if (cssFile) {
+    hintText.textContent = previewApi?.isLive?.()
+      ? "App preview unavailable — color only"
+      : "Open the app in Preview for a live look";
+  } else {
+    hintText.textContent = "No visual preview for this file";
   }
+  hint.hidden = false;
+  card.classList.add("is-previewing");
   const toggle = card.querySelector("[data-proposal-preview]");
   if (toggle) {
-    toggle.textContent = "Hide preview";
+    toggle.textContent = "Hide";
     toggle.dataset.active = "1";
   }
 }
@@ -476,12 +461,10 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
   title.className = "proposal-summary";
   title.textContent = proposal.summary || "Proposed change";
   card.append(title);
-  for (const file of proposal.files || []) {
-    const pathLine = document.createElement("div");
-    pathLine.className = "proposal-path";
-    pathLine.textContent = file.path;
-    card.append(pathLine);
-  }
+  const pathLine = document.createElement("div");
+  pathLine.className = "proposal-path";
+  pathLine.textContent = (proposal.files || []).map((file) => file.path).filter(Boolean).join(", ") || "—";
+  card.append(pathLine);
   const actions = document.createElement("div");
   actions.className = "proposal-actions";
   if (proposal.status === "pending") {
@@ -492,10 +475,7 @@ function appendProposalCard(host, proposal, { focus = false } = {}) {
     previewBtn.textContent = "Preview";
     previewBtn.onclick = async () => {
       if (previewBtn.dataset.active === "1") {
-        card.querySelector(".proposal-visual-preview")?.remove();
         clearProposalLivePreview();
-        previewBtn.textContent = "Preview";
-        previewBtn.dataset.active = "0";
         return;
       }
       try {
@@ -546,6 +526,7 @@ async function decideProposal(proposalId, decision, card) {
     if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Proposal blocked");
     clearProposalLivePreview();
     if (card) {
+      card.querySelector(".proposal-preview-hint")?.remove();
       const actions = card.querySelector(".proposal-actions");
       if (actions) {
         actions.replaceChildren();
@@ -1504,7 +1485,7 @@ const elementDetails = mountElementDetails(root, {
 
 const attachments = mountAttachments(root, toast);
 const home = mountHome(root, toast);
-mountPreview(root, {
+previewApi = mountPreview(root, {
   selecting: () => selecting,
   select: selectElement,
   interact: () => setTool(false),

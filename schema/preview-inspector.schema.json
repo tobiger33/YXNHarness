@@ -20,6 +20,9 @@
         "route-changed",
         "element-selected",
         "selection-cleared",
+        "preview-style",
+        "clear-preview-style",
+        "preview-style-changed",
         "error"
       ]
     },

@@ -47,7 +47,9 @@ treated as transmitted pixels.
    (`examples/foreign-booking/styles.css` accent token).
 3. Writes the proposal under `artifacts/agent/proposals/<id>/` with unified
    diffs. **No project source is modified yet.**
-4. Cockpit shows Accept / Reject. Accept applies the stored after-bodies when
+4. Cockpit shows Preview / Accept / Reject. Preview injects temporary CSS into
+   the live app via the inspector protocol (quiet hint in the agent card; the
+   look lives in the Preview pane). Accept applies the stored after-bodies when
    the on-disk files still match the proposal’s before snapshot (or `force`
    after host consent). Reject leaves source untouched.
 5. Merge/push remain host-controlled.

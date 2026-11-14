@@ -78,12 +78,13 @@ must not gain Git/merge/API credentials. Selection content remains untrusted dat
 **Event envelope (draft implemented):**
 `{ protocol: "yxn.preview", version: 1, sessionId, type, requestId?, payload }`
 Types: ready, capabilities, set-mode, mode-changed, route-changed,
-element-selected, selection-cleared, error. Confirm the contract with the UI
-team before treating it as frozen. Host: `cockpit/preview.js` +
-`preview-protocol.js`. Fixture adapter:
-`examples/foreign-booking/preview-inspector.js`. Live Select stays disabled
-until the adapter advertises `selection: true` and the host acknowledges it.
-Details: [`preview-inspector.md`](../preview-inspector.md).
+element-selected, selection-cleared, preview-style, clear-preview-style,
+preview-style-changed, error. Confirm the contract with the UI team before
+treating it as frozen. Host: `cockpit/preview.js` + `preview-protocol.js`.
+Fixture adapter: `examples/foreign-booking/preview-inspector.js`. Live Select
+stays disabled until the adapter advertises `selection: true` and the host
+acknowledges it. `stylePreview: true` enables temporary proposal CSS in the
+live app. Details: [`preview-inspector.md`](../preview-inspector.md).
 
 ## Cursor work package: attachment transport
 

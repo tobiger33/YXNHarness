@@ -283,34 +283,32 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   pointer-events: none;
 }
 
-/* Host-approved agent file proposals */
+/* Host-approved agent file proposals — quiet, not a second hero. */
 #yxn-workbench .proposal-card {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel, var(--bg));
+  margin-top: 8px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
 }
-#yxn-workbench .proposal-summary { margin: 0 0 6px; font-size: 13px; }
-#yxn-workbench .proposal-path { font-size: 11px; color: var(--muted); margin: 4px 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-#yxn-workbench .proposal-diff {
-  margin: 0;
-  max-height: 140px;
-  overflow: auto;
-  padding: 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.04);
+#yxn-workbench .proposal-summary { margin: 0 0 2px; font-size: 12px; color: var(--text); }
+#yxn-workbench .proposal-path {
   font-size: 10px;
-  line-height: 1.35;
-  white-space: pre-wrap;
-  word-break: break-word;
+  color: var(--faint);
+  margin: 0 0 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 #yxn-workbench .proposal-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
-  min-height: 28px;
+  gap: 6px;
+  min-height: 26px;
   align-items: center;
+}
+#yxn-workbench .proposal-actions .button {
+  padding: 3px 8px;
+  font-size: 11px;
 }
 #yxn-workbench .proposal-actions .button.ghost {
   background: transparent;
@@ -318,14 +316,25 @@ html,body{margin:0;height:100%;background:light-dark(#fff,#1c1c1c);color-scheme:
   color: var(--muted);
 }
 #yxn-workbench .proposal-status {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
-#yxn-workbench .proposal-visual-preview {
-  margin-top: 8px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: #f7f5f0;
+#yxn-workbench .proposal-preview-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  min-height: 18px;
+  font-size: 10px;
+  color: var(--faint);
 }
-#yxn-workbench .proposal-sample { display: block; }
+#yxn-workbench .proposal-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  display: inline-block;
+  flex-shrink: 0;
+}
+#yxn-workbench .proposal-hint-text { min-width: 0; }
+#yxn-workbench .proposal-card.is-previewing .proposal-preview-hint { color: var(--muted); }

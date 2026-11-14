@@ -67,8 +67,38 @@ function capabilities() {
     selection: true,
     multiSelect: true,
     routeReporting: true,
+    stylePreview: true,
     screenshots: false,
   };
+}
+
+const PREVIEW_STYLE_ID = "yxn-proposal-preview";
+const PREVIEW_STYLE_MAX = 24_000;
+
+function applyPreviewStyle(css) {
+  const text = typeof css === "string" ? css : "";
+  if (!text || text.length > PREVIEW_STYLE_MAX) {
+    post("error", { message: "Preview style missing or too large." });
+    return;
+  }
+  // Temporary host preview only — never executable content.
+  if (/<\/?script/i.test(text)) {
+    post("error", { message: "Preview style rejected." });
+    return;
+  }
+  let style = document.getElementById(PREVIEW_STYLE_ID);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = PREVIEW_STYLE_ID;
+    document.head.append(style);
+  }
+  style.textContent = text;
+  post("preview-style-changed", { active: true });
+}
+
+function clearPreviewStyle() {
+  document.getElementById(PREVIEW_STYLE_ID)?.remove();
+  post("preview-style-changed", { active: false });
 }
 
 function visibleTargets() {
@@ -150,6 +180,14 @@ function onMessage(event) {
   if (data.sessionId !== sessionId()) return;
   if (data.type === "set-mode") {
     setMode(data.payload?.mode === "select" ? "select" : "interact");
+    return;
+  }
+  if (data.type === "preview-style") {
+    applyPreviewStyle(data.payload?.css);
+    return;
+  }
+  if (data.type === "clear-preview-style") {
+    clearPreviewStyle();
   }
 }
 
