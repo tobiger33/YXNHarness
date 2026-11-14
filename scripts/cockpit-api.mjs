@@ -158,16 +158,32 @@ async function readLastHandoff(root) {
   }
 }
 
+async function readConfiguredAppUrl(root) {
+  try {
+    const raw = JSON.parse(await readFile(path.join(root, "harness.config.json"), "utf8"));
+    const url = raw?.app?.url;
+    if (typeof url !== "string" || !url.trim()) return null;
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (!["127.0.0.1", "localhost", "::1"].includes(parsed.hostname)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 async function buildOverview(root, { refresh = true } = {}) {
   const host = await loadHostConfig(root);
   const index = refresh ? await writeRunIndex(root) : await buildRunIndex(root);
   const handoffs = await listHandoffs(root);
   const lastHandoff = await readLastHandoff(root);
   const workspace = collectWorkspace(root);
+  const appUrl = await readConfiguredAppUrl(root);
   return {
     version: 1,
     generatedAt: new Date().toISOString(),
     root,
+    app: appUrl ? { url: appUrl } : null,
     api: {
       readOnly: false,
       loopbackOnly: true,

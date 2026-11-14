@@ -85,22 +85,23 @@ test("Capture stores only the project region and the image reopens", async (t) =
     }));
     await page.reload();
     await page.locator(".attachment-preview").waitFor();
-    let feedback = null;
-    await page.route("**/api/v1/feedback", async (route) => {
+    let turn = null;
+    await page.route("**/api/v1/agent/turns", async (route) => {
       if (route.request().method() !== "POST") return route.continue();
-      feedback = route.request().postDataJSON();
-      await route.fulfill({ status: 200, contentType: "application/json", body: '{"thread":{"threadId":"resolution-test"}}' });
+      turn = route.request().postDataJSON();
+      return route.continue();
     });
     await page.locator('[data-mode="connected"]').click();
     await page.locator("#chat-input").fill("Keep the screenshot dimensions with this feedback.");
     await page.locator(".send").click();
-    await page.getByText("Saved feedback", { exact: true }).waitFor();
-    assert.equal(feedback.appState.screenshotAttachments[0].image.width, image.width);
-    if (captured) assert.equal(feedback.appState.screenshotAttachments[0].viewport.width, stored.capture.viewport.width);
-    else assert.equal(feedback.appState.screenshotAttachments[0].viewport, null);
-    assert.equal(feedback.appState.screenshotAttachments[0].localOnly, false);
-    assert.ok(feedback.attachmentIds.includes(feedback.appState.screenshotAttachments[0].id));
-    assert.equal("blob" in feedback.appState.screenshotAttachments[0], false);
+    await page.getByText("Exploring", { exact: true }).waitFor();
+    assert.ok(turn?.appState?.screenshotAttachments?.[0], "connected agent turn must carry screenshot attachments");
+    assert.equal(turn.appState.screenshotAttachments[0].image.width, image.width);
+    if (captured) assert.equal(turn.appState.screenshotAttachments[0].viewport.width, stored.capture.viewport.width);
+    else assert.equal(turn.appState.screenshotAttachments[0].viewport, null);
+    assert.equal(turn.appState.screenshotAttachments[0].localOnly, false);
+    assert.ok(turn.attachmentIds.includes(turn.appState.screenshotAttachments[0].id));
+    assert.equal("blob" in turn.appState.screenshotAttachments[0], false);
   } finally {
     if (browser) await browser.close();
     server.kill("SIGTERM");

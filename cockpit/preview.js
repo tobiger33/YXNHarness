@@ -142,8 +142,15 @@ export function mountPreview(root, { selecting, select, interact, notify }) {
     status.hidden = false;
     frame.setAttribute("aria-busy", "false");
   });
-  q("#open-preview").onclick = () => {
-    form.elements.namedItem("url").value = previewUrl || "";
+  q("#open-preview").onclick = async () => {
+    let suggested = previewUrl || "";
+    if (!suggested) {
+      try {
+        const overview = await fetch("/api/v1/overview?refresh=0").then((response) => response.json());
+        if (overview?.app?.url) suggested = overview.app.url;
+      } catch { /* keep empty field */ }
+    }
+    form.elements.namedItem("url").value = suggested;
     q("#preview-connect-error").hidden = true;
     dialog.showModal();
   };
