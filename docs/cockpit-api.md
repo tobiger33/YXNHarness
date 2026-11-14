@@ -51,7 +51,11 @@ this package). JSON stays under `/api/v1/…`.
 | POST | `/api/v1/attachments` | Raw image body + `Content-Type` / `X-Attachment-Filename` → stored attachment |
 | GET | `/api/v1/attachments/:id/content` | Original image bytes |
 | DELETE | `/api/v1/attachments/:id` | Remove unreferenced draft (`?force=1` with host consent) |
-| GET | `/api/v1/agent` | Agent panel state (honest: not connected) |
+| GET | `/api/v1/agent` | Agent panel state (disconnected unless `agent.adapter` is set) |
+| GET | `/api/v1/agent/activity` | Adapter activity log |
+| GET | `/api/v1/agent/sessions` | Adapter sessions |
+| POST | `/api/v1/agent/sessions` | Start adapter session |
+| POST | `/api/v1/agent/turns` | Submit turn to connected adapter |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
@@ -69,10 +73,11 @@ The shell follows the accepted workbench layout (Preview / Compare / Changes):
 `/api/v1/workspace/adopt`; **Design passt** POSTs
 `/api/v1/workspace/approve` then offers **Push** (`/workspace/push`) and
 **Remotes aktualisieren** (`/workspace/fetch`). Composer messages become local
-feedback when no agent adapter is connected. The Agent plug control GETs
-`/api/v1/attach` for a dry-run attach preview. Preview/Compare demos are layout
-examples only; attach/probe use the real project when configured.
+feedback when no agent adapter is connected; with `agent.adapter` set they POST
+`/api/v1/agent/turns`. The Agent plug control GETs `/api/v1/attach` for a
+dry-run attach preview. Preview/Compare demos are layout examples only;
+attach/probe use the real project when configured.
 
-See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
-[`share.md`](share.md), [`cockpit-foundation.md`](cockpit-foundation.md), and
-[`handoff.md`](handoff.md).
+See also [`feedback.md`](feedback.md), [`agent-adapter.md`](agent-adapter.md),
+[`workspace.md`](workspace.md), [`share.md`](share.md),
+[`cockpit-foundation.md`](cockpit-foundation.md), and [`handoff.md`](handoff.md).

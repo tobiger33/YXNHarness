@@ -18,7 +18,6 @@ import { PHASES as ATTACH_PHASES } from "./attach.mjs";
 import { createShareInvite, listShares } from "./share.mjs";
 import { planDesignApprove } from "./design-approve.mjs";
 import {
-  agentPanelState,
   bundleFeedback,
   createFeedback,
   getFeedback,
@@ -31,6 +30,13 @@ import {
   getAttachment,
   listAttachments,
 } from "./attachments.mjs";
+import {
+  agentPanelState,
+  createAgentSession,
+  listAgentActivity,
+  listAgentSessions,
+  submitAgentTurn,
+} from "./agent-adapter.mjs";
 
 const DEFAULT_PORT = 8787;
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -164,6 +170,8 @@ async function buildOverview(root, { refresh = true } = {}) {
         "POST /api/v1/share",
         "POST /api/v1/attachments",
         "DELETE /api/v1/attachments/:id",
+        "POST /api/v1/agent/sessions",
+        "POST /api/v1/agent/turns",
       ],
       endpoints: [
         "GET /api/v1/health",
@@ -194,6 +202,10 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/attachments/:id/content",
         "DELETE /api/v1/attachments/:id",
         "GET /api/v1/agent",
+        "GET /api/v1/agent/activity",
+        "GET /api/v1/agent/sessions",
+        "POST /api/v1/agent/sessions",
+        "POST /api/v1/agent/turns",
         "GET /api/v1/handoffs",
         "GET /api/v1/handoffs/:handoffId",
         "GET /api/v1/artifacts/*",
@@ -354,6 +366,8 @@ function apiIndexPayload(projectRoot) {
       "POST /api/v1/share",
       "POST /api/v1/attachments",
       "DELETE /api/v1/attachments/:id",
+      "POST /api/v1/agent/sessions",
+      "POST /api/v1/agent/turns",
     ],
     root: projectRoot,
     links: {
@@ -376,10 +390,13 @@ function apiIndexPayload(projectRoot) {
       share: "/api/v1/share",
       attachments: "/api/v1/attachments",
       agent: "/api/v1/agent",
+      agentActivity: "/api/v1/agent/activity",
+      agentSessions: "/api/v1/agent/sessions",
+      agentTurns: "/api/v1/agent/turns",
       handoffs: "/api/v1/handoffs",
       artifacts: "/api/v1/artifacts/",
     },
-    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments. No remote agent required.",
+    note: "Local cockpit UI + API (loopback). Writes: adopt, design-approve, push, fetch, feedback, element adopt, attach, share invite, attachments, optional agent turns. No remote agent required.",
   };
 }
 
@@ -646,6 +663,34 @@ function createCockpitApi({
         return;
       }
 
+      if (pathname === "/api/v1/agent/sessions" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await createAgentSession(projectRoot, { note: body.note ?? null });
+        sendJson(response, plan.status === "blocked" ? 409 : 201, plan);
+        return;
+      }
+
+      if (pathname === "/api/v1/agent/turns" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await submitAgentTurn(projectRoot, {
+          body: body.body ?? body.text ?? body.message,
+          sessionId: body.sessionId ?? null,
+          model: body.model ?? null,
+          reasoning: body.reasoning ?? null,
+          attachmentIds: body.attachmentIds || body.attachments || [],
+          route: body.route ?? null,
+          viewport: body.viewport ?? null,
+          branch: body.branch ?? null,
+          commit: body.commit ?? null,
+          element: body.element ?? null,
+          source: body.source ?? null,
+          appState: body.appState ?? null,
+          createThread: body.createThread !== false,
+        });
+        sendJson(response, plan.status === "blocked" ? 409 : 200, plan);
+        return;
+      }
+
       const feedbackWriteMatch = pathname.match(/^\/api\/v1\/feedback\/([^/]+)$/);
       if (feedbackWriteMatch && method === "PATCH") {
         const body = await readJsonBody(request);
@@ -808,7 +853,20 @@ function createCockpitApi({
       }
 
       if (pathname === "/api/v1/agent") {
-        sendJson(response, 200, agentPanelState());
+        sendJson(response, 200, await agentPanelState(projectRoot));
+        return;
+      }
+
+      if (pathname === "/api/v1/agent/activity") {
+        const limit = Number.parseInt(searchParams.get("limit") || "40", 10);
+        sendJson(response, 200, await listAgentActivity(projectRoot, {
+          limit: Number.isFinite(limit) ? limit : 40,
+        }));
+        return;
+      }
+
+      if (pathname === "/api/v1/agent/sessions") {
+        sendJson(response, 200, await listAgentSessions(projectRoot));
         return;
       }
 

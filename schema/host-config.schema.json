@@ -68,6 +68,17 @@
         "requireReviewedExpects": { "type": "boolean" },
         "allowForceOverwrite": { "type": "boolean" }
       }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional connected agent adapter. null/omitted keeps solo local feedback. \"local\" enables the built-in task packager. A relative .mjs path loads a project module exporting createAdapter().",
+      "properties": {
+        "adapter": {
+          "type": ["string", "null"],
+          "maxLength": 260
+        }
+      }
     }
   }
 }

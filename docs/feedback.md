@@ -46,12 +46,12 @@ Bundling writes a normal handoff package plus `feedback-threads.json`, patches
 `manifest.feedback`, and marks threads `bundled`. Give that folder to your
 coding agent.
 
-## Agent adapters (later)
+## Agent adapters
 
-See `schema/agent-adapter.schema.json`. Connected agents must declare
-capabilities (models, streaming, file changes, …). Unsupported UI is not shown.
-Activity (reads, diffs, previews) will land in the Agent panel when an adapter
-is connected.
+Opt in with `harness.host.json` → `agent.adapter` (`"local"` or a project
+module). See [`agent-adapter.md`](agent-adapter.md) and
+`schema/agent-adapter.schema.json`. Connected agents declare capabilities;
+unsupported UI stays hidden. Activity from turns lands in the Agent panel.
 
 ## Element adopt
 
@@ -76,6 +76,7 @@ See [`elements.md`](elements.md).
 | POST | `/api/v1/attachments` | Upload image; returns `attachmentId` + `contentUrl` |
 | GET | `/api/v1/attachments/:id/content` | Read stored image |
 | DELETE | `/api/v1/attachments/:id` | Delete unreferenced draft |
-| GET | `/api/v1/agent` | Honest connection stub |
+| GET | `/api/v1/agent` | Adapter connection + capabilities |
+| POST | `/api/v1/agent/turns` | Submit a connected-adapter turn |
 
 See also [`handoff.md`](handoff.md), [`elements.md`](elements.md), and [`vision.md`](vision.md).

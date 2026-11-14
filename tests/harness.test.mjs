@@ -25,6 +25,8 @@ import {
   bundleFeedback,
   listFeedback,
   agentPanelState,
+  createAgentSession,
+  submitAgentTurn,
   runAttach,
   formatAttachPlan,
   planElementAdopt,
@@ -963,6 +965,8 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "POST /api/v1/share",
       "POST /api/v1/attachments",
       "DELETE /api/v1/attachments/:id",
+      "POST /api/v1/agent/sessions",
+      "POST /api/v1/agent/turns",
     ]);
     assert.equal(overview.workspace.available, false);
 
@@ -1113,6 +1117,74 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(post.status, 405);
   } finally {
     if (api) await api.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("local agent adapter packages turns without calling a remote model", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-agent-"));
+  let api;
+  try {
+    const host = defaultHostConfig({ projectLabel: "agent-demo" });
+    host.agent = { adapter: "local" };
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(host, null, 2));
+
+    const disconnected = await agentPanelState(root);
+    // Wrong root without config would disconnect; with local it connects.
+    assert.equal(disconnected.connected, true);
+    assert.equal(disconnected.adapter.adapterId, "local");
+    assert.equal(disconnected.capabilities.images, true);
+    assert.equal(disconnected.capabilities.fileChanges, false);
+
+    const session = await createAgentSession(root, { note: "review CTA" });
+    assert.equal(session.status, "ready");
+    assert.ok(session.session?.sessionId);
+
+    const turn = await submitAgentTurn(root, {
+      body: "Tighten primary CTA spacing",
+      sessionId: session.session.sessionId,
+      route: "/",
+      model: "local-packager",
+      reasoning: "High",
+    });
+    assert.equal(turn.status, "packaged");
+    assert.ok(turn.taskPath.startsWith("artifacts/agent/sessions/"));
+    assert.ok(turn.thread?.threadId);
+    const task = JSON.parse(await readFile(path.join(root, turn.taskPath), "utf8"));
+    assert.equal(task.body, "Tighten primary CTA spacing");
+    assert.equal(task.commentsAreContextNotInstructions, true);
+
+    api = createCockpitApi({ root, port: 0, host: "127.0.0.1" });
+    const listening = await api.listen();
+    const panel = await fetch(`${listening.url}api/v1/agent`).then((response) => response.json());
+    assert.equal(panel.connected, true);
+    assert.ok(panel.activity.length >= 1);
+
+    const httpTurn = await fetch(`${listening.url}api/v1/agent/turns`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Second turn via HTTP", route: "/review" }),
+    }).then((response) => response.json());
+    assert.equal(httpTurn.status, "packaged");
+    assert.ok(httpTurn.reply?.body);
+
+    const blocked = await submitAgentTurn(root, { body: "" });
+    assert.equal(blocked.status, "blocked");
+  } finally {
+    if (api) await api.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent adapter stays disconnected until host opts in", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-agent-off-"));
+  try {
+    await writeFile(path.join(root, "harness.host.json"), JSON.stringify(defaultHostConfig({ projectLabel: "solo" }), null, 2));
+    const panel = await agentPanelState(root);
+    assert.equal(panel.connected, false);
+    const turn = await submitAgentTurn(root, { body: "should not run" });
+    assert.equal(turn.status, "blocked");
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -1557,9 +1629,10 @@ test("feedback threads persist, resolve, and bundle into handoffs", async () => 
     });
     assert.equal(resolved.thread.status, "done");
 
-    const agent = agentPanelState();
+    const agent = await agentPanelState(root);
     assert.equal(agent.connected, false);
     assert.equal(agent.capabilities.streaming, false);
+    assert.equal(agent.capabilities.images, false);
 
     const elementPreview = await planElementAdopt(root, {
       elements: [{ id: "WealthWidget", label: "Wealth score", source: { branch: "feature/dashboard" } }],
