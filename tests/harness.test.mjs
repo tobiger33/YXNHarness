@@ -20,6 +20,11 @@ import {
   matchesExpected,
   parseArgs,
   promoteExpectsFromRun,
+  createFeedback,
+  updateFeedback,
+  bundleFeedback,
+  listFeedback,
+  agentPanelState,
   setupProject,
   stopChild,
   validateConfig,
@@ -222,6 +227,17 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     baseline: null,
     against: null,
     strict: false,
+    list: false,
+    createFeedback: false,
+    body: null,
+    route: null,
+    viewport: null,
+    element: null,
+    runId: null,
+    id: null,
+    bundle: null,
+    resolve: false,
+    reopen: false,
   };
   assert.deepEqual(parseArgs(["--help"]), { help: true });
   assert.deepEqual(parseArgs(["run", "scenarios/demo.yaml", "--dry-run", "--root", "/tmp/app"]), {
@@ -333,6 +349,21 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
     force: true,
     strict: true,
   });
+  assert.deepEqual(parseArgs(["feedback", "--create", "--body", "Tighten CTA", "--route", "/", "--apply"]), {
+    ...base,
+    action: "feedback",
+    createFeedback: true,
+    body: "Tighten CTA",
+    route: "/",
+    apply: true,
+  });
+  assert.deepEqual(parseArgs(["feedback", "--bundle", "fb_1,fb_2", "--from", "last-green", "--force"]), {
+    ...base,
+    action: "feedback",
+    bundle: "fb_1,fb_2",
+    from: "last-green",
+    force: true,
+  });
   assert.deepEqual(parseArgs(["serve", "--port", "8791", "--json"]), {
     ...base,
     action: "serve",
@@ -345,7 +376,7 @@ test("CLI parsing handles run, doctor, probe, scaffold, host-config, status, wor
   assert.throws(() => parseArgs(["setup", "--yes"]), /only valid with setup when also passing --install-browser/);
   assert.throws(() => parseArgs(["setup", "some.yaml"]), /does not accept a scenario path/);
   assert.throws(() => parseArgs(["probe", "--apply"]), /does not accept/);
-  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, or promote/);
+  assert.throws(() => parseArgs(["setup", "--force"]), /only valid with scaffold, host-config, handoff, workspace, promote, or feedback/);
   assert.throws(() => parseArgs(["host-config", "--apply"]), /require --init/);
   assert.throws(() => parseArgs(["status", "--from", "x"]), /only accepts --root and --json/);
   assert.throws(() => parseArgs(["workspace", "--apply"]), /require --checkout, --create, or --adopt/);
@@ -393,6 +424,7 @@ test("doctor next steps explain the host/agent workflow", async () => {
     assert.ok(steps.some((step) => step.id === "handoff"));
     assert.ok(steps.some((step) => step.id === "compare"));
     assert.ok(steps.some((step) => step.id === "promote"));
+    assert.ok(steps.some((step) => step.id === "feedback"));
     assert.ok(steps.some((step) => step.id === "serve"));
     assert.ok(steps.some((step) => step.id === "control-surface"));
   } finally {
@@ -664,7 +696,12 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.equal(overview.host.config.host.projectLabel, "api-demo");
     assert.equal(overview.index.summary.runCount, 1);
     assert.equal(overview.api.readOnly, false);
-    assert.deepEqual(overview.api.localWrites, ["POST /api/v1/workspace/adopt"]);
+    assert.deepEqual(overview.api.localWrites, [
+      "POST /api/v1/workspace/adopt",
+      "POST /api/v1/feedback",
+      "PATCH /api/v1/feedback/:id",
+      "POST /api/v1/feedback/bundle",
+    ]);
     assert.equal(overview.workspace.available, false);
 
     const workspace = await fetch(`${listening.url}api/v1/workspace`).then((response) => response.json());
@@ -689,6 +726,22 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
     assert.ok(apiIndex.links.adopt);
     assert.ok(apiIndex.links.compare);
     assert.ok(apiIndex.links.promote);
+    assert.ok(apiIndex.links.feedback);
+    assert.ok(apiIndex.links.agent);
+
+    const agent = await fetch(`${listening.url}api/v1/agent`).then((response) => response.json());
+    assert.equal(agent.connected, false);
+
+    const created = await fetch(`${listening.url}api/v1/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Tighten CTA spacing", route: "/", apply: true }),
+    }).then((response) => response.json());
+    assert.equal(created.status, "written");
+    assert.ok(created.thread?.threadId);
+
+    const listed = await fetch(`${listening.url}api/v1/feedback`).then((response) => response.json());
+    assert.ok(listed.threads.some((thread) => thread.threadId === created.thread.threadId));
 
     const reviewMissing = await fetch(`${listening.url}api/v1/workspace/review?ref=main`);
     assert.equal(reviewMissing.status, 400);
@@ -880,6 +933,76 @@ test("promote copies after-state from a green run into scenario expects", async 
     assert.match(yamlText, /expectClock: 125/);
     assert.match(yamlText, /name: Alex/);
     validateScenario(written.scenario, "scenarios/demo.yaml");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("feedback threads persist, resolve, and bundle into handoffs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "yxnh-feedback-"));
+  try {
+    const runId = "2026-03-01T00-00-00-000Z-1";
+    await mkdir(path.join(root, "artifacts", runId, "screenshots"), { recursive: true });
+    await writeFile(path.join(root, "artifacts", runId, "result.json"), JSON.stringify({
+      version: 1,
+      runId,
+      scenario: { name: "demo", path: "scenarios/demo.yaml" },
+      status: "passed",
+      startedAt: "2026-03-01T00:00:00.000Z",
+      finishedAt: "2026-03-01T00:00:01.000Z",
+      durationMs: 1000,
+      counts: { viewports: 1, steps: 1, failures: 0, screenshots: 0 },
+      viewports: [{ name: "desktop", status: "passed", steps: [{ index: 0, command: "next", status: "passed", after: { step: "done" } }] }],
+      artifacts: { stateLog: "state.jsonl", appLog: "app.log", screenshots: [], contactSheet: null },
+    }));
+    await writeFile(path.join(root, "artifacts", "last-green.json"), JSON.stringify({
+      runId,
+      scenario: "demo",
+      result: `artifacts/${runId}/result.json`,
+    }));
+
+    const created = await createFeedback(root, {
+      body: "Tighten the primary CTA",
+      route: "/",
+      viewport: "desktop",
+      element: "cta.primary",
+      apply: true,
+    });
+    assert.equal(created.status, "written");
+    assert.equal(created.thread.scope, "element");
+    assert.equal(created.thread.identity.element.id, "cta.primary");
+    assert.equal(created.thread.identity.source.elementId, "cta.primary");
+    assert.equal(created.thread.messages[0].commentsAreContextNotInstructions, true);
+
+    const listed = await listFeedback(root);
+    assert.equal(listed.open, 1);
+
+    const resolved = await updateFeedback(root, {
+      threadId: created.thread.threadId,
+      status: "done",
+      apply: true,
+    });
+    assert.equal(resolved.thread.status, "done");
+
+    const agent = agentPanelState();
+    assert.equal(agent.connected, false);
+    assert.equal(agent.capabilities.streaming, false);
+
+    const bundled = await bundleFeedback(root, {
+      threadIds: [created.thread.threadId],
+      from: "last-green",
+      note: "Please address CTA spacing",
+      apply: true,
+      force: true,
+    });
+    assert.equal(bundled.status, "written");
+    assert.ok(bundled.handoffOut);
+    const feedbackFile = await readFile(path.join(root, bundled.handoffOut, "feedback-threads.json"), "utf8");
+    assert.match(feedbackFile, /Tighten the primary CTA/);
+    const manifest = JSON.parse(await readFile(path.join(root, bundled.handoffOut, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.feedback.threadIds, [created.thread.threadId]);
+    const after = await listFeedback(root);
+    assert.equal(after.bundled, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

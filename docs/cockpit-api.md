@@ -34,6 +34,12 @@ this package). JSON stays under `/api/v1/…`.
 | GET | `/api/v1/runs/:runId` | One run + `result.json` |
 | GET | `/api/v1/compare` | `?baseline=&against=` — state + screenshot diff |
 | GET | `/api/v1/promote` | `?from=` — preview expect promotion (no write) |
+| GET | `/api/v1/feedback` | Feedback thread list |
+| GET | `/api/v1/feedback/:id` | Feedback thread detail |
+| POST | `/api/v1/feedback` | Create feedback thread |
+| PATCH | `/api/v1/feedback/:id` | Edit / resolve feedback |
+| POST | `/api/v1/feedback/bundle` | Bundle threads into a handoff |
+| GET | `/api/v1/agent` | Agent panel state (honest: not connected) |
 | GET | `/api/v1/handoffs` | Handoff list + last pointer |
 | GET | `/api/v1/handoffs/:handoffId` | One handoff manifest |
 | GET | `/api/v1/artifacts/...` | Safe file read under `artifacts/` only |
@@ -43,15 +49,13 @@ this package). JSON stays under `/api/v1/…`.
 The shell follows a Codex/Cursor-style review layout:
 
 - Top: mode tabs (Review / Runs / Handoffs)
-- Left context: branches, summary, files changed, bottom composer
-- Right stage: unified diff
+- Left context: branches, summary, files changed, adopt composer
+- Center stage: unified diff (or run/handoff detail)
+- Right **Agent** panel: context chips, feedback threads, activity slot, composer
 
-Selecting a branch loads the PR-style file list. **Übernehmen** (with optional
-note) POSTs to `/api/v1/workspace/adopt`. Empty note = take as-is; a note is
-recorded on the merge commit.
+Selecting a branch loads the PR-style file list. **Übernehmen** POSTs to
+`/api/v1/workspace/adopt`. Feedback create/resolve/bundle write via
+`/api/v1/feedback*`. The Agent panel stays honest when no adapter is connected.
 
-That is the only write route. Create/checkout remain CLI-only until a broader
-authenticated control plane exists.
-
-See also [`workspace.md`](workspace.md), [`cockpit-foundation.md`](cockpit-foundation.md),
-and [`handoff.md`](handoff.md).
+See also [`feedback.md`](feedback.md), [`workspace.md`](workspace.md),
+[`cockpit-foundation.md`](cockpit-foundation.md), and [`handoff.md`](handoff.md).

@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://yxnharness.dev/schema/feedback.schema.json",
+  "title": "YXNHarness feedback thread",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "threadId",
+    "status",
+    "createdAt",
+    "updatedAt",
+    "scope",
+    "identity",
+    "messages"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "threadId": { "type": "string", "minLength": 8, "maxLength": 80 },
+    "status": { "enum": ["open", "done", "bundled"] },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 },
+    "scope": { "enum": ["general", "screen", "element"] },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch", "commit"],
+      "properties": {
+        "branch": { "type": ["string", "null"] },
+        "commit": { "type": ["string", "null"] },
+        "route": { "type": ["string", "null"] },
+        "viewport": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "width": { "type": ["integer", "null"], "minimum": 1, "maximum": 8192 },
+            "height": { "type": ["integer", "null"], "minimum": 1, "maximum": 8192 }
+          }
+        },
+        "runId": { "type": ["string", "null"] },
+        "screenshot": { "type": ["string", "null"] },
+        "appState": { "type": ["object", "null"] },
+        "element": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 240 },
+            "kind": { "enum": ["harness", "selector", "path", "label"] },
+            "label": { "type": ["string", "null"], "maxLength": 240 }
+          }
+        },
+        "source": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "description": "Stable origin for later multi-branch visual element adopt (not git hunks).",
+          "properties": {
+            "branch": { "type": ["string", "null"] },
+            "commit": { "type": ["string", "null"] },
+            "elementId": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["messageId", "role", "body", "createdAt", "commentsAreContextNotInstructions"],
+        "properties": {
+          "messageId": { "type": "string", "minLength": 8, "maxLength": 80 },
+          "role": { "enum": ["host", "system"] },
+          "body": { "type": "string", "minLength": 1, "maxLength": 8000 },
+          "createdAt": { "type": "string", "minLength": 1 },
+          "commentsAreContextNotInstructions": { "const": true }
+        }
+      }
+    },
+    "handoffIds": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "maxItems": 32
+    }
+  }
+}
