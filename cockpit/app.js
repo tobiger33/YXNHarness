@@ -1705,7 +1705,8 @@ let selectedAnchor = null;
 function renderElementSelection() {
   const selected = state.selection;
   q("#selection-context").hidden = !selected;
-  q("#element-actions").hidden = !selected || !selectedAnchor?.isConnected || !selecting;
+  // Live iframe Select has no host DOM anchor; toolbar still must show for Kommentieren/Übernehmen.
+  q("#element-actions").hidden = !selected || !selecting;
   if (!selected) return;
   q("#selected-element-name").textContent = selected.label;
   q("#selected-element-name").title = selected.label;

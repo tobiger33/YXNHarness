@@ -15,10 +15,12 @@ In `harness.host.json`:
 
 | Value | Meaning |
 |-------|---------|
-| omit / `null` | Disconnected (default). Composer writes local feedback only. |
+| omit / `null` | Disconnected (default for other projects). Composer writes local feedback only. |
 | `"local"` | Built-in task packager. No remote model, no source edits. |
 | `"workspace-edit"` | Built-in visual editor. Speaks like a normal agent reply, proposes reversible file changes, and requires host Accept (with Preview) before write. |
 | `"./path/to/adapter.mjs"` | Project module exporting `createAdapter()`. |
+
+This repository’s root `harness.host.json` opts into `"workspace-edit"` so the Harbor Desk playthrough works without an extra config step. Other projects stay disconnected until they set `agent.adapter` themselves.
 
 Custom modules must stay inside the project root.
 

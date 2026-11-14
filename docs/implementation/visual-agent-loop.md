@@ -1,6 +1,6 @@
 # Visual feedback → agent → review
 
-Status: UI preparation, live inspector, attachment transport, connected agent adapter (local packager + workspace-edit proposals with host Accept + custom module contract) implemented; remote model adapters remain project-specific.
+Status: Harbor Desk playthrough ready on this repo — live inspector Select (Kommentieren/Übernehmen), attachment transport, `workspace-edit` opt-in in `harness.host.json`, propose → Preview → Accept, and YXN commit/merge gate. Remote model adapters remain project-specific.
 Owner split: UI/layout in Codex; backend and native target adapters in Cursor.
 Keep the accepted YXNHarness layout and native application behavior.
 
@@ -117,17 +117,24 @@ URLs. An agent receives pixels only when its adapter supports images.
    revisions. Übernehmen: dry-run then apply; verify it creates feedback, not a merge.
 5. Upload a screenshot, open it, send, reload and reopen from the stored message.
    Removing a draft thumbnail must not break an already sent image reference.
-6. With `agent.adapter: "workspace-edit"`, send a turn, inspect the proposal
-   activity/diff in the Agent panel, verify Harbor Desk preview, then Accept
-   explicitly (or Reject). Automated coverage:
-   `node --test tests/harness.test.mjs` (workspace-edit propose/accept cases).
+6. This repo’s `harness.host.json` already sets `agent.adapter: "workspace-edit"`.
+   Send a turn, inspect the quiet timeline + Edited diff, Preview in Harbor Desk,
+   then Accept (or Reject). Automated coverage:
+   `node --test tests/harness.test.mjs` (workspace-edit propose/accept) and
+   `node --test tests/cockpit-harbor-loop.test.mjs` (live Select → Accept).
 7. Exercise missing adapter, disconnected app, stale selection, rejected upload,
    failed request, retry, fast route changes, keyboard access and narrow screens.
 
-UI regression test already available:
-`HARNESS_BROWSER_CHANNEL=chrome node --test tests/cockpit-preview.test.mjs`
-Omit HARNESS_BROWSER_CHANNEL where the installed Playwright Chromium is used.
-Do not claim the inspector/upload/agent steps passed until their real integrations exist.
+UI regression tests:
+`HARNESS_BROWSER_CHANNEL=chrome node --test tests/cockpit-preview.test.mjs tests/cockpit-harbor-loop.test.mjs`
+Omit `HARNESS_BROWSER_CHANNEL` when the installed Playwright Chromium is used.
+
+Playthrough (two terminals):
+1. `npm run harness -- serve` → open the printed cockpit URL
+2. `node examples/foreign-booking/server.mjs` (default `http://127.0.0.1:4173/`)
+3. Open app (URL prefilled from `harness.config.json`) → wait for “Live inspector ready”
+4. Interact through Harbor Desk, then Select → Kommentieren → send → Preview → Accept
+5. Changes → Commit (trailer `Summary written by YXN.`) when you want the edit on a branch
 
 ## UI update: rectangle groups
 

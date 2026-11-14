@@ -100,8 +100,11 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.keyboard.press("Escape");
 
     await page.locator("#open-preview").click();
+    // Prefills from harness.config.json when no saved preview URL exists (async fetch).
+    await page.waitForFunction(() => /127\.0\.0\.1:4173\/?$/.test(document.querySelector("#connect-preview-dialog input")?.value || ""));
     await page.locator("#connect-preview-dialog input").fill("http://127.0.0.1:4189/");
     await page.getByRole("button", { name: "Open preview", exact: true }).click();
+    await page.getByText("Live inspector ready — Select is available.", { exact: true }).waitFor();
     const app = page.frameLocator("#live-preview");
     await app.locator("#city").fill("Lisbon");
     await app.locator("#nights").fill("3");
@@ -121,6 +124,24 @@ test("preview preserves native multi-page navigation and only selects on explici
     assert.equal(await page.locator("#context-chips").innerText(), context, "app clicks must not select context");
     await app.locator("#reset").click();
     await app.locator("#search").waitFor();
+
+    // Live Harbor Desk Select → toolbar → Kommentieren (no host DOM anchor required).
+    if (await page.locator("#selection-context-clear").isVisible()) {
+      await page.locator("#selection-context-clear").click();
+    }
+    await app.locator("#city").fill("Lisbon");
+    await app.locator("#nights").fill("2");
+    await page.locator("#select-tool").click();
+    assert.equal(await page.locator("#select-tool").getAttribute("aria-pressed"), "true");
+    await app.locator("#to-review").click();
+    await page.locator("#selection-context-name").waitFor();
+    assert.match(await page.locator("#selection-context-name").innerText(), /Review/);
+    assert.match(await page.locator("#selection-context-route").innerText(), /\/search/);
+    await page.locator("#element-actions").waitFor();
+    assert.equal(await page.locator("#element-actions").isVisible(), true, "live Select must show Kommentieren/Übernehmen");
+    await page.locator("#selection-comment").click();
+    assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
+    assert.match(await page.locator("#selection-context-intent").innerText(), /Kommentieren/);
   } finally {
     if (browser) await browser.close();
     cockpit.kill("SIGTERM");
