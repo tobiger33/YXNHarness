@@ -618,29 +618,8 @@ function formatFeedbackPlan(plan) {
   return lines.join("\n");
 }
 
-/** Honest stub: no coding agent is connected in local solo mode. */
-function agentPanelState() {
-  return {
-    version: 1,
-    connected: false,
-    adapter: null,
-    message: "No coding agent connected. Feedback is local-only. Bundle threads into a handoff for your agent.",
-    capabilities: {
-      models: false,
-      reasoningEffort: false,
-      modes: false,
-      streaming: false,
-      approvals: false,
-      sessions: false,
-      fileChanges: false,
-    },
-    activity: [],
-  };
-}
-
 export {
   FEEDBACK_DIR,
-  agentPanelState,
   bundleFeedback,
   createFeedback,
   formatFeedbackList,

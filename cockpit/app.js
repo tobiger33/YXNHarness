@@ -337,6 +337,29 @@ function addContext(label) {
   persistUi();
 }
 
+function syncAgentControls() {
+  const connected = Boolean(state.agent?.connected);
+  const caps = state.agent?.capabilities || {};
+  const modelSelect = q("#model");
+  const reasoningSelect = q("#reasoning");
+  if (connected && caps.models && Array.isArray(state.agent.models) && state.agent.models.length) {
+    const current = state.model;
+    modelSelect.replaceChildren(...state.agent.models.map((model) => {
+      const option = document.createElement("option");
+      option.value = model.id || model.label;
+      option.textContent = model.label || model.id;
+      return option;
+    }));
+    const values = [...modelSelect.options].map((option) => option.value);
+    modelSelect.value = values.includes(current) ? current : values[0];
+    state.model = modelSelect.value;
+  }
+  modelSelect.disabled = !(connected && caps.models);
+  reasoningSelect.disabled = !(connected && caps.reasoningEffort);
+  modelSelect.hidden = connected && caps.models === false;
+  reasoningSelect.hidden = connected && caps.reasoningEffort === false;
+}
+
 function setMode(mode, save = true) {
   state.mode = mode;
   qa("[data-mode]").forEach((button) => {
@@ -349,14 +372,14 @@ function setMode(mode, save = true) {
     q("#composer-note").textContent = "External · copy a structured task for your coding agent";
     q("#chat-input").placeholder = "Describe a task for your external agent…";
   } else if (connected) {
-    q("#composer-note").textContent = "Connected agent ready";
+    const name = state.agent?.adapter?.displayName || "Connected agent";
+    q("#composer-note").textContent = `${name} · turns stay provider-neutral`;
     q("#chat-input").placeholder = "Ask for a change, or describe an idea…";
   } else {
     q("#composer-note").textContent = "No agent adapter connected · messages become local feedback";
     q("#chat-input").placeholder = "Leave visual feedback… Comments are context, not instructions.";
   }
-  q("#model").disabled = !connected;
-  q("#reasoning").disabled = !connected;
+  syncAgentControls();
   if (save) persistUi();
 }
 
@@ -812,10 +835,57 @@ async function sendMessage() {
       pushActivity("Prepared external agent task");
       await attachments.clear();
     } else if (state.agent?.connected) {
-      thought.textContent = "Connected adapter · not implemented in this build";
+      if (attachmentIds.length && state.agent.capabilities?.images === false) {
+        throw new Error("Connected adapter does not support images. Remove attachments or switch adapters.");
+      }
+      thought.textContent = "Sending turn to connected adapter…";
+      const plan = await apiPost("/api/v1/agent/turns", {
+        body: requestBody,
+        apply: true,
+        model: state.agent.capabilities?.models ? state.model : undefined,
+        reasoning: state.agent.capabilities?.reasoningEffort ? state.reasoning : undefined,
+        route: selection?.route || (state.view === "preview" ? (root.dataset.previewRoute || "/") : null),
+        element: selection ? { id: selection.id, kind: selection.kind, label: selection.label } : null,
+        source: selection?.source || null,
+        appState: selection?.elements?.length || imageAttachments.length ? {
+          ...(selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : {}),
+          ...(imageAttachments.length ? { screenshotAttachments: imageAttachments } : {}),
+        } : null,
+        viewport: q("#device").value,
+        branch: state.workspace?.branch || null,
+        commit: state.workspace?.commit || null,
+        attachmentIds: attachmentIds.length ? attachmentIds : undefined,
+        sessionId: state.agent.session?.sessionId || undefined,
+      });
+      if (plan.status === "blocked") throw new Error(plan.blockedReasons?.join("; ") || "Agent turn blocked");
       const p = document.createElement("p");
-      p.textContent = "A connected agent adapter is declared for later. Your message was not sent to a model.";
+      p.textContent = plan.reply?.body || plan.explanation || `Turn ${plan.turnId || ""} accepted.`;
       answer.append(p);
+      if (plan.taskPath) {
+        const meta = document.createElement("div");
+        meta.className = "agent-event";
+        meta.textContent = `✓ Task package · ${plan.taskPath}`;
+        answer.append(meta);
+      }
+      if (plan.thread?.threadId) {
+        const meta = document.createElement("div");
+        meta.className = "agent-event";
+        meta.textContent = `✓ Feedback ${plan.thread.threadId}`;
+        answer.append(meta);
+      }
+      for (const event of (plan.activity || []).slice(-4)) {
+        pushActivity(event.summary || event.type);
+      }
+      thought.textContent = plan.adapter?.displayName ? `${plan.adapter.displayName} · ${plan.status}` : `Adapter · ${plan.status}`;
+      await attachments.clear();
+      await refreshFeedbackOnly();
+      try {
+        const agent = await apiGet("/api/v1/agent");
+        state.agent = agent;
+        setMode(state.mode, false);
+      } catch {
+        // Keep prior agent state if refresh fails.
+      }
     } else if (selection?.intent === "adopt") {
       const groups = new Map();
       for (const element of selection.elements || [selection]) {
@@ -964,8 +1034,14 @@ async function refresh() {
     q("#target-branch").textContent = workspace.branch || "—";
     q("#runs-count").textContent = String(state.runs.length);
     q("#feedback-count").textContent = String(feedback.open ?? state.feedback.filter((t) => t.status === "open").length);
-    q("#task-subtitle").textContent = agent.connected ? "Connected" : "Local · no agent adapter connected";
+    q("#task-subtitle").textContent = agent.connected
+      ? (agent.adapter?.displayName || "Connected")
+      : "Local · no agent adapter connected";
     q(".subtle").textContent = agent.connected ? "Connected" : "Local";
+    setMode(state.mode, false);
+    for (const event of (agent.activity || []).slice(0, 6).reverse()) {
+      if (event?.summary) pushActivity(event.summary);
+    }
     renderBranches();
     renderRecent();
     renderCompareSources();

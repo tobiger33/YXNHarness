@@ -1,8 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://yxnharness.dev/schema/agent-adapter.schema.json",
-  "title": "YXNHarness agent adapter capability declaration (forward-looking)",
-  "description": "Connected coding agents (Codex, Cursor, …) will advertise capabilities. Unsupported features must not be offered in the UI. No adapter is required for local solo feedback.",
+  "title": "YXNHarness agent adapter capability declaration",
+  "description": "Connected coding agents (Codex, Cursor, local packager, …) advertise capabilities. Unsupported features must not be offered in the UI. No adapter is required for local solo feedback.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "adapterId", "displayName", "capabilities"],
@@ -21,7 +21,8 @@
         "streaming",
         "approvals",
         "sessions",
-        "fileChanges"
+        "fileChanges",
+        "images"
       ],
       "properties": {
         "models": { "type": "boolean" },
@@ -30,7 +31,8 @@
         "streaming": { "type": "boolean" },
         "approvals": { "type": "boolean" },
         "sessions": { "type": "boolean" },
-        "fileChanges": { "type": "boolean" }
+        "fileChanges": { "type": "boolean" },
+        "images": { "type": "boolean" }
       }
     },
     "models": {

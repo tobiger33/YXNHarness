@@ -49,7 +49,6 @@ import {
   promoteExpectsFromRun,
 } from "./promote.mjs";
 import {
-  agentPanelState,
   bundleFeedback,
   createFeedback,
   formatFeedbackList,
@@ -58,6 +57,12 @@ import {
   listFeedback,
   updateFeedback,
 } from "./feedback.mjs";
+import {
+  agentPanelState,
+  createAgentSession,
+  listAgentActivity,
+  submitAgentTurn,
+} from "./agent-adapter.mjs";
 import {
   formatAttachPlan,
   runAttach,
@@ -2154,6 +2159,9 @@ export {
   updateFeedback,
   bundleFeedback,
   agentPanelState,
+  createAgentSession,
+  listAgentActivity,
+  submitAgentTurn,
   runAttach,
   planElementAdopt,
   formatElementAdoptPlan,

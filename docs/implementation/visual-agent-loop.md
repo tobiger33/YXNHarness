@@ -1,6 +1,6 @@
 # Visual feedback → agent → review
 
-Status: UI preparation, live inspector, and attachment transport implemented; connected agent adapter still pending.
+Status: UI preparation, live inspector, attachment transport, and connected agent adapter (local packager + custom module contract) implemented; remote model adapters remain project-specific.
 Owner split: UI/layout in Codex; backend and native target adapters in Cursor.
 Keep the accepted YXNHarness layout and native application behavior.
 
