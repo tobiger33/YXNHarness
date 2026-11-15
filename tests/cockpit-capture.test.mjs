@@ -1,3 +1,4 @@
+import {isolatedWorkspace} from "./support/workspace.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -5,7 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 
 test("Capture stores only the project region and the image reopens", async (t) => {
-  const server = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--port", "8810"], { cwd: new URL("..", import.meta.url).pathname, stdio: "ignore" });
+  const isolated = await isolatedWorkspace(t);
+  const server = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--root", isolated, "--port", "8810"], { cwd: new URL("..", import.meta.url).pathname, stdio: "ignore" });
   let browser;
   try {
     let ready = false;
@@ -22,6 +24,7 @@ test("Capture stores only the project region and the image reopens", async (t) =
     const available = await page.evaluate(() => typeof globalThis.CropTarget?.fromElement === "function" && typeof globalThis.ImageCapture === "function" && Boolean(navigator.mediaDevices?.getDisplayMedia));
     const project = await page.locator("#demo-preview").boundingBox();
     await page.evaluate(() => { document.title = "YXN-Capture-Test-8810"; });
+    await page.locator("#composer-plus").click();
     await page.locator("#capture").click();
     await Promise.race([
       page.locator(".attachment-preview").waitFor({ timeout: 15000 }),
@@ -47,6 +50,7 @@ test("Capture stores only the project region and the image reopens", async (t) =
     await page.keyboard.press("Escape");
     assert.equal(await page.locator("#capture").isEnabled(), true);
     await page.reload();
+    await page.locator("#workspace-brand[aria-busy=false]").waitFor();
     await page.locator(".attachment-preview").waitFor();
     const stored = await page.evaluate(() => new Promise((resolve, reject) => {
       const request = indexedDB.open("yxnharness.attachments.v1", 1);
@@ -84,6 +88,7 @@ test("Capture stores only the project region and the image reopens", async (t) =
       request.onerror = () => reject(request.error);
     }));
     await page.reload();
+    await page.locator("#workspace-brand[aria-busy=false]").waitFor();
     await page.locator(".attachment-preview").waitFor();
     let turn = null;
     await page.route("**/api/v1/agent/turns", async (route) => {
@@ -93,8 +98,10 @@ test("Capture stores only the project region and the image reopens", async (t) =
     });
     await page.locator('[data-mode="connected"]').click();
     await page.locator("#chat-input").fill("Keep the screenshot dimensions with this feedback.");
+    const turnResponse = page.waitForResponse(response => response.url().endsWith("/api/v1/agent/turns") && response.request().method() === "POST");
     await page.locator(".send").click();
-    await page.getByText("Exploring", { exact: true }).waitFor();
+    const sent = await turnResponse;
+    assert.equal(sent.status(),200,JSON.stringify(await sent.json()));
     assert.ok(turn?.appState?.screenshotAttachments?.[0], "connected agent turn must carry screenshot attachments");
     assert.equal(turn.appState.screenshotAttachments[0].image.width, image.width);
     if (captured) assert.equal(turn.appState.screenshotAttachments[0].viewport.width, stored.capture.viewport.width);

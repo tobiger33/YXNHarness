@@ -3,6 +3,7 @@ import { access, mkdir, readdir, readFile, rename, unlink, writeFile } from "nod
 import path from "node:path";
 
 const INDEX_FILENAME = "index.json";
+const SUPPORT_DIRECTORIES = new Set(["handoffs", "agent", "attachments", "feedback", "shares", "element-adopts", "workspace"]);
 const writeLocks = new Map();
 
 async function pathExists(filePath) {
@@ -100,7 +101,7 @@ async function buildRunIndex(root) {
         };
         continue;
       }
-      if (entry.name === "handoffs" || entry.name.startsWith(".")) continue;
+      if (SUPPORT_DIRECTORIES.has(entry.name) || entry.name.startsWith(".")) continue;
       runs.push(await summarizeRunDirectory(root, entry.name));
     }
   }

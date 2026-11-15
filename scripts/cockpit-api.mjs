@@ -50,6 +50,7 @@ import {
   listAgentSessions,
   rejectAgentProposal,
   submitAgentTurn,
+  steerAgentTurn,
 } from "./agent-adapter.mjs";
 
 const DEFAULT_PORT = 8787;
@@ -208,6 +209,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "DELETE /api/v1/attachments/:id",
         "POST /api/v1/agent/sessions",
         "POST /api/v1/agent/turns",
+        "POST /api/v1/agent/steer",
         "POST /api/v1/agent/proposals/:id/accept",
         "POST /api/v1/agent/proposals/:id/reject",
       ],
@@ -251,6 +253,7 @@ async function buildOverview(root, { refresh = true } = {}) {
         "GET /api/v1/agent/sessions",
         "POST /api/v1/agent/sessions",
         "POST /api/v1/agent/turns",
+        "POST /api/v1/agent/steer",
         "GET /api/v1/agent/proposals",
         "GET /api/v1/agent/proposals/:id",
         "POST /api/v1/agent/proposals/:id/accept",
@@ -426,6 +429,7 @@ function apiIndexPayload(projectRoot) {
       "DELETE /api/v1/attachments/:id",
       "POST /api/v1/agent/sessions",
       "POST /api/v1/agent/turns",
+        "POST /api/v1/agent/steer",
     ],
     root: projectRoot,
     links: {
@@ -743,7 +747,11 @@ function createCockpitApi({
 
       if (pathname === "/api/v1/attachments" && method === "POST") {
         const declaredType = (request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-        const filename = request.headers["x-attachment-filename"] || request.headers["x-filename"] || null;
+        let filename = request.headers["x-attachment-filename"] || request.headers["x-filename"] || null;
+        if (filename && request.headers["x-attachment-filename-encoding"] === "uri") {
+          try { filename = decodeURIComponent(filename); }
+          catch { sendJson(response,400,{error:"Invalid encoded attachment filename."}); return; }
+        }
         const buffer = await readBinaryBody(request);
         const plan = await createAttachment(projectRoot, {
           buffer,
@@ -836,9 +844,16 @@ function createCockpitApi({
         return;
       }
 
+      if (pathname === "/api/v1/agent/steer" && method === "POST") {
+        const body = await readJsonBody(request);
+        const plan = await steerAgentTurn(projectRoot, {body:body.body,turnId:body.turnId});
+        sendJson(response,plan.status === "blocked" ? 409 : 200,plan);
+        return;
+      }
       if (pathname === "/api/v1/agent/turns" && method === "POST") {
         const body = await readJsonBody(request);
         const plan = await submitAgentTurn(projectRoot, {
+          turnId: body.turnId ?? null,
           body: body.body ?? body.text ?? body.message,
           sessionId: body.sessionId ?? null,
           model: body.model ?? null,
@@ -976,7 +991,7 @@ function createCockpitApi({
             "Content-Length": body.length,
             "Cache-Control": "no-store",
             "X-Content-Type-Options": "nosniff",
-            "Content-Disposition": `inline; filename="${String(meta.filename || "attachment").replace(/"/g, "")}"`,
+            "Content-Disposition": `${meta.mimeType?.startsWith("image/") ? "inline" : "attachment"}; filename="attachment"; filename*=UTF-8''${encodeURIComponent(meta.filename || "attachment")}`,
           });
           response.end(method === "HEAD" ? undefined : body);
         } catch (error) {

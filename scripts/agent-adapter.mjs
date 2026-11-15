@@ -464,6 +464,9 @@ async function loadCustomModule(filePath) {
     throw new Error("Custom adapter must provide declaration.");
   }
   validateDeclaration(adapter.declaration, path.basename(filePath));
+  if (adapter.declaration.capabilities.steering && typeof adapter.handleSteer !== "function") {
+    throw new Error("A steering-capable adapter must implement handleSteer().");
+  }
   if (typeof adapter.handleTurn !== "function") {
     throw new Error("Custom adapter must implement handleTurn().");
   }
@@ -620,6 +623,23 @@ async function ensureSession(root) {
   return created.session;
 }
 
+// Retain the actual active adapter instance so steer never creates a second task.
+const activeTurns = new Map();
+async function steerAgentTurn(root, input = {}) {
+  const active = activeTurns.get(path.resolve(root));
+  if (!active || !input.turnId || input.turnId !== active.turnId) {
+    return {status:"blocked",ok:false,blockedReasons:["No matching running agent turn."]};
+  }
+  if (!active.steering || typeof active.adapter.handleSteer !== "function") {
+    return {status:"blocked",ok:false,blockedReasons:["Connected adapter does not support steering."]};
+  }
+  const body = String(input.body || "").trim();
+  if (!body) return {status:"blocked",ok:false,blockedReasons:["Steering body is required."]};
+  const result = await active.adapter.handleSteer({sessionId:active.sessionId,turnId:active.turnId,body});
+  if (result?.ok !== true) return {status:"blocked",ok:false,blockedReasons:result?.blockedReasons || ["Adapter did not acknowledge steering."]};
+  return {...result,ok:true,status:result.status || "steered"};
+}
+
 async function submitAgentTurn(root, input = {}) {
   const bound = await getBoundAdapter(root);
   if (bound.blockedReason) {
@@ -670,7 +690,15 @@ async function submitAgentTurn(root, input = {}) {
     return { status: "blocked", ok: false, blockedReasons: ["Adapter does not advertise reasoningEffort."] };
   }
 
-  const result = await bound.adapter.handleTurn({
+  const turnId = input.turnId ? String(input.turnId) : randomUUID();
+  const rootKey = path.resolve(root);
+  if (activeTurns.has(rootKey)) return {status:"blocked",ok:false,blockedReasons:["An agent turn is already running in this workspace."]};
+  const active = {adapter:bound.adapter,sessionId:session.sessionId,turnId,steering:caps.steering === true};
+  activeTurns.set(rootKey,active);
+  let result;
+  try {
+  result = await bound.adapter.handleTurn({
+    turnId,
     sessionId: session.sessionId,
     body,
     model,
@@ -685,6 +713,9 @@ async function submitAgentTurn(root, input = {}) {
     createThread: input.createThread !== false,
     appState: input.appState ?? null,
   });
+  } finally {
+    if (activeTurns.get(rootKey) === active) activeTurns.delete(rootKey);
+  }
 
   return {
     version: 1,
@@ -768,6 +799,7 @@ export {
   localAdapterDeclaration,
   rejectAgentProposal,
   submitAgentTurn,
+  steerAgentTurn,
   validateDeclaration,
   workspaceEditAdapterDeclaration,
 };

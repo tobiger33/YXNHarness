@@ -1,3 +1,4 @@
+import {isolatedWorkspace} from "./support/workspace.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -12,10 +13,11 @@ async function waitForServer(url) {
   throw new Error(`Server did not become ready: ${url}`);
 }
 
-test("preview preserves native multi-page navigation and only selects on explicit request", async () => {
+test("preview preserves native multi-page navigation and only selects on explicit request", async (t) => {
   const cwd = new URL("..", import.meta.url).pathname;
-  const cockpit = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--port", "8808"], { cwd, stdio: "ignore" });
-  const application = spawn(process.execPath, ["examples/foreign-booking/server.mjs"], { cwd, env: { ...process.env, PORT: "4189" }, stdio: "ignore" });
+  const isolated = await isolatedWorkspace(t);
+  const cockpit = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--root", isolated, "--port", "8808"], { cwd, stdio: "ignore" });
+  const application = spawn(process.execPath, [`${isolated}/examples/foreign-booking/server.mjs`], { cwd, env: { ...process.env, PORT: "4189" }, stdio: "ignore" });
   let browser;
   try {
     await Promise.all([waitForServer("http://127.0.0.1:8808/"), waitForServer("http://127.0.0.1:4189/")]);
@@ -23,6 +25,11 @@ test("preview preserves native multi-page navigation and only selects on explici
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto("http://127.0.0.1:8808/#/workspace");
     await page.locator("#workspace-brand[aria-busy=false]").waitFor();
+    await page.locator("#chat-input").fill("Draft survives reload.");
+    await page.reload();
+    await page.locator("#workspace-brand[aria-busy=false]").waitFor();
+    assert.equal(await page.locator("#chat-input").inputValue(),"Draft survives reload.");
+    await page.locator("#chat-input").fill("");
     assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
     await page.locator("#select-tool").click();
     const surface = await page.locator("#app-preview").boundingBox();
@@ -48,6 +55,7 @@ test("preview preserves native multi-page navigation and only selects on explici
     await delay(400);
     await page.mouse.up();
     assert.equal((await page.locator('[data-demo-element="OnboardingHeading"]').boundingBox()).y, heading.y, "holding must not shift the canvas");
+    await page.locator("#selection-summary summary").click();
     assert.equal(await page.locator("#selection-context-name").innerText(), "OnboardingHeading");
     await page.locator('[data-demo-element="FuturePlanningCard"]').click();
     assert.equal(await page.locator("#selection-context-name").innerText(), "2 elements");
@@ -69,19 +77,22 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.locator("#chat-input").fill("Keep my instructions.");
     await page.locator("#select-tool").click();
     await page.locator('[data-demo-element="SubmitButton"]').click();
-    assert.match(await page.locator("#context-chips").innerText(), /SubmitButton/);
+    assert.equal(await page.locator("#draft-change-count").innerText(), "1 Änderung");
     assert.equal(await page.locator('[data-demo-step="details"]').isVisible(), true);
     await page.locator("#element-actions").waitFor();
     await page.locator("#selection-comment").click();
     assert.equal(await page.locator("#chat-input").inputValue(), "Keep my instructions.");
+    await page.locator("#selection-summary summary").click();
     assert.match(await page.locator("#selection-context-route").innerText(), /\/details/);
     assert.equal(await page.locator("#interact-tool").getAttribute("aria-pressed"), "true");
+    if (!(await page.locator("#selection-summary").getAttribute("open")) && !(await page.locator("#selection-context-name").isVisible())) await page.locator("#selection-summary summary").click();
     await page.locator("#selection-context-name").click();
     await page.locator("#element-detail-dialog[open]").waitFor();
     assert.equal(await page.locator(".element-detail-preview button").isVisible(), true);
     await page.getByRole("textbox", { name: "Element comment", exact: true }).fill("Reduce the button's vertical padding.");
     await page.getByRole("button", { name: "Kommentar speichern", exact: true }).click();
     assert.equal(await page.locator("#chat-input").inputValue(), "Keep my instructions.");
+    if (!(await page.locator("#selection-summary").getAttribute("open")) && !(await page.locator("#selection-context-name").isVisible())) await page.locator("#selection-summary summary").click();
     await page.locator("#selection-context-name").click();
     assert.equal(await page.getByRole("textbox", { name: "Element comment", exact: true }).inputValue(), "Reduce the button's vertical padding.");
     await page.keyboard.press("Escape");
@@ -138,6 +149,7 @@ test("preview preserves native multi-page navigation and only selects on explici
     await page.locator("#select-tool").click();
     assert.equal(await page.locator("#select-tool").getAttribute("aria-pressed"), "true");
     await app.locator("#to-review").click();
+    await page.locator("#selection-summary summary").click();
     await page.locator("#selection-context-name").waitFor();
     assert.match(await page.locator("#selection-context-name").innerText(), /Review/);
     assert.match(await page.locator("#selection-context-route").innerText(), /\/search/);

@@ -48,6 +48,19 @@ export function mountAttachments(root, notify) {
       ? Math.max(1, Math.round(item.byteSize / 1024))
       : Math.max(1, Math.round((item.blob?.size || 0) / 1024));
     const place = item.serverId ? "Stored attachment" : "Local draft";
+    if (!item.width) {
+      details.replaceChildren(document.createTextNode(`${sizeLabel} KB · ${place} · `));
+      const download = document.createElement("a");
+      download.href = item.contentUrl || item.url;
+      download.download = item.name;
+      download.textContent = "Datei herunterladen";
+      details.append(download);
+      viewerImage.hidden = true;
+      viewerImage.removeAttribute("src");
+      if (!dialog.open) dialog.showModal();
+      return;
+    }
+    viewerImage.hidden = false;
     details.textContent = `Image: ${item.width} × ${item.height} px · ${item.capture?.viewport ? `Project: ${item.capture.viewport.width} × ${item.capture.viewport.height} CSS px · DPR ${item.capture.devicePixelRatio} · ` : "Project viewport unknown · "}${sizeLabel} KB · ${place}`;
     viewerImage.src = item.contentUrl || item.url;
     viewerImage.alt = item.name;
@@ -64,8 +77,9 @@ export function mountAttachments(root, notify) {
     preview.setAttribute("aria-label", `Open ${item.name}`);
     preview.title = item.name;
     const image = document.createElement("img");
-    image.src = item.contentUrl || item.url;
+    if (item.width) image.src = item.contentUrl || item.url;
     image.alt = "";
+    image.hidden = !item.width;
     const caption = document.createElement("span");
     caption.textContent = item.uploadStatus === "uploading"
       ? "Uploading…"
@@ -74,7 +88,7 @@ export function mountAttachments(root, notify) {
         : item.name;
     const resolution = document.createElement("small");
     resolution.className = "attachment-resolution";
-    resolution.textContent = `${item.width} × ${item.height} px`;
+    resolution.textContent = item.width ? `${item.width} × ${item.height} px` : "Datei";
     preview.append(image, caption, resolution);
     preview.onclick = () => open(item);
     card.append(preview);
@@ -134,7 +148,8 @@ export function mountAttachments(root, notify) {
         headers: {
           Accept: "application/json",
           "Content-Type": item.blob.type || "application/octet-stream",
-          "X-Attachment-Filename": item.name || "attachment.png",
+          "X-Attachment-Filename": encodeURIComponent(item.name || "attachment.png"),
+          "X-Attachment-Filename-Encoding": "uri",
         },
         body: item.blob,
       });
@@ -198,22 +213,21 @@ export function mountAttachments(root, notify) {
     await ready;
     for (const file of files) {
       if (generation !== revision) return;
-      if (!IMAGE_TYPES.has(file.type)) { notify("Choose a PNG, JPEG, WebP or GIF image."); continue; }
-      if (file.size > MAX_BYTES) { notify("Choose an image smaller than 12 MB."); continue; }
-      if (items.length >= MAX_IMAGES) { notify("You can attach up to 6 images."); break; }
+      if (file.size > MAX_BYTES) { notify("Choose a file smaller than 12 MB."); continue; }
+      if (items.length >= MAX_IMAGES) { notify("You can attach up to 6 files."); break; }
       let bitmap;
       try {
-        bitmap = await createImageBitmap(file);
+        if (IMAGE_TYPES.has(file.type)) bitmap = await createImageBitmap(file);
         const record = {
           id: crypto.randomUUID(),
           name: file.name || "Screenshot.png",
           blob: file,
-          width: bitmap.width,
-          height: bitmap.height,
+          width: bitmap?.width ?? null,
+          height: bitmap?.height ?? null,
           uploadStatus: "pending",
           capture,
         };
-        bitmap.close();
+        bitmap?.close();
         if (generation !== revision) return;
         const item = hydrate(record);
         items.push(item);
@@ -260,6 +274,24 @@ export function mountAttachments(root, notify) {
     if (captureBusy) return;
     const target = projectTarget();
     if (!target) { notify("Open the project Preview before capturing an image."); return; }
+    if (globalThis.webkit?.messageHandlers?.captureProject) {
+      captureBusy = true;
+      captureButton.disabled = true;
+      try {
+        const generation = revision;
+        const data = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => { window.removeEventListener("yxn:desktop-capture", receive); reject(new Error("Screenshot timed out.")); }, 15000);
+          function receive(event) { clearTimeout(timer); window.removeEventListener("yxn:desktop-capture", receive); event.detail.error ? reject(new Error(event.detail.error)) : resolve(event.detail.data); }
+          window.addEventListener("yxn:desktop-capture", receive);
+          globalThis.webkit.messageHandlers.captureProject.postMessage({});
+        });
+        if (generation !== revision || target !== projectTarget()) throw new Error("Project changed during capture.");
+        const blob = await (await fetch(`data:image/png;base64,${data}`)).blob();
+        await addFiles([new File([blob], "Project-screenshot.png", {type:"image/png"})]);
+      } catch (error) { notify(error.message); }
+      finally { captureBusy = false; captureButton.disabled = false; }
+      return;
+    }
     if (!navigator.mediaDevices?.getDisplayMedia || typeof globalThis.CropTarget?.fromElement !== "function" || typeof globalThis.ImageCapture !== "function") {
       notify("Project-only capture is unavailable in this browser. Use a supporting browser or attach an already cropped project image.");
       return;
@@ -373,13 +405,13 @@ export function mountAttachments(root, notify) {
       ));
       const failed = items.filter((item) => !item.serverId);
       if (failed.length) {
-        throw new Error(`Image upload failed for: ${failed.map((item) => item.name).join(", ")}`);
+        throw new Error(`Attachment upload failed for: ${failed.map((item) => item.name).join(", ")}`);
       }
       return items.map((item) => item.serverId);
     },
     metadata: () => items.map((item) => ({
       id: item.serverId || item.id, name: item.name, mimeType: item.blob.type, sizeBytes: item.blob.size,
-      image: { width: item.width, height: item.height, unit: "px" },
+      image: item.width ? { width: item.width, height: item.height, unit: "px" } : null,
       viewport: item.capture?.viewport || null,
       devicePixelRatio: item.capture?.devicePixelRatio ?? null,
       captureRect: item.capture?.rect || null,

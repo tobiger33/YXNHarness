@@ -32,7 +32,8 @@
         "approvals": { "type": "boolean" },
         "sessions": { "type": "boolean" },
         "fileChanges": { "type": "boolean" },
-        "images": { "type": "boolean" }
+        "images": { "type": "boolean" },
+        "steering": { "type": "boolean" }
       }
     },
     "models": {

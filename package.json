@@ -10,7 +10,8 @@
     "harness": "node scripts/harness.mjs",
     "test": "node --test",
     "serve:example": "node examples/minimal/server.mjs",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "desktop": "node scripts/desktop.mjs"
   },
   "devDependencies": {
     "ajv": "8.20.0",

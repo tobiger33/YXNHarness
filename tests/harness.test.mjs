@@ -723,6 +723,9 @@ test("run index summarizes artifact directories and pointers", async () => {
       result: `artifacts/${runId}/result.json`,
     }));
 
+    for (const support of ["agent","attachments","feedback","shares","element-adopts","workspace","handoffs"]) {
+      await mkdir(path.join(root,"artifacts",support),{recursive:true});
+    }
     const index = await writeRunIndex(root);
     assert.equal(index.summary.runCount, 1);
     assert.equal(index.summary.passed, 1);
@@ -1010,6 +1013,7 @@ test("cockpit API serves host, runs, and artifacts on loopback only", async () =
       "DELETE /api/v1/attachments/:id",
       "POST /api/v1/agent/sessions",
       "POST /api/v1/agent/turns",
+      "POST /api/v1/agent/steer",
       "POST /api/v1/agent/proposals/:id/accept",
       "POST /api/v1/agent/proposals/:id/reject",
     ]);

@@ -94,3 +94,17 @@ export function createAdapter() {
 
 Comments remain context, not executable instructions. Merge authority stays
 with the host.
+
+## Steering an active turn
+
+Senden and Steuern are separate composer actions, with Enter and Command+Enter
+as their defaults. Both shortcuts are independently editable in Settings;
+Shift+Enter inserts a newline. Identical combinations are rejected.
+
+An adapter may opt in with `capabilities.steering: true` and implement
+`handleSteer({ sessionId, turnId, body })`, returning `{ ok: true }` only after
+accepting the instruction. `POST /api/v1/agent/steer` routes the instruction to
+the same in-memory adapter instance currently handling that workspace's turn.
+A missing or stale turn ID is blocked; steering never creates a new turn or
+session. The built-in demo adapters do not advertise this capability. Their
+composer preserves the draft and explains that steering is unavailable.

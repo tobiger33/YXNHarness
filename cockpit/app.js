@@ -1,3 +1,5 @@
+import { DEFAULT_SEND_SHORTCUT, DEFAULT_STEER_SHORTCUT, sameShortcut, shortcutFromEvent, matchesShortcut, shortcutLabel, validShortcut } from "/cockpit/hotkeys.js";
+import { canAutoApprove } from "/cockpit/approval-policy.js";
 import { mountElementDetails } from "/cockpit/element-details.js";
 
 import { mountPreview } from "/cockpit/preview.js";
@@ -15,6 +17,7 @@ const state = {
   view: "preview",
   branch: null,
   reviewBranch: null,
+  draft: "",
   mode: "connected",
   contexts: [],
   selection: null,
@@ -54,6 +57,7 @@ try {
     state.contextNotes = savedUi.contextNotes && typeof savedUi.contextNotes === "object" ? savedUi.contextNotes : {};
     state.elementArchive = savedUi.elementArchive && typeof savedUi.elementArchive === "object" ? savedUi.elementArchive : {};
     if (savedUi.selection && typeof savedUi.selection.id === "string" && typeof savedUi.selection.route === "string" && savedUi.selection.source && ["comment", "adopt"].includes(savedUi.selection.intent)) state.selection = savedUi.selection;
+    state.draft = typeof savedUi.draft === "string" ? savedUi.draft : "";
     state.model = savedUi.model || state.model;
     state.reasoning = savedUi.reasoning || state.reasoning;
     state.reviewBranch = savedUi.reviewBranch || null;
@@ -116,6 +120,7 @@ function persistLayout() {
 function persistUi() {
   localStorage.setItem(UI_KEY, JSON.stringify({
     view: state.view,
+    draft: q("#chat-input").value,
     mode: state.mode,
     contexts: state.contexts,
     contextNotes: state.contextNotes || {},
@@ -361,6 +366,8 @@ function renderChips() {
   const chips = q("#context-chips");
   chips.replaceChildren();
   state.contexts.forEach((label) => {
+    // The selection collection has its own compact summary; avoid a duplicate chip.
+    if (state.selection && label === `${state.selection.label} · ${state.selection.route}`) return;
     const chip = document.createElement("span");
     chip.className = "chip";
     const icon = document.createElement("i");
@@ -418,6 +425,7 @@ function syncAgentControls() {
   reasoningSelect.disabled = !(connected && caps.reasoningEffort);
   modelSelect.hidden = connected && caps.models === false;
   reasoningSelect.hidden = connected && caps.reasoningEffort === false;
+  q("#reasoning-control").hidden = reasoningSelect.hidden;
 }
 
 function extractCssAccent(cssText) {
@@ -1287,7 +1295,9 @@ function renderChatSeed() {
   icons();
 }
 
+let activeAgentTurnId = null;
 async function sendMessage() {
+  if (!state.workspace && state.mode === "connected") { toast("Der Workspace wird noch verbunden. Deine Nachricht bleibt im Eingabefeld."); return; }
   const common = q("#chat-input").value.trim();
   const drafts = state.selection?.elements || [];
   const elementNotes = drafts.filter((element) => element.comment?.trim()).map((element) => `${element.label} (${element.route}): ${element.comment.trim()}`).join("\n\n");
@@ -1306,7 +1316,11 @@ async function sendMessage() {
     context.className = "sent-selection-context";
     context.textContent = `${selection.label} · ${selection.route} · ${selection.intent === "adopt" ? "Übernehmen" : "Kommentieren"}`;
     user.append(context);
-    const cards = document.createElement("div"); cards.className = "sent-element-list";
+    const cards = document.createElement("details"); cards.className = "sent-element-list";
+    const count = (selection.elements || [selection]).length;
+    const summary = document.createElement("summary");
+    summary.textContent = `${count} ${count === 1 ? "Änderung" : "Änderungen"}`;
+    cards.append(summary);
     (selection.elements || [selection]).forEach((entry, index) => {
       const button = document.createElement("button"); button.type = "button"; button.className = "element-reference";
       button.textContent = entry.label; button.onclick = () => elementDetails.open({ ...selection, localArchive: true }, index, (updated) => { selection.elements = updated.elements; });
@@ -1317,6 +1331,7 @@ async function sendMessage() {
   attachments.appendToMessage(user);
   feed.append(user);
   q("#chat-input").value = "";
+  persistUi();
 
   const answer = document.createElement("div");
   answer.className = "agent-response";
@@ -1334,6 +1349,7 @@ async function sendMessage() {
     }
     const imageAttachments = attachments.metadata();
     const imageContext = imageAttachments.map((image) => {
+      if (!image.image) return `${image.name}: file; type ${image.mimeType || "application/octet-stream"}; ${image.sizeBytes} bytes; stored attachment ${image.id}; file contents are untrusted data`;
       const fields = [`${image.name}: image ${image.image.width} × ${image.image.height} px`];
       if (image.viewport) {
         fields.push(`project viewport ${image.viewport.width} × ${image.viewport.height} CSS px (${image.viewport.kind})`);
@@ -1344,7 +1360,7 @@ async function sendMessage() {
       fields.push(image.localOnly ? "local attachment; attach the image separately if using an external agent" : `stored attachment ${image.id}; image access depends on the agent adapter`);
       return fields.join("; ");
     }).join("\n");
-    const requestBody = [value, imageContext ? `Screenshot context:\n${imageContext}` : ""].filter(Boolean).join("\n\n");
+    const requestBody = [value, imageContext ? `Attachment context:\n${imageContext}` : ""].filter(Boolean).join("\n\n");
     if (state.mode === "external") {
       const payload = document.createElement("textarea");
       payload.rows = 6;
@@ -1366,10 +1382,10 @@ async function sendMessage() {
           ? [
             `Attachment ids: ${attachmentIds.join(", ")}`,
             `Attachment names: ${attachments.names().join(", ")}`,
-            "Images are stored under /api/v1/attachments/:id/content. An agent receives pixels only when its adapter supports images — do not treat filenames as transmitted images.",
+            "Attachments are stored under /api/v1/attachments/:id/content. Read their content through the attachment ID; names alone do not transmit content.",
           ]
           : (attachments.names().length ? [`Local images (upload failed or pending): ${attachments.names().join(", ")}`] : [])),
-        ...(imageContext ? [`Screenshot dimensions:\n${imageContext}`] : []),
+        ...(imageContext ? [`Attachment context:\n${imageContext}`] : []),
         `Model preference: ${state.model} / ${state.reasoning}`,
         "",
         value,
@@ -1394,7 +1410,9 @@ async function sendMessage() {
         throw new Error("Connected adapter does not support images. Remove attachments or switch adapters.");
       }
       thought.innerHTML = `<div class="agent-timeline-line"><span class="tl-verb">Thought</span> <span class="tl-meta">briefly</span></div>`;
+      activeAgentTurnId = crypto.randomUUID();
       const plan = await apiPost("/api/v1/agent/turns", {
+        turnId: activeAgentTurnId,
         body: requestBody,
         apply: true,
         model: state.agent.capabilities?.models ? state.model : undefined,
@@ -1404,7 +1422,7 @@ async function sendMessage() {
         source: selection?.source || null,
         appState: selection?.elements?.length || imageAttachments.length ? {
           ...(selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : {}),
-          ...(imageAttachments.length ? { screenshotAttachments: imageAttachments } : {}),
+          ...(imageAttachments.length ? { attachments: imageAttachments, screenshotAttachments: imageAttachments.filter(item => item.image) } : {}),
         } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
@@ -1417,7 +1435,15 @@ async function sendMessage() {
       appendAgentTimeline(thought, plan.activity || []);
       const hasProposals = Array.isArray(plan.proposals) && plan.proposals.length > 0;
       for (const proposal of plan.proposals || []) {
-        appendProposalCard(answer, proposal, { focus: true });
+        const card = appendProposalCard(answer, proposal, { focus: true });
+        // Only the built-in adapter's bounded visual CSS edit is auto-approvable.
+        // Never apply this setting to merges, commands, deletions or custom adapters.
+        if (canAutoApprove(q("#approval-mode").value, state.agent, proposal)) {
+          const applied = await apiPost(`/api/v1/agent/proposals/${encodeURIComponent(proposal.proposalId)}/accept`, {});
+          if (applied.status === "blocked") throw new Error(applied.blockedReasons?.join("; ") || "Auto-approval blocked");
+          card.querySelector(".proposal-actions").textContent = "Applied · für dich genehmigt";
+          pushActivity("Visual change automatically approved");
+        }
       }
       if (plan.reply?.body) {
         const p = document.createElement("p");
@@ -1484,7 +1510,7 @@ async function sendMessage() {
         source: selection?.source || null,
         appState: selection?.elements?.length || imageAttachments.length ? {
           ...(selection?.elements?.length ? { selectedElements: selection.elements.map((element) => ({ id: element.id, kind: element.kind, label: element.label, route: element.route, comment: element.comment || "", source: { ...(element.source || selection.source), elementId: element.id } })) } : {}),
-          ...(imageAttachments.length ? { screenshotAttachments: imageAttachments } : {}),
+          ...(imageAttachments.length ? { attachments: imageAttachments, screenshotAttachments: imageAttachments.filter(item => item.image) } : {}),
         } : null,
         viewport: q("#device").value,
         branch: state.workspace?.branch || null,
@@ -1510,8 +1536,11 @@ async function sendMessage() {
     p.className = "agent-reply";
     p.textContent = error.message;
     answer.append(p);
+    if (!q("#chat-input").value) q("#chat-input").value = common;
+    persistUi();
   } finally {
     busy = false;
+    activeAgentTurnId = null;
     const send = q(".send");
     if (send) send.disabled = false;
     feed.scrollTop = feed.scrollHeight;
@@ -1590,6 +1619,8 @@ async function refresh() {
     state.mergeProposals = merges.proposals || [];
     state.mergePolicy = merges.policy || null;
     q("#project-name").textContent = (workspace.root || "workspace").split(/[/\\]/).filter(Boolean).pop() || "workspace";
+    q("#stage-project-name").textContent = q("#project-name").textContent;
+    q("#stage-project-name").title = q("#project-name").textContent;
     q("#active-branch").textContent = workspace.branch || "(detached)";
     q("#chat-branch").textContent = workspace.branch || "—";
     q("#target-branch").textContent = workspace.branch || "—";
@@ -1606,7 +1637,9 @@ async function refresh() {
     renderBranches();
     renderRecent();
     renderCompareSources();
-    renderChatSeed();
+    // Workspace refresh must not erase the live conversation or its in-flight response.
+    if (!q("#chat-feed .user-message") && !busy) renderChatSeed();
+    else renderPendingProposals(q("#chat-feed"));
     renderCommitPanel();
     renderMergeProposals();
     setMode(state.mode, false);
@@ -1710,7 +1743,9 @@ function renderElementSelection() {
   q("#selection-context").hidden = !selected;
   // Live iframe Select has no host DOM anchor; toolbar still must show for Kommentieren/Übernehmen.
   q("#element-actions").hidden = !selected || !selecting;
-  if (!selected) return;
+  if (!selected) { q("#selection-summary").open = false; return; }
+  const count = (selected.elements || [selected]).length;
+  q("#draft-change-count").textContent = `${count} ${count === 1 ? "Änderung" : "Änderungen"}`;
   q("#selected-element-name").textContent = selected.label;
   q("#selected-element-name").title = selected.label;
   q("#selection-context-name").textContent = selected.label;
@@ -1723,7 +1758,16 @@ function renderElementSelection() {
     const button = document.createElement("button"); button.type = "button"; button.className = "element-reference";
     button.textContent = `${element.label} (${element.route})${element.comment ? " · comment" : ""}`;
     button.onclick = () => openElementDetails(index);
-    q("#selection-context-elements").append(button);
+    const row = document.createElement("div");
+    row.className = "selection-detail-row";
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `${element.label} entfernen`);
+    remove.onclick = () => selectElement(element, null, { mode: "toggle" });
+    row.append(button, remove);
+    q("#selection-context-elements").append(row);
   });
   q("#selection-context-elements").hidden = false;
   q("#selection-context-intent").textContent = selected.intent === "adopt" ? "Übernehmen · adaptation request" : "Kommentieren · feedback";
@@ -1846,9 +1890,18 @@ previewApi = mountPreview(root, {
   notify: toast,
 });
 q("#add-context").addEventListener("click", () => addContext(state.workspace?.branch || "branch"));
-q("#device").addEventListener("change", (event) => {
-  q("#app-preview").style.maxWidth = event.target.value === "mobile" ? "280px" : "100%";
-});
+for (const button of root.querySelectorAll("[data-device]")) {
+  button.addEventListener("click", () => {
+    const device = button.dataset.device;
+    q("#device").value = device;
+    q("#app-preview").style.maxWidth = device === "mobile" ? "280px" : "100%";
+    for (const option of root.querySelectorAll("[data-device]")) {
+      const active = option === button;
+      option.classList.toggle("active", active);
+      option.setAttribute("aria-pressed", String(active));
+    }
+  });
+}
 q("#refresh").addEventListener("click", async () => {
   if (await refresh()) toast("Workspace refreshed.");
 });
@@ -1893,8 +1946,15 @@ q("#model").addEventListener("change", (event) => {
   state.model = event.target.value;
   persistUi();
 });
+function updateReasoningInitial() {
+  const select = q("#reasoning");
+  const label = select.selectedOptions[0]?.textContent || select.value;
+  q("#reasoning-initial").textContent = label.slice(0, 1);
+  select.title = `Reasoning: ${label}`;
+}
 q("#reasoning").addEventListener("change", (event) => {
   state.reasoning = event.target.value;
+  updateReasoningInitial();
   persistUi();
 });
 qa("[data-nav]").forEach((item) => {
@@ -1977,6 +2037,8 @@ q("#share-preview")?.addEventListener("click", async () => {
   }
 });
 q("#new-chat").addEventListener("click", () => {
+  if (busy) { toast("Während des laufenden Auftrags kann kein neuer Chat geöffnet werden."); return; }
+  q("#chat-input").value = "";
   state.contexts = [];
   clearElementSelection();
   void attachments.clear();
@@ -1985,12 +2047,153 @@ q("#new-chat").addEventListener("click", () => {
   persistUi();
   toast("Composer context cleared.");
 });
-q("#chat-input").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+const SHORTCUT_KEY = "yxnharness.shortcuts.v2";
+let shortcuts = {send:{...DEFAULT_SEND_SHORTCUT},steer:{...DEFAULT_STEER_SHORTCUT}};
+try {
+  const saved = JSON.parse(localStorage.getItem(SHORTCUT_KEY));
+  if (validShortcut(saved?.send) && validShortcut(saved?.steer) && !sameShortcut(saved.send,saved.steer)) shortcuts = saved;
+} catch { /* Separate defaults replace the earlier combined shortcut. */ }
+let recordingShortcut = null;
+let steeringBusy = false;
+function showShortcut() {
+  const send = shortcutLabel(shortcuts.send), steer = shortcutLabel(shortcuts.steer);
+  q("#send-shortcut-hint").textContent = `${send} senden · ${steer} steuern`;
+  q("#record-shortcut").textContent = send;
+  q("#record-steer-shortcut").textContent = steer;
+  const key = shortcuts.send;
+  q(".send").setAttribute("aria-keyshortcuts", [key.meta && "Meta",key.ctrl && "Control",key.alt && "Alt",key.shift && "Shift",key.key].filter(Boolean).join("+"));
+  q(".send").title = `Neue Nachricht senden (${send})`;
+}
+function persistShortcuts() {
+  try { localStorage.setItem(SHORTCUT_KEY, JSON.stringify(shortcuts)); q("#shortcut-help").textContent = "Tastenkürzel gespeichert."; }
+  catch { q("#shortcut-help").textContent = "Für diese Sitzung gesetzt; Speicherung ist nicht verfügbar."; }
+  recordingShortcut = null;
+  showShortcut();
+}
+const profileToggle = q("#profile-toggle");
+const profileMenu = q("#profile-menu");
+function closeProfileMenu() { profileMenu.hidden = true; profileToggle.setAttribute("aria-expanded","false"); }
+profileToggle.addEventListener("click", () => { profileMenu.hidden = !profileMenu.hidden; profileToggle.setAttribute("aria-expanded",String(!profileMenu.hidden)); });
+document.addEventListener("click", event => { if (!event.target.closest(".profile-footer")) closeProfileMenu(); });
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && !profileMenu.hidden) { closeProfileMenu(); profileToggle.focus(); }
+});
+let settingsSection = "shortcuts";
+function selectSettingsSection(section) {
+  if (!["shortcuts","project","collaborators"].includes(section)) return;
+  settingsSection = section;
+  recordingShortcut = null; showShortcut();
+  for (const tab of qa("[data-settings-tab]")) {
+    const on = tab.dataset.settingsTab === section;
+    tab.setAttribute("aria-selected",String(on)); tab.tabIndex = on ? 0 : -1;
+  }
+  for (const panel of qa("[data-settings-panel]")) panel.hidden = panel.dataset.settingsPanel !== section;
+}
+for (const tab of qa("[data-settings-tab]")) {
+  tab.addEventListener("click", () => selectSettingsSection(tab.dataset.settingsTab));
+  tab.addEventListener("keydown", event => {
+    const tabs = qa("[data-settings-tab]"), index = tabs.indexOf(tab);
+    let next;
+    if (event.key === "ArrowDown") next = (index+1)%tabs.length;
+    else if (event.key === "ArrowUp") next = (index+tabs.length-1)%tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length-1;
+    else return;
+    event.preventDefault(); selectSettingsSection(tabs[next].dataset.settingsTab); tabs[next].focus();
+  });
+}
+let accessLoadVersion = 0;
+async function loadSettingsAccess() {
+  const version = ++accessLoadVersion;
+  q("#settings-access-status").textContent = "Zugriffsregeln werden geladen…";
+  q("#settings-access-facts").hidden = true; q("#settings-access-retry").hidden = true;
+  try {
+    const host = await apiGet("/api/v1/host-config");
+    if (version !== accessLoadVersion) return;
+    if (!host.config?.access) { q("#settings-access-status").textContent = "Für diesen Workspace sind noch keine Zugriffsregeln hinterlegt."; return; }
+    const access = host.config.access;
+    q("#settings-access-visibility").textContent = ({private:"Privat",restricted:"Eingeschränkt",public:"Öffentlich"})[access.visibility] || "—";
+    q("#settings-access-share").textContent = ({none:"Keine Einladungen",view:"Ansehen",comment:"Ansehen und Kommentieren"})[access.shareLinkGrant] || "—";
+    q("#settings-access-merge").textContent = access.leader?.label ? `Host und ${access.leader.label}` : "Nur Host";
+    q("#settings-access-status").textContent = "Aktuelle Projektregeln · nur Ansicht";
+    q("#settings-access-facts").hidden = false;
+  } catch (error) {
+    if (version !== accessLoadVersion) return;
+    q("#settings-access-status").textContent = "Zugriffsregeln konnten nicht geladen werden.";
+    q("#settings-access-retry").hidden = false;
+  }
+}
+q("#settings-access-retry").addEventListener("click", () => void loadSettingsAccess());
+function openSettings(section = "shortcuts") {
+  closeProfileMenu();
+  selectSettingsSection(section);
+  q("#settings-project-name").textContent = q("#project-name").textContent;
+  q("#settings-project-branch").textContent = state.workspace?.branch || "—";
+  q("#settings-project-agent").textContent = state.agent?.adapter?.displayName || "Nicht verbunden";
+  q("#steer-availability").textContent = state.agent?.capabilities?.steering
+    ? "Steuern ist während eines laufenden Auftrags verfügbar."
+    : "Der aktuell verbundene Agent unterstützt noch kein Steuern laufender Aufträge. Die Tastenkombination ist bereits einstellbar.";
+  q("#settings-dialog").showModal();
+  void loadSettingsAccess();
+}
+q("#open-settings").addEventListener("click", () => openSettings());
+for (const button of qa("[data-open-settings]")) button.addEventListener("click", () => openSettings(button.dataset.openSettings));
+q("#close-settings").addEventListener("click", () => q("#settings-dialog").close());
+q("#settings-dialog").addEventListener("close", () => { recordingShortcut = null; showShortcut(); profileToggle.focus(); });
+for (const [action,id] of [["send","record-shortcut"],["steer","record-steer-shortcut"]]) {
+  const button = q(`#${id}`);
+  button.addEventListener("click", () => { showShortcut(); recordingShortcut = action; button.focus(); button.textContent = "Tastenkombination drücken…"; });
+  button.addEventListener("keydown", event => {
+    if (recordingShortcut !== action || event.isComposing) return;
+    if (event.key === "Tab") { recordingShortcut = null; showShortcut(); return; }
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === "Escape") { recordingShortcut = null; showShortcut(); return; }
+    const shortcut = shortcutFromEvent(event);
+    if (!shortcut) { q("#shortcut-help").textContent = "Bitte Enter oder eine Kombination mit ⌘, ⌃ oder ⌥ wählen. Systemkürzel bleiben reserviert."; return; }
+    if (sameShortcut(shortcut,shortcuts[action === "send" ? "steer" : "send"])) {
+      q("#shortcut-help").textContent = "Diese Kombination ist bereits für die andere Aktion vergeben.";
+      return;
+    }
+    shortcuts[action] = shortcut;
+    persistShortcuts();
+  });
+}
+q("#reset-shortcut").addEventListener("click", () => {
+  shortcuts = {send:{...DEFAULT_SEND_SHORTCUT},steer:{...DEFAULT_STEER_SHORTCUT}};
+  persistShortcuts();
+});
+async function steerMessage() {
+  const input = q("#chat-input");
+  const body = input.value.trim();
+  if (!body || steeringBusy) return;
+  if (state.mode !== "connected" || !state.agent?.capabilities?.steering) {
+    toast("Der verbundene Agent unterstützt noch kein Steuern laufender Aufträge. Dein Text bleibt im Eingabefeld."); return;
+  }
+  if (!activeAgentTurnId) { toast("Kein laufender Auftrag zum Steuern. Mit Enter startest du eine neue Nachricht."); return; }
+  steeringBusy = true;
+  const original = input.value;
+  try {
+    const result = await apiPost("/api/v1/agent/steer", {body,turnId:activeAgentTurnId});
+    if (result.ok === false || result.status === "blocked") throw new Error(result.blockedReasons?.join("; ") || "Steuern fehlgeschlagen.");
+    const entry = document.createElement("div"); entry.className = "user-message";
+    const label = document.createElement("small"); label.textContent = "Steueranweisung · laufender Auftrag";
+    const text = document.createElement("p"); text.textContent = body;
+    entry.append(label,text); q("#chat-feed").append(entry);
+    if (input.value === original) input.value = "";
+    persistUi();
+    pushActivity("Steueranweisung an laufenden Auftrag gesendet");
+  } catch (error) { toast(error.message); }
+  finally { steeringBusy = false; }
+}
+q("#chat-input").addEventListener("keydown", event => {
+  if (matchesShortcut(event,shortcuts.steer)) { event.preventDefault(); void steerMessage(); return; }
+  if (matchesShortcut(event,shortcuts.send)) {
     event.preventDefault();
+    if (busy) { toast("Der Agent arbeitet noch. Zum Eingreifen nutze den Steuern-Shortcut."); return; }
     q(".send").click();
   }
 });
+showShortcut();
 q(".send").addEventListener("click", () => sendMessage());
 
 document.addEventListener("keydown", (event) => {
@@ -2001,8 +2204,11 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+q("#chat-input").value = state.draft;
+q("#chat-input").addEventListener("input", persistUi);
 q("#model").value = state.model;
 q("#reasoning").value = state.reasoning;
+updateReasoningInitial();
 renderChips();
 renderElementSelection();
 renderPicks();
@@ -2010,3 +2216,17 @@ renderActivity();
 setView(state.view, false);
 setMode(state.mode, false);
 refresh();
+
+// Composer controls: explicit user gestures only, no automatic capture or uploads.
+const plus = q("#composer-plus");
+const addMenu = q("#composer-add-menu");
+function closeAddMenu() { addMenu.hidden = true; plus.setAttribute("aria-expanded", "false"); }
+plus.addEventListener("click", () => { addMenu.hidden = !addMenu.hidden; plus.setAttribute("aria-expanded", String(!addMenu.hidden)); });
+addMenu.addEventListener("click", event => { if (event.target.closest("button")) closeAddMenu(); });
+document.addEventListener("click", event => { if (!event.target.closest(".composer-add")) closeAddMenu(); });
+document.addEventListener("keydown", event => { if (event.key === "Escape" && !addMenu.hidden) { closeAddMenu(); plus.focus(); } });
+q("#approval-mode").addEventListener("change", () => {
+  q("#approval-note").textContent = q("#approval-mode").value === "auto"
+    ? "Normale visuelle Demo-Änderungen automatisch. Löschen, Veröffentlichen und Zugriff weiter nur nach Freigabe."
+    : "Änderungen erst nach deinem Accept.";
+});

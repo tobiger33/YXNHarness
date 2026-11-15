@@ -20,7 +20,7 @@
     <span class="home-location">/ <span>Overview</span></span>
     <span class="slash">/</span><span class="project" id="project-name">workspace</span><span class="slash">/</span>
     <span class="current-branch"><i data-lucide="git-branch" aria-hidden="true"></i><span id="active-branch">…</span></span>
-    <span class="grow"></span><span class="prototype">Local cockpit</span><div class="layout-controls" aria-label="Panels"><button class="icon-button" data-toggle-panel="left" aria-label="Workspace einklappen" aria-expanded="true" aria-controls="workspace-sidebar"><i data-lucide="panel-left" aria-hidden="true"></i></button><button class="icon-button" data-toggle-panel="right" aria-label="Agent einklappen" aria-expanded="true" aria-controls="agent-sidebar"><i data-lucide="panel-right" aria-hidden="true"></i></button></div>
+    <span class="grow"></span><div class="layout-controls" aria-label="Panels"><button class="icon-button" data-toggle-panel="left" aria-label="Workspace einklappen" aria-expanded="true" aria-controls="workspace-sidebar"><i data-lucide="panel-left" aria-hidden="true"></i></button><button class="icon-button" data-toggle-panel="right" aria-label="Agent einklappen" aria-expanded="true" aria-controls="agent-sidebar"><i data-lucide="panel-right" aria-hidden="true"></i></button></div>
   </header>
   <section class="home-page" id="home-page" aria-label="Repository overview" hidden>
     <aside class="home-sidebar" aria-label="Home navigation">
@@ -48,6 +48,7 @@
   </dialog>
   <div class="workspace">
     <aside class="sidebar" id="workspace-sidebar">
+      <div class="workspace-nav-scroll">
       <div class="section-name">Workspace<button class="icon-button" data-toggle-panel="left" aria-controls="workspace-sidebar" aria-expanded="true" aria-label="Workspace einklappen"><i data-lucide="panel-left-close" aria-hidden="true"></i></button></div>
       <button class="nav-item active" data-nav="workbench"><i data-lucide="panels-top-left" aria-hidden="true"></i>Workbench<span class="shortcut">⌘1</span></button>
       <button class="nav-item" data-nav="feedback"><i data-lucide="messages-square" aria-hidden="true"></i>Feedback<span class="count" id="feedback-count">0</span></button>
@@ -62,19 +63,43 @@
       <div id="branches-list"></div>
       <div class="section-name activity-label">Recent activity</div>
       <div id="recent-activity"></div>
-      <footer class="side-footer"><span class="avatar" id="avatar">YX</span><div>YXN workspace<small id="workspace-mode-label">Native Git loop</small></div><i data-lucide="chevrons-up-down" aria-hidden="true"></i></footer>
+      <div class="sidebar-activity">
+        <button id="activity-toggle" class="nav-item" aria-expanded="false" aria-controls="activity-panel"><i data-lucide="terminal" aria-hidden="true"></i>Activity<span class="count" id="activity-count">0</span><i class="activity-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>
+        <div class="activity-panel" id="activity-panel" role="region" aria-labelledby="activity-toggle" hidden></div>
+      </div>
+      </div>
+      <footer class="side-footer profile-footer">
+        <div id="profile-menu" class="profile-menu" role="group" aria-label="Profilmenü" hidden>
+          <div class="profile-menu-heading">Profil &amp; Workspace</div>
+          <button type="button" id="open-settings"><i data-lucide="settings-2" aria-hidden="true"></i>Einstellungen</button>
+          <button type="button" data-open-settings="project"><i data-lucide="sliders-horizontal" aria-hidden="true"></i>Projektkonfiguration</button>
+          <button type="button" data-open-settings="collaborators"><i data-lucide="users" aria-hidden="true"></i>Mitwirkende &amp; Rechte</button>
+        </div>
+        <button type="button" id="profile-toggle" class="profile-toggle" aria-label="Profil und Workspace" aria-expanded="false" aria-controls="profile-menu"><span class="avatar" id="avatar">YX</span><span class="profile-label">YXN workspace<small id="workspace-mode-label">Native Git loop</small></span><i data-lucide="chevrons-up-down" aria-hidden="true"></i></button>
+      </footer>
     </aside>
     <button type="button" class="panel-splitter splitter-left" data-resize-panel="left" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Workspace Breite ändern" aria-controls="workspace-sidebar" title="Ziehen zum Vergrößern · Doppelklick zum Zurücksetzen"></button>
     <main class="stage">
+      <div class="stage-header">
       <div class="stage-tabs" role="tablist" aria-label="Workbench views">
         <button id="tab-preview" class="tab active" data-view="preview" role="tab" aria-selected="true" aria-controls="screen-preview"><i data-lucide="app-window" aria-hidden="true"></i>Preview</button>
         <button id="tab-compare" class="tab" data-view="compare" role="tab" aria-selected="false" aria-controls="screen-compare"><i data-lucide="columns-2" aria-hidden="true"></i>Compare</button>
         <button id="tab-changes" class="tab" data-view="changes" role="tab" aria-selected="false" aria-controls="screen-changes"><i data-lucide="git-compare-arrows" aria-hidden="true"></i>Changes<span class="count" id="changes-count">0</span></button>
         <span class="grow"></span>
       </div>
-      <div class="address"><i data-lucide="globe" aria-hidden="true"></i><span id="route">local workbench</span><span class="grow"></span><button class="tool" id="open-preview"><i data-lucide="link-2" aria-hidden="true"></i>Open app</button><a class="icon-button" id="preview-external" target="_blank" rel="noopener noreferrer" aria-label="Open app in a new tab" hidden><i data-lucide="external-link" aria-hidden="true"></i></a><button class="icon-button" id="refresh" aria-label="Preview neu laden"><i data-lucide="rotate-cw" aria-hidden="true"></i></button></div>
+      <div class="project-tools" role="group" aria-label="Projekt">
+        <span id="stage-project-name" class="stage-project-name">Workspace</span>
+        <span id="route" hidden>local workbench</span>
+        <button class="tool" id="open-preview"><i data-lucide="folder-open" aria-hidden="true"></i>Projekt öffnen</button>
+        <a class="icon-button" id="preview-external" target="_blank" rel="noopener noreferrer" aria-label="Projekt im Browser öffnen" title="Projekt im Browser öffnen" hidden><i data-lucide="external-link" aria-hidden="true"></i></a>
+        <button class="icon-button" id="refresh" aria-label="Workspace und Vorschau aktualisieren" title="Workspace und Vorschau aktualisieren"><i data-lucide="rotate-cw" aria-hidden="true"></i></button>
+      </div>
+      </div>
       <section class="screen preview-screen" id="screen-preview" role="tabpanel" aria-labelledby="tab-preview">
-        <div class="preview-label"><span><span class="status-dot"></span><span id="preview-kind">Example application</span></span><label class="device-label"><i data-lucide="monitor" aria-hidden="true"></i><select id="device" aria-label="Preview Größe"><option value="desktop">Desktop</option><option value="mobile">Mobile</option></select></label></div>
+        <div class="preview-label">
+          <span><span class="status-dot"></span><span id="preview-kind">Example application</span></span>
+          <div class="preview-toolbar" role="group" aria-label="Preview interaction mode"><button id="select-tool" class="tool" aria-pressed="false"><i data-lucide="scan" aria-hidden="true"></i>Select</button><button id="interact-tool" class="tool active" aria-pressed="true"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>Interact</button></div>
+          <div class="preview-utilities"><div class="device-switch" role="group" aria-label="Preview Größe"><input type="hidden" id="device" value="desktop"><button type="button" class="tool active" data-device="desktop" aria-label="Desktop" title="Desktop" aria-pressed="true"><i data-lucide="monitor" aria-hidden="true"></i></button><button type="button" class="tool" data-device="mobile" aria-label="Mobile" title="Mobile" aria-pressed="false"><i data-lucide="smartphone" aria-hidden="true"></i></button></div><button id="disconnect-preview" class="tool" hidden>Example app</button></div>
         <div class="element-actions-slot">
           <div id="element-actions" class="element-actions" role="toolbar" aria-label="Selected element actions" hidden>
             <span id="selected-element-name" aria-live="polite"></span>
@@ -82,6 +107,7 @@
             <button type="button" id="selection-adopt">Übernehmen</button>
             <button type="button" id="selection-dismiss" aria-label="Clear selected element">×</button>
           </div>
+        </div>
         </div>
         <div class="app-preview" id="app-preview">
           <div class="region-status preview-status" id="preview-status" role="status" aria-live="polite" hidden>
@@ -120,7 +146,6 @@
           </div>
           </div>
         </div>
-        <div class="preview-toolbar"><button id="select-tool" class="tool" aria-pressed="false"><i data-lucide="scan" aria-hidden="true"></i>Select</button><button id="interact-tool" class="tool active" aria-pressed="true"><i data-lucide="mouse-pointer-2" aria-hidden="true"></i>Interact</button><button id="disconnect-preview" class="tool" hidden>Example app</button><span class="grow"></span><button id="capture" class="tool" aria-label="Capture project only"><i data-lucide="camera" aria-hidden="true"></i>Capture</button></div>
       </section>
       <section class="screen compare-screen" id="screen-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
         <div class="view-heading"><h2>Compare branches</h2><p>Select the elements you want to bring into your branch.</p></div>
@@ -180,8 +205,6 @@
         <p class="view-note" id="changes-note">Real git review when a branch is selected.</p>
       </section>
       <section class="screen extra-screen" id="extra-screen" hidden><div class="view-heading"><h2 id="extra-title"></h2><p id="extra-subtitle"></p></div><div id="extra-content"></div><button class="button" id="back-workbench">Back to workbench</button></section>
-      <div class="bottom-bar"><button id="activity-toggle" aria-expanded="false"><i data-lucide="terminal" aria-hidden="true"></i>Activity<span class="count" id="activity-count">0</span></button><span class="grow"></span><span class="local-indicator"><span class="status-dot"></span>Local</span></div>
-      <div class="activity-panel" id="activity-panel" hidden></div>
     </main>
     <button type="button" class="panel-splitter splitter-right" data-resize-panel="right" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Agent Breite ändern" aria-controls="agent-sidebar" title="Ziehen zum Vergrößern · Doppelklick zum Zurücksetzen"></button>
     <aside class="agent" id="agent-sidebar" aria-label="Agent Chat">
@@ -192,12 +215,44 @@
         <h2 class="task-title">Feedback &amp; agent</h2><span class="task-subtitle" id="task-subtitle">Local · no agent adapter connected</span>
       </div>
       <div class="composer-area">
-        <div class="context-controls"><button id="add-context"><i data-lucide="plus" aria-hidden="true"></i>Add context</button><button id="screenshot"><i data-lucide="image" aria-hidden="true"></i>Screenshot</button></div>
-        <div class="composer" id="composer" role="group" aria-label="Agent composer"><section class="selection-context" id="selection-context" aria-label="Selected element context" hidden><header><button type="button" class="selection-detail-open" id="selection-context-name" aria-label="Open selected element details"></button><button type="button" class="icon-button" id="selection-context-clear" aria-label="Remove element context">×</button></header><p id="selection-context-branches"></p><p id="selection-context-route"></p><p id="selection-context-elements" hidden></p><span id="selection-context-intent"></span></section><input type="file" id="attachment-picker" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden><div class="attachment-tray" id="attachment-tray" aria-label="Local image attachments — click to preview" hidden></div><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
-        <div class="composer-footnote"><span id="composer-note">No agent adapter connected</span><span>↵ to send</span></div>
+        <div class="composer" id="composer" role="group" aria-label="Agent composer"><section class="selection-context" id="selection-context" aria-label="Vorgemerkte Änderungen" hidden><details id="selection-summary"><summary><i data-lucide="layers" aria-hidden="true"></i><span id="draft-change-count" aria-live="polite">1 Änderung</span></summary><div class="selection-details"><button type="button" class="selection-detail-open" id="selection-context-name" aria-label="Open selected element details"></button><p id="selection-context-branches"></p><p id="selection-context-route"></p><div id="selection-context-elements"></div><span id="selection-context-intent"></span></div></details><button type="button" class="icon-button" id="selection-context-clear" aria-label="Alle vorgemerkten Änderungen entfernen" title="Alle entfernen">×</button></section><input type="file" id="attachment-picker" multiple hidden><div class="attachment-tray" id="attachment-tray" aria-label="Anhänge — zum Öffnen anklicken" hidden></div><div class="context-chips" id="context-chips"></div><textarea id="chat-input" rows="3" aria-label="Agent Nachricht" placeholder="Ask for a change, or describe an idea…"></textarea><div class="composer-tools"><div class="composer-add"><button type="button" id="composer-plus" class="icon-button" aria-label="Anhang hinzufügen" aria-expanded="false" aria-controls="composer-add-menu" title="Anhang hinzufügen"><i data-lucide="plus" aria-hidden="true"></i></button><div id="composer-add-menu" class="composer-add-menu" hidden><button type="button" id="capture"><i data-lucide="camera" aria-hidden="true"></i>Screenshot aufnehmen</button><button type="button" id="screenshot"><i data-lucide="paperclip" aria-hidden="true"></i>Datei anhängen</button><button type="button" id="add-context"><i data-lucide="crosshair" aria-hidden="true"></i>Kontext hinzufügen</button></div></div><select id="model" aria-label="Agent Modell"><option>Codex</option><option>Custom agent</option></select><span class="reasoning-control" id="reasoning-control"><span id="reasoning-initial" aria-hidden="true">H</span><i data-lucide="chevron-down" aria-hidden="true"></i><select id="reasoning" aria-label="Reasoning effort"><option>High</option><option>Medium</option><option>Low</option></select></span><span class="grow"></span><button class="send" type="button" aria-label="Nachricht senden"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div></div>
+        <div class="permission-controls"><i data-lucide="shield-check" aria-hidden="true"></i><select id="approval-mode" aria-label="Berechtigungen"><option value="ask">Genehmigung anfordern</option><option value="auto">Für mich genehmigen</option><option value="full" disabled>Uneingeschränkter Zugriff · nicht unterstützt</option></select><p id="approval-note">Änderungen erst nach deinem Accept.</p></div><div class="composer-footnote"><span id="composer-note">No agent adapter connected</span><span id="send-shortcut-hint">⌘ Enter zum Senden</span></div>
       </div>
     </aside>
   </div>
+  <dialog class="workspace-dialog settings-dialog" id="settings-dialog" aria-labelledby="settings-title">
+    <header><h2 id="settings-title">Einstellungen</h2><button type="button" class="icon-button" id="close-settings" aria-label="Einstellungen schließen">×</button></header>
+    <div class="settings-layout">
+      <nav class="settings-navigation" role="tablist" aria-label="Einstellungsbereiche" aria-orientation="vertical">
+        <button type="button" id="settings-tab-shortcuts" class="settings-tab" data-settings-tab="shortcuts" role="tab" aria-selected="true" aria-controls="settings-shortcuts"><i data-lucide="keyboard" aria-hidden="true"></i>Tastenkürzel</button>
+        <button type="button" id="settings-tab-project" class="settings-tab" data-settings-tab="project" role="tab" aria-selected="false" tabindex="-1" aria-controls="settings-project"><i data-lucide="sliders-horizontal" aria-hidden="true"></i>Projekt</button>
+        <button type="button" id="settings-tab-collaborators" class="settings-tab" data-settings-tab="collaborators" role="tab" aria-selected="false" tabindex="-1" aria-controls="settings-collaborators"><i data-lucide="users" aria-hidden="true"></i>Mitwirkende &amp; Rechte</button>
+      </nav>
+      <div class="settings-content">
+        <section id="settings-shortcuts" data-settings-panel="shortcuts" role="tabpanel" aria-labelledby="settings-tab-shortcuts">
+    <h3>Tastenkürzel</h3>
+    <div class="shortcut-row"><div><b>Nachricht senden</b><p>Eine neue Anweisung starten.</p></div><button type="button" class="button" id="record-shortcut" aria-describedby="shortcut-help">Enter</button></div>
+    <div class="shortcut-row"><div><b>Laufenden Auftrag steuern</b><p>Eine Anweisung in den aktiven Auftrag geben.</p></div><button type="button" class="button" id="record-steer-shortcut" aria-describedby="shortcut-help">⌘ Enter</button></div>
+    <p id="shortcut-help" role="status">Shortcut anklicken und eine Tastenkombination drücken. Escape bricht ab.</p>
+    <p id="steer-availability">Steuern erfordert einen verbundenen Agenten mit Unterstützung für laufende Aufträge.</p>
+    <p>Shift + Enter fügt standardmäßig einen Zeilenumbruch ein.</p>
+    <button type="button" class="button" id="reset-shortcut">Beide Standards wiederherstellen</button>
+        </section>
+        <section id="settings-project" data-settings-panel="project" role="tabpanel" aria-labelledby="settings-tab-project" hidden>
+          <h3>Projektkonfiguration</h3><p>Dein aktueller Workspace und der verbundene Agent.</p>
+          <dl class="settings-facts"><div><dt>Projekt</dt><dd id="settings-project-name">—</dd></div><div><dt>Branch</dt><dd id="settings-project-branch">—</dd></div><div><dt>Agent</dt><dd id="settings-project-agent">—</dd></div></dl>
+          <p>Die Projektkonfiguration wird hier zunächst angezeigt. Einstellungen für Agenten und Vorschauen bleiben in ihren jeweiligen Bereichen erreichbar.</p>
+        </section>
+        <section id="settings-collaborators" data-settings-panel="collaborators" role="tabpanel" aria-labelledby="settings-tab-collaborators" hidden>
+          <h3>Mitwirkende &amp; Rechte</h3><p>Aktuelle Zugriffsregeln für diesen Workspace.</p>
+          <p id="settings-access-status" role="status"></p>
+          <dl class="settings-facts" id="settings-access-facts" hidden><div><dt>Sichtbarkeit</dt><dd id="settings-access-visibility">—</dd></div><div><dt>Einladungen erlauben</dt><dd id="settings-access-share">—</dd></div><div><dt>Merge-Freigabe</dt><dd id="settings-access-merge">—</dd></div></dl>
+          <button type="button" class="button" id="settings-access-retry" hidden>Erneut laden</button>
+          <div class="settings-empty"><i data-lucide="users" aria-hidden="true"></i><b>Persönliche Rollen</b><p>Einzelne Mitwirkende und ihre Rechte können hier später verwaltet werden. Eine Personenverwaltung ist noch nicht angebunden.</p></div>
+        </section>
+      </div>
+    </div>
+  </dialog>
   <dialog class="workspace-dialog" id="connect-preview-dialog" aria-labelledby="preview-connect-title">
     <header><h2 id="preview-connect-title">Open an application</h2><button type="button" class="icon-button" data-close aria-label="Close">×</button></header>
     <p>Enter your running app's address. Navigate its pages and submit forms normally.</p>

@@ -5,12 +5,7 @@ import { randomUUID } from "node:crypto";
 const ATTACHMENTS_DIR = path.join("artifacts", "attachments");
 const MAX_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGES = 6;
-const ALLOWED_MIME = new Map([
-  ["image/png", "png"],
-  ["image/jpeg", "jpg"],
-  ["image/webp", "webp"],
-  ["image/gif", "gif"],
-]);
+
 
 async function pathExists(filePath) {
   try {
@@ -171,7 +166,7 @@ async function createAttachment(root, {
     return {
       status: "blocked",
       ok: false,
-      blockedReasons: [`Image exceeds ${MAX_BYTES} bytes (12 MB limit).`],
+      blockedReasons: [`Attachment exceeds ${MAX_BYTES} bytes (12 MB limit).`],
     };
   }
 
@@ -180,15 +175,21 @@ async function createAttachment(root, {
     // Soft project ceiling so drafts cannot grow unboundedly; drafts are usually few.
   }
 
-  const sniffed = sniffImage(buffer);
-  if (!sniffed || !ALLOWED_MIME.has(sniffed.mimeType)) {
+  const image = sniffImage(buffer);
+  const isImage = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"].includes(declaredType);
+  const sniffed = image || (!isImage ? {
+    mimeType: "application/octet-stream",
+    extension: /^[a-z0-9]{1,12}$/i.test(path.extname(filename || "").slice(1)) ? path.extname(filename).slice(1).toLowerCase() : "bin",
+    width: null, height: null,
+  } : null);
+  if (!sniffed) {
     return {
       status: "blocked",
       ok: false,
       blockedReasons: ["Only PNG, JPEG, WebP, or GIF images are accepted."],
     };
   }
-  if (declaredType && declaredType !== sniffed.mimeType &&
+  if (image && declaredType && declaredType !== sniffed.mimeType &&
       !(declaredType === "image/jpg" && sniffed.mimeType === "image/jpeg")) {
     return {
       status: "blocked",

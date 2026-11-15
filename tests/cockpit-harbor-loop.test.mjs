@@ -1,3 +1,4 @@
+import {isolatedWorkspace} from "./support/workspace.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -14,12 +15,13 @@ async function waitForServer(url) {
   throw new Error(`Server did not become ready: ${url}`);
 }
 
-test("Harbor Desk live Select proposes Preview/Accept through workspace-edit", async () => {
+test("Harbor Desk live Select proposes Preview/Accept through workspace-edit", async (t) => {
   const cwd = new URL("..", import.meta.url).pathname;
-  const stylesPath = path.join(cwd, "examples", "foreign-booking", "styles.css");
+  const isolated = await isolatedWorkspace(t);
+  const stylesPath = path.join(isolated, "examples", "foreign-booking", "styles.css");
   const before = await readFile(stylesPath, "utf8");
-  const cockpit = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--port", "8812"], { cwd, stdio: "ignore" });
-  const application = spawn(process.execPath, ["examples/foreign-booking/server.mjs"], {
+  const cockpit = spawn(process.execPath, ["scripts/harness.mjs", "serve", "--root", isolated, "--port", "8812"], { cwd, stdio: "ignore" });
+  const application = spawn(process.execPath, [`${isolated}/examples/foreign-booking/server.mjs`], {
     cwd,
     env: { ...process.env, PORT: "4191" },
     stdio: "ignore",
